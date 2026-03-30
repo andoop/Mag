@@ -1,0 +1,458 @@
+import 'dart:convert';
+
+import 'package:path/path.dart' as p;
+import 'package:path_provider/path_provider.dart';
+import 'package:sqflite/sqflite.dart';
+
+import 'models.dart';
+
+class AppDatabase {
+  AppDatabase._();
+
+  static final AppDatabase instance = AppDatabase._();
+
+  Database? _db;
+
+  Future<Database> get database async {
+    final existing = _db;
+    if (existing != null) return existing;
+    final dir = await getApplicationDocumentsDirectory();
+    final path = p.join(dir.path, 'mobile_agent.db');
+    _db = await openDatabase(
+      path,
+      version: 2,
+      onCreate: (db, version) async {
+        await db.execute('''
+          CREATE TABLE workspaces (
+            id TEXT PRIMARY KEY,
+            data TEXT NOT NULL
+          )
+        ''');
+        await db.execute('''
+          CREATE TABLE projects (
+            id TEXT PRIMARY KEY,
+            workspace_id TEXT NOT NULL,
+            data TEXT NOT NULL
+          )
+        ''');
+        await db.execute('''
+          CREATE TABLE sessions (
+            id TEXT PRIMARY KEY,
+            workspace_id TEXT NOT NULL,
+            project_id TEXT NOT NULL,
+            updated_at INTEGER NOT NULL,
+            data TEXT NOT NULL
+          )
+        ''');
+        await db.execute('''
+          CREATE TABLE messages (
+            id TEXT PRIMARY KEY,
+            session_id TEXT NOT NULL,
+            created_at INTEGER NOT NULL,
+            data TEXT NOT NULL
+          )
+        ''');
+        await db.execute('''
+          CREATE TABLE parts (
+            id TEXT PRIMARY KEY,
+            session_id TEXT NOT NULL,
+            message_id TEXT NOT NULL,
+            created_at INTEGER NOT NULL,
+            data TEXT NOT NULL
+          )
+        ''');
+        await db.execute('''
+          CREATE TABLE tool_permissions (
+            id TEXT PRIMARY KEY,
+            workspace_id TEXT NOT NULL,
+            permission TEXT NOT NULL,
+            pattern TEXT NOT NULL,
+            action TEXT NOT NULL
+          )
+        ''');
+        await db.execute('''
+          CREATE TABLE permission_requests (
+            id TEXT PRIMARY KEY,
+            session_id TEXT NOT NULL,
+            data TEXT NOT NULL
+          )
+        ''');
+        await db.execute('''
+          CREATE TABLE question_requests (
+            id TEXT PRIMARY KEY,
+            session_id TEXT NOT NULL,
+            data TEXT NOT NULL
+          )
+        ''');
+        await db.execute('''
+          CREATE TABLE todos (
+            id TEXT PRIMARY KEY,
+            session_id TEXT NOT NULL,
+            data TEXT NOT NULL
+          )
+        ''');
+        await db.execute('''
+          CREATE TABLE settings (
+            key TEXT PRIMARY KEY,
+            value TEXT NOT NULL
+          )
+        ''');
+        await db.execute('''
+          CREATE TABLE workspace_index (
+            workspace_id TEXT NOT NULL,
+            path TEXT NOT NULL,
+            data TEXT NOT NULL,
+            PRIMARY KEY (workspace_id, path)
+          )
+        ''');
+        await db.execute('''
+          CREATE TABLE workspace_search_index (
+            workspace_id TEXT NOT NULL,
+            path TEXT NOT NULL,
+            data TEXT NOT NULL,
+            PRIMARY KEY (workspace_id, path)
+          )
+        ''');
+      },
+      onUpgrade: (db, oldVersion, newVersion) async {
+        if (oldVersion < 2) {
+          await db.execute('''
+            CREATE TABLE IF NOT EXISTS workspace_search_index (
+              workspace_id TEXT NOT NULL,
+              path TEXT NOT NULL,
+              data TEXT NOT NULL,
+              PRIMARY KEY (workspace_id, path)
+            )
+          ''');
+        }
+      },
+    );
+    return _db!;
+  }
+
+  Future<void> saveWorkspace(WorkspaceInfo workspace) async {
+    final db = await database;
+    await db.insert(
+      'workspaces',
+      {'id': workspace.id, 'data': jsonEncode(workspace.toJson())},
+      conflictAlgorithm: ConflictAlgorithm.replace,
+    );
+  }
+
+  Future<List<WorkspaceInfo>> listWorkspaces() async {
+    final db = await database;
+    final rows = await db.query('workspaces');
+    return rows
+        .map((row) => WorkspaceInfo.fromJson(jsonDecode(row['data'] as String) as JsonMap))
+        .toList();
+  }
+
+  Future<void> saveProject(ProjectInfo project) async {
+    final db = await database;
+    await db.insert(
+      'projects',
+      {
+        'id': project.id,
+        'workspace_id': project.workspaceId,
+        'data': jsonEncode(project.toJson()),
+      },
+      conflictAlgorithm: ConflictAlgorithm.replace,
+    );
+  }
+
+  Future<ProjectInfo?> projectForWorkspace(String workspaceId) async {
+    final db = await database;
+    final rows = await db.query(
+      'projects',
+      where: 'workspace_id = ?',
+      whereArgs: [workspaceId],
+      limit: 1,
+    );
+    if (rows.isEmpty) return null;
+    return ProjectInfo.fromJson(jsonDecode(rows.first['data'] as String) as JsonMap);
+  }
+
+  Future<void> saveSession(SessionInfo session) async {
+    final db = await database;
+    await db.insert(
+      'sessions',
+      {
+        'id': session.id,
+        'workspace_id': session.workspaceId,
+        'project_id': session.projectId,
+        'updated_at': session.updatedAt,
+        'data': jsonEncode(session.toJson()),
+      },
+      conflictAlgorithm: ConflictAlgorithm.replace,
+    );
+  }
+
+  Future<List<SessionInfo>> listSessions(String workspaceId) async {
+    final db = await database;
+    final rows = await db.query(
+      'sessions',
+      where: 'workspace_id = ?',
+      whereArgs: [workspaceId],
+      orderBy: 'updated_at DESC',
+    );
+    return rows
+        .map((row) => SessionInfo.fromJson(jsonDecode(row['data'] as String) as JsonMap))
+        .toList();
+  }
+
+  Future<SessionInfo?> getSession(String sessionId) async {
+    final db = await database;
+    final rows = await db.query('sessions', where: 'id = ?', whereArgs: [sessionId], limit: 1);
+    if (rows.isEmpty) return null;
+    return SessionInfo.fromJson(jsonDecode(rows.first['data'] as String) as JsonMap);
+  }
+
+  Future<void> saveMessage(MessageInfo message) async {
+    final db = await database;
+    await db.insert(
+      'messages',
+      {
+        'id': message.id,
+        'session_id': message.sessionId,
+        'created_at': message.createdAt,
+        'data': jsonEncode(message.toJson()),
+      },
+      conflictAlgorithm: ConflictAlgorithm.replace,
+    );
+  }
+
+  Future<List<MessageInfo>> listMessages(String sessionId) async {
+    final db = await database;
+    final rows = await db.query(
+      'messages',
+      where: 'session_id = ?',
+      whereArgs: [sessionId],
+      orderBy: 'created_at ASC',
+    );
+    return rows
+        .map((row) => MessageInfo.fromJson(jsonDecode(row['data'] as String) as JsonMap))
+        .toList();
+  }
+
+  Future<void> savePart(MessagePart part) async {
+    final db = await database;
+    await db.insert(
+      'parts',
+      {
+        'id': part.id,
+        'session_id': part.sessionId,
+        'message_id': part.messageId,
+        'created_at': part.createdAt,
+        'data': jsonEncode(part.toJson()),
+      },
+      conflictAlgorithm: ConflictAlgorithm.replace,
+    );
+  }
+
+  Future<List<MessagePart>> listPartsForMessage(String messageId) async {
+    final db = await database;
+    final rows = await db.query(
+      'parts',
+      where: 'message_id = ?',
+      whereArgs: [messageId],
+      orderBy: 'created_at ASC',
+    );
+    return rows
+        .map((row) => MessagePart.fromJson(jsonDecode(row['data'] as String) as JsonMap))
+        .toList();
+  }
+
+  Future<List<MessagePart>> listPartsForSession(String sessionId) async {
+    final db = await database;
+    final rows = await db.query(
+      'parts',
+      where: 'session_id = ?',
+      whereArgs: [sessionId],
+      orderBy: 'created_at ASC',
+    );
+    return rows
+        .map((row) => MessagePart.fromJson(jsonDecode(row['data'] as String) as JsonMap))
+        .toList();
+  }
+
+  Future<void> saveToolPermission(String workspaceId, PermissionRule rule) async {
+    final db = await database;
+    await db.insert(
+      'tool_permissions',
+      {
+        'id': newId('rule'),
+        'workspace_id': workspaceId,
+        'permission': rule.permission,
+        'pattern': rule.pattern,
+        'action': rule.action.name,
+      },
+      conflictAlgorithm: ConflictAlgorithm.replace,
+    );
+  }
+
+  Future<List<PermissionRule>> listToolPermissions(String workspaceId) async {
+    final db = await database;
+    final rows = await db.query(
+      'tool_permissions',
+      where: 'workspace_id = ?',
+      whereArgs: [workspaceId],
+    );
+    return rows
+        .map(
+          (row) => PermissionRule(
+            permission: row['permission'] as String,
+            pattern: row['pattern'] as String,
+            action: PermissionAction.values.firstWhere((item) => item.name == row['action']),
+          ),
+        )
+        .toList();
+  }
+
+  Future<void> savePermissionRequest(PermissionRequest request) async {
+    final db = await database;
+    await db.insert(
+      'permission_requests',
+      {
+        'id': request.id,
+        'session_id': request.sessionId,
+        'data': jsonEncode(request.toJson()),
+      },
+      conflictAlgorithm: ConflictAlgorithm.replace,
+    );
+  }
+
+  Future<void> deletePermissionRequest(String requestId) async {
+    final db = await database;
+    await db.delete('permission_requests', where: 'id = ?', whereArgs: [requestId]);
+  }
+
+  Future<List<PermissionRequest>> listPermissionRequests() async {
+    final db = await database;
+    final rows = await db.query('permission_requests');
+    return rows
+        .map((row) => PermissionRequest.fromJson(jsonDecode(row['data'] as String) as JsonMap))
+        .toList();
+  }
+
+  Future<void> saveQuestionRequest(QuestionRequest request) async {
+    final db = await database;
+    await db.insert(
+      'question_requests',
+      {
+        'id': request.id,
+        'session_id': request.sessionId,
+        'data': jsonEncode(request.toJson()),
+      },
+      conflictAlgorithm: ConflictAlgorithm.replace,
+    );
+  }
+
+  Future<void> deleteQuestionRequest(String requestId) async {
+    final db = await database;
+    await db.delete('question_requests', where: 'id = ?', whereArgs: [requestId]);
+  }
+
+  Future<List<QuestionRequest>> listQuestionRequests() async {
+    final db = await database;
+    final rows = await db.query('question_requests');
+    return rows
+        .map((row) => QuestionRequest.fromJson(jsonDecode(row['data'] as String) as JsonMap))
+        .toList();
+  }
+
+  Future<void> saveTodo(TodoItem todo) async {
+    final db = await database;
+    await db.insert(
+      'todos',
+      {
+        'id': todo.id,
+        'session_id': todo.sessionId,
+        'data': jsonEncode(todo.toJson()),
+      },
+      conflictAlgorithm: ConflictAlgorithm.replace,
+    );
+  }
+
+  Future<List<TodoItem>> listTodos(String sessionId) async {
+    final db = await database;
+    final rows = await db.query('todos', where: 'session_id = ?', whereArgs: [sessionId]);
+    return rows
+        .map((row) => TodoItem.fromJson(jsonDecode(row['data'] as String) as JsonMap))
+        .toList();
+  }
+
+  Future<void> putSetting(String key, JsonMap value) async {
+    final db = await database;
+    await db.insert(
+      'settings',
+      {'key': key, 'value': jsonEncode(value)},
+      conflictAlgorithm: ConflictAlgorithm.replace,
+    );
+  }
+
+  Future<JsonMap?> getSetting(String key) async {
+    final db = await database;
+    final rows = await db.query('settings', where: 'key = ?', whereArgs: [key], limit: 1);
+    if (rows.isEmpty) return null;
+    return jsonDecode(rows.first['value'] as String) as JsonMap;
+  }
+
+  Future<void> replaceWorkspaceIndex(String workspaceId, List<WorkspaceEntry> entries) async {
+    final db = await database;
+    await db.transaction((txn) async {
+      await txn.delete('workspace_index', where: 'workspace_id = ?', whereArgs: [workspaceId]);
+      final batch = txn.batch();
+      for (final entry in entries) {
+        batch.insert('workspace_index', {
+          'workspace_id': workspaceId,
+          'path': entry.path,
+          'data': jsonEncode(entry.toJson()),
+        });
+      }
+      await batch.commit(noResult: true);
+    });
+  }
+
+  Future<List<WorkspaceEntry>> listWorkspaceIndex(String workspaceId) async {
+    final db = await database;
+    final rows = await db.query(
+      'workspace_index',
+      where: 'workspace_id = ?',
+      whereArgs: [workspaceId],
+    );
+    return rows
+        .map((row) => WorkspaceEntry.fromJson(jsonDecode(row['data'] as String) as JsonMap))
+        .toList();
+  }
+
+  Future<void> replaceWorkspaceSearchIndex(
+    String workspaceId,
+    List<WorkspaceSearchEntry> entries,
+  ) async {
+    final db = await database;
+    await db.transaction((txn) async {
+      await txn.delete('workspace_search_index', where: 'workspace_id = ?', whereArgs: [workspaceId]);
+      final batch = txn.batch();
+      for (final entry in entries) {
+        batch.insert('workspace_search_index', {
+          'workspace_id': workspaceId,
+          'path': entry.path,
+          'data': jsonEncode(entry.toJson()),
+        });
+      }
+      await batch.commit(noResult: true);
+    });
+  }
+
+  Future<List<WorkspaceSearchEntry>> listWorkspaceSearchIndex(String workspaceId) async {
+    final db = await database;
+    final rows = await db.query(
+      'workspace_search_index',
+      where: 'workspace_id = ?',
+      whereArgs: [workspaceId],
+    );
+    return rows
+        .map((row) => WorkspaceSearchEntry.fromJson(jsonDecode(row['data'] as String) as JsonMap))
+        .toList();
+  }
+}
