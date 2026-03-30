@@ -827,6 +827,48 @@ class SessionEngine {
         await database.getSetting('model_config') ??
             ModelConfig.defaults().toJson(),
       );
+      final cachedMessages = await database.listMessages(session.id);
+      final cachedParts = await database.listPartsForSession(session.id);
+      final toolPartByCallId = <String, MessagePart>{};
+      void upsertCachedMessage(MessageInfo message) {
+        final index =
+            cachedMessages.indexWhere((item) => item.id == message.id);
+        if (index >= 0) {
+          cachedMessages[index] = message;
+        } else {
+          cachedMessages.add(message);
+          cachedMessages.sort((a, b) => a.createdAt.compareTo(b.createdAt));
+        }
+      }
+
+      void upsertCachedPart(MessagePart part) {
+        final index = cachedParts.indexWhere((item) => item.id == part.id);
+        if (index >= 0) {
+          cachedParts[index] = part;
+        } else {
+          cachedParts.add(part);
+          cachedParts.sort((a, b) => a.createdAt.compareTo(b.createdAt));
+        }
+        final callId = part.data['callID'] as String?;
+        if (part.type == PartType.tool && callId != null && callId.isNotEmpty) {
+          toolPartByCallId[callId] = part;
+        }
+      }
+
+      for (final part in cachedParts) {
+        upsertCachedPart(part);
+      }
+
+      Future<void> saveTrackedMessage(MessageInfo message) async {
+        await _saveMessage(workspace: workspace, message: message);
+        upsertCachedMessage(message);
+      }
+
+      Future<void> saveTrackedPart(MessagePart part) async {
+        await _savePart(workspace: workspace, part: part);
+        upsertCachedPart(part);
+      }
+
       final userAgent = agent ?? session.agent;
       final definition = agentDefinition(userAgent);
       var activeSession = session.copyWith(
@@ -843,12 +885,7 @@ class SessionEngine {
         text: text,
         format: format,
       );
-      await database.saveMessage(userMessage);
-      events.emit(ServerEvent(
-        type: 'message.updated',
-        properties: userMessage.toJson(),
-        directory: workspace.treeUri,
-      ));
+      await saveTrackedMessage(userMessage);
       final assistant = MessageInfo(
         id: newId('message'),
         sessionId: session.id,
@@ -858,15 +895,9 @@ class SessionEngine {
         model: modelConfig.model,
         provider: modelConfig.provider,
       );
-      await database.saveMessage(assistant);
-      events.emit(ServerEvent(
-        type: 'message.updated',
-        properties: assistant.toJson(),
-        directory: workspace.treeUri,
-      ));
-      await _savePart(
-        workspace: workspace,
-        part: MessagePart(
+      await saveTrackedMessage(assistant);
+      await saveTrackedPart(
+        MessagePart(
           id: newId('part'),
           sessionId: session.id,
           messageId: assistant.id,
@@ -887,11 +918,13 @@ class SessionEngine {
         ));
         final conversation = await _buildConversation(
           workspace: workspace,
-          session: activeSession.copyWith(agent: currentAgent),
-          currentText: text,
+          messages: cachedMessages,
+          parts: cachedParts,
           currentStep: step,
           maxSteps: definition.steps,
           currentAgent: currentAgent,
+          model: modelConfig.model,
+          summaryMessageId: activeSession.summaryMessageId,
         );
         final toolModels = [
           ...toolRegistry.availableForAgent(agentDefinition(currentAgent)),
@@ -927,7 +960,7 @@ class SessionEngine {
                 DateTime.now().millisecondsSinceEpoch,
             data: {'text': streamedText},
           );
-          await _savePart(workspace: workspace, part: streamingTextPart!);
+          await saveTrackedPart(streamingTextPart!);
         }
 
         Future<void> flushStreamingReasoning({bool force = false}) async {
@@ -946,7 +979,7 @@ class SessionEngine {
                 DateTime.now().millisecondsSinceEpoch,
             data: {'text': streamedReasoning},
           );
-          await _savePart(workspace: workspace, part: streamingReasoningPart!);
+          await saveTrackedPart(streamingReasoningPart!);
         }
 
         // --- Retry loop (mirrors opencode processor.process() while(true)) ---
@@ -1042,9 +1075,8 @@ class SessionEngine {
         lastFinishReason = response.finishReason;
         lastUsage = response.usage;
         if (response.text.trim().isNotEmpty && streamingTextPart == null) {
-          await _savePart(
-            workspace: workspace,
-            part: MessagePart(
+          await saveTrackedPart(
+            MessagePart(
               id: newId('part'),
               sessionId: session.id,
               messageId: assistant.id,
@@ -1073,10 +1105,9 @@ class SessionEngine {
               error: assistant.error,
               structuredOutput: structured,
             );
-            await _saveMessage(workspace: workspace, message: updatedAssistant);
-            await _savePart(
-              workspace: workspace,
-              part: MessagePart(
+            await saveTrackedMessage(updatedAssistant);
+            await saveTrackedPart(
+              MessagePart(
                 id: newId('part'),
                 sessionId: session.id,
                 messageId: assistant.id,
@@ -1107,7 +1138,7 @@ class SessionEngine {
               }
             },
           );
-          await _savePart(workspace: workspace, part: toolPart);
+          await saveTrackedPart(toolPart);
           final result = await _executeTool(
             workspace: workspace,
             session: activeSession.copyWith(agent: currentAgent),
@@ -1115,6 +1146,8 @@ class SessionEngine {
             agent: currentAgent,
             call: call,
             cancelToken: cancelToken,
+            toolPartCache: toolPartByCallId,
+            onPartSaved: upsertCachedPart,
           );
           final metadata = result.metadata;
           if (metadata['switchAgent'] == 'build') {
@@ -1128,9 +1161,8 @@ class SessionEngine {
         );
         if (shouldBreak) break;
       }
-      await _savePart(
-        workspace: workspace,
-        part: MessagePart(
+      await saveTrackedPart(
+        MessagePart(
           id: newId('part'),
           sessionId: session.id,
           messageId: assistant.id,
@@ -1318,25 +1350,27 @@ class SessionEngine {
 
   Future<List<Map<String, dynamic>>> _buildConversation({
     required WorkspaceInfo workspace,
-    required SessionInfo session,
-    required String currentText,
+    required List<MessageInfo> messages,
+    required List<MessagePart> parts,
     required int currentStep,
     required int maxSteps,
     required String currentAgent,
+    required String model,
+    required String summaryMessageId,
   }) async {
-    final messages = await database.listMessages(session.id);
-    final parts = await database.listPartsForSession(session.id);
     final currentAgentDefinition = agentDefinition(currentAgent);
-    final latestUser =
-        messages.where((item) => item.role == SessionRole.user).isEmpty
-            ? null
-            : messages.where((item) => item.role == SessionRole.user).last;
+    MessageInfo? latestUser;
+    for (var i = messages.length - 1; i >= 0; i--) {
+      if (messages[i].role == SessionRole.user) {
+        latestUser = messages[i];
+        break;
+      }
+    }
     final system = await promptAssembler.buildSystemPrompts(
       PromptContext(
         workspace: workspace,
         agent: currentAgent,
-        model: (await database.getSetting('model_config') ??
-            ModelConfig.defaults().toJson())['model'] as String,
+        model: model,
         agentPrompt: currentAgentDefinition.promptOverride,
         hasSkillTool: true,
         currentStep: currentStep,
@@ -1351,7 +1385,7 @@ class SessionEngine {
         messages: messages,
         parts: parts,
         currentAgent: currentAgent,
-        summaryMessageId: session.summaryMessageId,
+        summaryMessageId: summaryMessageId,
       ),
     );
     if (currentStep >= maxSteps) {
@@ -1460,6 +1494,8 @@ class SessionEngine {
     required String agent,
     required ToolCall call,
     CancelToken? cancelToken,
+    Map<String, MessagePart>? toolPartCache,
+    void Function(MessagePart part)? onPartSaved,
   }) async {
     cancelToken?.throwIfCancelled();
     final tool = toolRegistry[call.name] ?? toolRegistry['invalid']!;
@@ -1540,6 +1576,8 @@ class SessionEngine {
         sessionId: session.id,
         callId: call.id,
         status: ToolStatus.running,
+        toolPartCache: toolPartCache,
+        onPartSaved: onPartSaved,
       );
       final result = await tool.execute(call.arguments, ctx);
       _invalidatePromptContextForToolResult(
@@ -1557,6 +1595,8 @@ class SessionEngine {
         title: result.title,
         metadata: result.metadata,
         attachments: result.attachments,
+        toolPartCache: toolPartCache,
+        onPartSaved: onPartSaved,
       );
       return result;
     } catch (error) {
@@ -1567,6 +1607,8 @@ class SessionEngine {
         callId: call.id,
         status: ToolStatus.error,
         output: error.toString(),
+        toolPartCache: toolPartCache,
+        onPartSaved: onPartSaved,
       );
       rethrow;
     }
@@ -1582,10 +1624,13 @@ class SessionEngine {
     String? title,
     JsonMap? metadata,
     List<JsonMap>? attachments,
+    Map<String, MessagePart>? toolPartCache,
+    void Function(MessagePart part)? onPartSaved,
   }) async {
-    final parts = await database.listPartsForSession(sessionId);
-    final part = parts.lastWhere(
-        (item) => item.type == PartType.tool && item.data['callID'] == callId);
+    final part = toolPartCache?[callId] ??
+        (await database.listPartsForSession(sessionId)).lastWhere(
+          (item) => item.type == PartType.tool && item.data['callID'] == callId,
+        );
     final state =
         Map<String, dynamic>.from(part.data['state'] as Map? ?? const {});
     state['status'] = status.name;
@@ -1613,6 +1658,10 @@ class SessionEngine {
       data: {...part.data, 'state': state},
     );
     await _savePart(workspace: workspace, part: updated);
+    if (toolPartCache != null) {
+      toolPartCache[callId] = updated;
+    }
+    onPartSaved?.call(updated);
   }
 
   Future<void> _savePart({

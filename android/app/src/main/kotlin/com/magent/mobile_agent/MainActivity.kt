@@ -8,6 +8,8 @@ import io.flutter.embedding.android.FlutterActivity
 import io.flutter.embedding.engine.FlutterEngine
 import io.flutter.plugin.common.MethodCall
 import io.flutter.plugin.common.MethodChannel
+import java.util.concurrent.ExecutorService
+import java.util.concurrent.Executors
 
 class MainActivity : FlutterActivity() {
     companion object {
@@ -15,11 +17,19 @@ class MainActivity : FlutterActivity() {
     }
 
     private var pendingResult: MethodChannel.Result? = null
+    private val workspaceExecutor: ExecutorService by lazy {
+        Executors.newFixedThreadPool(2)
+    }
 
     override fun configureFlutterEngine(flutterEngine: FlutterEngine) {
         super.configureFlutterEngine(flutterEngine)
         MethodChannel(flutterEngine.dartExecutor.binaryMessenger, "mobile_agent/workspace")
             .setMethodCallHandler(::handleWorkspaceCall)
+    }
+
+    override fun onDestroy() {
+        workspaceExecutor.shutdownNow()
+        super.onDestroy()
     }
 
     private fun handleWorkspaceCall(call: MethodCall, result: MethodChannel.Result) {
@@ -29,152 +39,183 @@ class MainActivity : FlutterActivity() {
                 val intent = Intent(Intent.ACTION_OPEN_DOCUMENT_TREE)
                 startActivityForResult(intent, PICK_WORKSPACE_REQUEST)
             }
-            "listDirectory" -> {
-                val treeUri = call.argument<String>("treeUri") ?: return result.error("missing_tree", "Missing treeUri", null)
-                val relativePath = call.argument<String>("relativePath") ?: ""
-                val offset = call.argument<Int>("offset") ?: 1
-                val limit = call.argument<Int>("limit")
-                val target = resolveDocument(treeUri, relativePath)
-                if (target == null || !target.isDirectory) {
-                    result.error("not_directory", "Target is not a directory", null)
-                    return
-                }
-                val entries =
-                    target.listFiles()
-                        .map { toEntry(it, childPath(relativePath, it.name ?: "")) }
-                        .sortedWith(compareBy<Map<String, Any?>>({ !(it["isDirectory"] as Boolean) }, { (it["path"] as String).lowercase() }))
-                val safeOffset = if (offset < 1) 1 else offset
-                val start = (safeOffset - 1).coerceAtMost(entries.size)
-                val end = if (limit == null || limit <= 0) entries.size else (start + limit).coerceAtMost(entries.size)
-                result.success(entries.subList(start, end))
-            }
-            "getEntry" -> {
-                val treeUri = call.argument<String>("treeUri") ?: return result.error("missing_tree", "Missing treeUri", null)
-                val relativePath = call.argument<String>("relativePath") ?: ""
-                val target = resolveDocument(treeUri, relativePath)
-                if (target == null) {
-                    result.error("not_found", "Unable to resolve entry", null)
-                    return
-                }
-                result.success(toEntry(target, normalizeRelativePath(relativePath)))
-            }
-            "searchEntries" -> {
-                val treeUri = call.argument<String>("treeUri") ?: return result.error("missing_tree", "Missing treeUri", null)
-                val relativePath = call.argument<String>("relativePath") ?: ""
-                val pattern = call.argument<String>("pattern") ?: "*"
-                val limit = call.argument<Int>("limit") ?: 100
-                val filesOnly = call.argument<Boolean>("filesOnly") ?: true
-                val ignorePatterns = call.argument<List<String>>("ignorePatterns") ?: emptyList()
-                val target = resolveDocument(treeUri, relativePath)
-                if (target == null || !target.isDirectory) {
-                    result.error("not_directory", "Target is not a directory", null)
-                    return
-                }
-                val rootPath = normalizeRelativePath(relativePath)
-                val globRegex = globToRegex(pattern)
-                val matches = mutableListOf<Map<String, Any?>>()
-                searchEntries(
-                    document = target,
-                    rootPath = rootPath,
-                    currentPath = rootPath,
-                    globRegex = globRegex,
-                    filesOnly = filesOnly,
-                    limit = limit,
-                    ignorePatterns = ignorePatterns,
-                    output = matches,
-                )
-                matches.sortByDescending { (it["lastModified"] as Int?) ?: 0 }
-                result.success(matches)
-            }
-            "grepText" -> {
-                val treeUri = call.argument<String>("treeUri") ?: return result.error("missing_tree", "Missing treeUri", null)
-                val relativePath = call.argument<String>("relativePath") ?: ""
-                val pattern = call.argument<String>("pattern") ?: return result.error("missing_pattern", "Missing pattern", null)
-                val include = call.argument<String>("include")
-                val limit = call.argument<Int>("limit") ?: 100
-                val maxLineLength = call.argument<Int>("maxLineLength") ?: 2000
-                val ignorePatterns = call.argument<List<String>>("ignorePatterns") ?: emptyList()
-                val target = resolveDocument(treeUri, relativePath)
-                if (target == null || !target.isDirectory) {
-                    result.error("not_directory", "Target is not a directory", null)
-                    return
-                }
-                val regex =
-                    try {
-                        Regex(pattern)
-                    } catch (error: Throwable) {
-                        result.error("invalid_pattern", error.message, null)
-                        return
-                    }
-                val includeRegex = include?.takeIf { it.isNotBlank() }?.let { globToRegex(it) }
-                val output = mutableListOf<Map<String, Any?>>()
-                grepWorkspace(
-                    document = target,
-                    currentPath = normalizeRelativePath(relativePath),
-                    regex = regex,
-                    includeRegex = includeRegex,
-                    limit = limit,
-                    maxLineLength = maxLineLength,
-                    ignorePatterns = ignorePatterns,
-                    output = output,
-                )
-                result.success(output)
-            }
-            "readText" -> {
-                val treeUri = call.argument<String>("treeUri") ?: return result.error("missing_tree", "Missing treeUri", null)
-                val relativePath = call.argument<String>("relativePath") ?: ""
-                val target = resolveDocument(treeUri, relativePath)
-                if (target == null || target.isDirectory) {
-                    result.error("not_file", "Target is not a file", null)
-                    return
-                }
-                contentResolver.openInputStream(target.uri)?.bufferedReader().use { reader ->
-                    result.success(reader?.readText() ?: "")
-                }
-            }
-            "readBytes" -> {
-                val treeUri = call.argument<String>("treeUri") ?: return result.error("missing_tree", "Missing treeUri", null)
-                val relativePath = call.argument<String>("relativePath") ?: ""
-                val target = resolveDocument(treeUri, relativePath)
-                if (target == null || target.isDirectory) {
-                    result.error("not_file", "Target is not a file", null)
-                    return
-                }
-                contentResolver.openInputStream(target.uri).use { stream ->
-                    result.success(stream?.readBytes() ?: ByteArray(0))
-                }
-            }
-            "writeText" -> {
-                val treeUri = call.argument<String>("treeUri") ?: return result.error("missing_tree", "Missing treeUri", null)
-                val relativePath = call.argument<String>("relativePath") ?: ""
-                val content = call.argument<String>("content") ?: ""
-                val target = ensureFile(treeUri, relativePath)
-                if (target == null) {
-                    result.error("write_failed", "Unable to create file", mapOf("path" to relativePath))
-                    return
-                }
-                val stream = contentResolver.openOutputStream(target.uri, "wt")
-                if (stream == null) {
-                    result.error("write_failed", "Unable to open output stream", mapOf("path" to relativePath))
-                    return
-                }
-                stream.bufferedWriter().use { writer ->
-                    writer.write(content)
-                }
-                result.success(null)
-            }
-            "deleteEntry" -> {
-                val treeUri = call.argument<String>("treeUri") ?: return result.error("missing_tree", "Missing treeUri", null)
-                val relativePath = call.argument<String>("relativePath") ?: ""
-                val target = resolveDocument(treeUri, relativePath)
-                if (target == null) {
-                    result.error("missing_entry", "Unable to resolve entry", null)
-                    return
-                }
-                result.success(target.delete())
-            }
+            "listDirectory" -> runWorkspaceCall(result) { handleListDirectory(call) }
+            "getEntry" -> runWorkspaceCall(result) { handleGetEntry(call) }
+            "searchEntries" -> runWorkspaceCall(result) { handleSearchEntries(call) }
+            "grepText" -> runWorkspaceCall(result) { handleGrepText(call) }
+            "readText" -> runWorkspaceCall(result) { handleReadText(call) }
+            "readBytes" -> runWorkspaceCall(result) { handleReadBytes(call) }
+            "writeText" -> runWorkspaceCall(result) { handleWriteText(call) }
+            "deleteEntry" -> runWorkspaceCall(result) { handleDeleteEntry(call) }
             else -> result.notImplemented()
         }
+    }
+
+    private fun runWorkspaceCall(
+        result: MethodChannel.Result,
+        action: () -> Any?,
+    ) {
+        workspaceExecutor.execute {
+            try {
+                val value = action()
+                runOnUiThread {
+                    result.success(value)
+                }
+            } catch (error: WorkspaceMethodException) {
+                runOnUiThread {
+                    result.error(error.code, error.message, error.details)
+                }
+            } catch (error: Throwable) {
+                runOnUiThread {
+                    result.error("workspace_error", error.message, null)
+                }
+            }
+        }
+    }
+
+    private fun handleListDirectory(call: MethodCall): List<Map<String, Any?>> {
+        val treeUri = requireTreeUri(call)
+        val relativePath = call.argument<String>("relativePath") ?: ""
+        val offset = call.argument<Int>("offset") ?: 1
+        val limit = call.argument<Int>("limit")
+        val target = resolveDocument(treeUri, relativePath)
+        if (target == null || !target.isDirectory) {
+            throw WorkspaceMethodException("not_directory", "Target is not a directory")
+        }
+        val entries =
+            target.listFiles()
+                .map { toEntry(it, childPath(relativePath, it.name ?: "")) }
+                .sortedWith(compareBy<Map<String, Any?>>({ !(it["isDirectory"] as Boolean) }, { (it["path"] as String).lowercase() }))
+        val safeOffset = if (offset < 1) 1 else offset
+        val start = (safeOffset - 1).coerceAtMost(entries.size)
+        val end = if (limit == null || limit <= 0) entries.size else (start + limit).coerceAtMost(entries.size)
+        return entries.subList(start, end)
+    }
+
+    private fun handleGetEntry(call: MethodCall): Map<String, Any?> {
+        val treeUri = requireTreeUri(call)
+        val relativePath = call.argument<String>("relativePath") ?: ""
+        val target = resolveDocument(treeUri, relativePath)
+            ?: throw WorkspaceMethodException("not_found", "Unable to resolve entry")
+        return toEntry(target, normalizeRelativePath(relativePath))
+    }
+
+    private fun handleSearchEntries(call: MethodCall): List<Map<String, Any?>> {
+        val treeUri = requireTreeUri(call)
+        val relativePath = call.argument<String>("relativePath") ?: ""
+        val pattern = call.argument<String>("pattern") ?: "*"
+        val limit = call.argument<Int>("limit") ?: 100
+        val filesOnly = call.argument<Boolean>("filesOnly") ?: true
+        val ignorePatterns = call.argument<List<String>>("ignorePatterns") ?: emptyList()
+        val target = resolveDocument(treeUri, relativePath)
+        if (target == null || !target.isDirectory) {
+            throw WorkspaceMethodException("not_directory", "Target is not a directory")
+        }
+        val rootPath = normalizeRelativePath(relativePath)
+        val globRegex = globToRegex(pattern)
+        val matches = mutableListOf<Map<String, Any?>>()
+        searchEntries(
+            document = target,
+            rootPath = rootPath,
+            currentPath = rootPath,
+            globRegex = globRegex,
+            filesOnly = filesOnly,
+            limit = limit,
+            ignorePatterns = ignorePatterns,
+            output = matches,
+        )
+        matches.sortByDescending { (it["lastModified"] as Int?) ?: 0 }
+        return matches
+    }
+
+    private fun handleGrepText(call: MethodCall): List<Map<String, Any?>> {
+        val treeUri = requireTreeUri(call)
+        val relativePath = call.argument<String>("relativePath") ?: ""
+        val pattern =
+            call.argument<String>("pattern")
+                ?: throw WorkspaceMethodException("missing_pattern", "Missing pattern")
+        val include = call.argument<String>("include")
+        val limit = call.argument<Int>("limit") ?: 100
+        val maxLineLength = call.argument<Int>("maxLineLength") ?: 2000
+        val ignorePatterns = call.argument<List<String>>("ignorePatterns") ?: emptyList()
+        val target = resolveDocument(treeUri, relativePath)
+        if (target == null || !target.isDirectory) {
+            throw WorkspaceMethodException("not_directory", "Target is not a directory")
+        }
+        val regex =
+            try {
+                Regex(pattern)
+            } catch (error: Throwable) {
+                throw WorkspaceMethodException("invalid_pattern", error.message ?: "Invalid pattern")
+            }
+        val includeRegex = include?.takeIf { it.isNotBlank() }?.let { globToRegex(it) }
+        val output = mutableListOf<Map<String, Any?>>()
+        grepWorkspace(
+            document = target,
+            currentPath = normalizeRelativePath(relativePath),
+            regex = regex,
+            includeRegex = includeRegex,
+            limit = limit,
+            maxLineLength = maxLineLength,
+            ignorePatterns = ignorePatterns,
+            output = output,
+        )
+        return output
+    }
+
+    private fun handleReadText(call: MethodCall): String {
+        val treeUri = requireTreeUri(call)
+        val relativePath = call.argument<String>("relativePath") ?: ""
+        val target = resolveDocument(treeUri, relativePath)
+        if (target == null || target.isDirectory) {
+            throw WorkspaceMethodException("not_file", "Target is not a file")
+        }
+        contentResolver.openInputStream(target.uri)?.bufferedReader().use { reader ->
+            return reader?.readText() ?: ""
+        }
+    }
+
+    private fun handleReadBytes(call: MethodCall): ByteArray {
+        val treeUri = requireTreeUri(call)
+        val relativePath = call.argument<String>("relativePath") ?: ""
+        val target = resolveDocument(treeUri, relativePath)
+        if (target == null || target.isDirectory) {
+            throw WorkspaceMethodException("not_file", "Target is not a file")
+        }
+        contentResolver.openInputStream(target.uri).use { stream ->
+            return stream?.readBytes() ?: ByteArray(0)
+        }
+    }
+
+    private fun handleWriteText(call: MethodCall): Any? {
+        val treeUri = requireTreeUri(call)
+        val relativePath = call.argument<String>("relativePath") ?: ""
+        val content = call.argument<String>("content") ?: ""
+        val target = ensureFile(treeUri, relativePath)
+        if (target == null) {
+            throw WorkspaceMethodException("write_failed", "Unable to create file", mapOf("path" to relativePath))
+        }
+        val stream = contentResolver.openOutputStream(target.uri, "wt")
+        if (stream == null) {
+            throw WorkspaceMethodException("write_failed", "Unable to open output stream", mapOf("path" to relativePath))
+        }
+        stream.bufferedWriter().use { writer ->
+            writer.write(content)
+        }
+        return null
+    }
+
+    private fun handleDeleteEntry(call: MethodCall): Boolean {
+        val treeUri = requireTreeUri(call)
+        val relativePath = call.argument<String>("relativePath") ?: ""
+        val target = resolveDocument(treeUri, relativePath)
+            ?: throw WorkspaceMethodException("missing_entry", "Unable to resolve entry")
+        return target.delete()
+    }
+
+    private fun requireTreeUri(call: MethodCall): String {
+        return call.argument<String>("treeUri")
+            ?: throw WorkspaceMethodException("missing_tree", "Missing treeUri")
     }
 
     override fun onActivityResult(requestCode: Int, resultCode: Int, data: Intent?) {
@@ -448,3 +489,9 @@ class MainActivity : FlutterActivity() {
         return textExtensions.none { name.endsWith(it) }
     }
 }
+
+private class WorkspaceMethodException(
+    val code: String,
+    override val message: String,
+    val details: Any? = null,
+) : RuntimeException(message)

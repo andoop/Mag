@@ -248,6 +248,7 @@ class _HomePageState extends State<HomePage> {
   String _stagingKey = '';
   int _lastBackfillAt = 0;
   int _lastTimelineSyncAt = 0;
+  String _lastStateRenderKey = '';
 
   @override
   void initState() {
@@ -270,6 +271,11 @@ class _HomePageState extends State<HomePage> {
   void _onStateChanged() {
     if (!mounted) return;
     final state = widget.controller.state;
+    final renderKey = _stateRenderKey(state);
+    if (renderKey == _lastStateRenderKey) {
+      return;
+    }
+    _lastStateRenderKey = renderKey;
     _reconcileTimelineWindow(state);
     _scheduleTimelineSync(state);
     setState(() {});
@@ -1370,8 +1376,51 @@ class _HomePageState extends State<HomePage> {
       lastBundle?.message.text.length ?? 0,
       lastPart?.id ?? '',
       lastPart?.type.name ?? '',
-      lastPart?.data.toString().length ?? 0,
+      _partRenderHint(lastPart),
     ].join('|');
+  }
+
+  String _stateRenderKey(AppState state) {
+    final lastBundle = state.messages.isEmpty ? null : state.messages.last;
+    final lastPart =
+        lastBundle?.parts.isEmpty == false ? lastBundle!.parts.last : null;
+    return [
+      state.session?.id ?? '',
+      state.messages.length,
+      state.permissions.length,
+      state.questions.length,
+      state.todos.length,
+      state.isBusy,
+      state.error ?? '',
+      lastBundle?.message.id ?? '',
+      lastBundle?.message.text.length ?? 0,
+      lastPart?.id ?? '',
+      _partRenderHint(lastPart),
+    ].join('|');
+  }
+
+  String _partRenderHint(MessagePart? part) {
+    if (part == null) {
+      return '';
+    }
+    switch (part.type) {
+      case PartType.text:
+      case PartType.reasoning:
+        return '${part.type.name}:${(part.data['text'] as String?)?.length ?? 0}';
+      case PartType.tool:
+        final state = Map<String, dynamic>.from(
+          part.data['state'] as Map? ?? const <String, dynamic>{},
+        );
+        return [
+          part.type.name,
+          state['status'] ?? '',
+          (state['output'] as String?)?.length ?? 0,
+          (state['displayOutput'] as String?)?.length ?? 0,
+          (state['attachments'] as List?)?.length ?? 0,
+        ].join(':');
+      default:
+        return '${part.type.name}:${part.createdAt}';
+    }
   }
 
   String _formatTimestamp(int ms) {
