@@ -335,7 +335,7 @@ class _HomePageState extends State<HomePage> {
 
   List<_ModelChoice> _visibleModelChoices(AppState state) {
     final config = state.modelConfig ?? ModelConfig.defaults();
-    return _connectedModelChoices(config)
+    return _connectedModelChoices(config, state: state)
         .where((item) => _isModelVisible(config, item))
         .toList();
   }
@@ -344,8 +344,30 @@ class _HomePageState extends State<HomePage> {
     String providerId,
     String modelId, {
     ModelConfig? config,
+    AppState? state,
   }) {
-    final source = config != null ? _connectedModelChoices(config) : _builtinModelCatalog;
+    final source = config != null
+        ? _connectedModelChoices(config, state: state)
+        : _providerInfoById(providerId, state: state)?.models.values
+                .map(
+                  (item) => _modelChoiceFromProviderModel(
+                        providerId: providerId,
+                        id: item.id,
+                        info: item,
+                        latestIds: _providerInfoById(providerId, state: state) != null
+                            ? _latestModelIdsForProvider(
+                                _providerInfoById(providerId, state: state)!,
+                              )
+                            : const <String>{},
+                      ) ??
+                      _ModelChoice(
+                        providerId: providerId,
+                        id: item.id,
+                        name: item.name,
+                      ),
+                )
+                .toList() ??
+            _builtinModelCatalog;
     for (final item in source) {
       if (item.providerId == providerId && item.id == modelId) {
         return item;
@@ -361,6 +383,7 @@ class _HomePageState extends State<HomePage> {
     final providerLabel = _providerLabel(
       item.providerId,
       config: widget.controller.state.modelConfig,
+      state: widget.controller.state,
     ).toLowerCase();
     return item.name.toLowerCase().contains(query) ||
         item.id.toLowerCase().contains(query) ||
@@ -395,8 +418,16 @@ class _HomePageState extends State<HomePage> {
     if (a.recommended != b.recommended) return a.recommended ? -1 : 1;
     if (a.free != b.free) return a.free ? -1 : 1;
 
-    final aProvider = _providerById(a.providerId, config: current);
-    final bProvider = _providerById(b.providerId, config: current);
+    final aProvider = _providerById(
+      a.providerId,
+      config: current,
+      state: state,
+    );
+    final bProvider = _providerById(
+      b.providerId,
+      config: current,
+      state: state,
+    );
     if ((aProvider?.recommended ?? false) !=
         (bProvider?.recommended ?? false)) {
       return (aProvider?.recommended ?? false) ? -1 : 1;
@@ -418,7 +449,12 @@ class _HomePageState extends State<HomePage> {
     final isKeyboardOpen = mediaQuery.viewInsets.bottom > 0;
     final modelConfig = state.modelConfig ?? ModelConfig.defaults();
     final currentModelChoice =
-        _findModelChoice(modelConfig.provider, modelConfig.model, config: modelConfig);
+        _findModelChoice(
+      modelConfig.provider,
+      modelConfig.model,
+      config: modelConfig,
+      state: state,
+    );
     final showModelFreeTag = currentModelChoice != null &&
         _modelChoiceIsFree(currentModelChoice);
     final showModelLatestTag = currentModelChoice != null &&
@@ -432,7 +468,7 @@ class _HomePageState extends State<HomePage> {
               ? state.session!.title
               : (state.workspace?.name ?? l(context, '移动代理', 'Mobile Agent')),
           subtitle:
-              '${currentModelChoice?.name ?? modelConfig.model} · ${_providerLabel(modelConfig.provider, config: modelConfig)}',
+              '${currentModelChoice?.name ?? modelConfig.model} · ${_providerLabel(modelConfig.provider, config: modelConfig, state: state)}',
           showFreeTag: showModelFreeTag,
           running: state.isBusy,
         ),

@@ -35,6 +35,8 @@ class AppState {
     this.questions = const [],
     this.todos = const [],
     this.modelConfig,
+    this.providerList,
+    this.providerAuth = const {},
     this.recentModelKeys = const [],
     this.isBusy = false,
     this.error,
@@ -52,6 +54,8 @@ class AppState {
   final List<QuestionRequest> questions;
   final List<TodoItem> todos;
   final ModelConfig? modelConfig;
+  final ProviderListResponse? providerList;
+  final Map<String, List<ProviderAuthMethod>> providerAuth;
   final List<String> recentModelKeys;
   final bool isBusy;
   final String? error;
@@ -67,6 +71,8 @@ class AppState {
     List<QuestionRequest>? questions,
     List<TodoItem>? todos,
     ModelConfig? modelConfig,
+    ProviderListResponse? providerList,
+    Map<String, List<ProviderAuthMethod>>? providerAuth,
     List<String>? recentModelKeys,
     bool? isBusy,
     Object? error = _noChange,
@@ -82,6 +88,8 @@ class AppState {
       questions: questions ?? this.questions,
       todos: todos ?? this.todos,
       modelConfig: modelConfig ?? this.modelConfig,
+      providerList: providerList ?? this.providerList,
+      providerAuth: providerAuth ?? this.providerAuth,
       recentModelKeys: recentModelKeys ?? this.recentModelKeys,
       isBusy: isBusy ?? this.isBusy,
       error: identical(error, _noChange) ? this.error : error as String?,
@@ -133,10 +141,14 @@ class AppController extends ChangeNotifier {
     final workspaces = await _client!.listWorkspaces();
     final agents = await _client!.listAgents();
     final modelConfig = await _client!.loadModelConfig();
+    final providerList = await _client!.listProviders();
+    final providerAuth = await _client!.listProviderAuth();
     final recentModelKeys = await _loadRecentModelKeys();
     state = state.copyWith(
       serverUri: serverUri,
       modelConfig: modelConfig,
+      providerList: providerList,
+      providerAuth: providerAuth,
       agents: agents,
       recentModelKeys: recentModelKeys,
     );
@@ -370,11 +382,47 @@ class AppController extends ChangeNotifier {
   }
 
   Future<void> saveModelConfig(ModelConfig config) async {
-    await _client!.saveModelConfig(normalizeMagFreeModelsOnly(config));
-    final recentModelKeys = await _saveRecentModelKeys(config);
+    final normalized = normalizeMagFreeModelsOnly(config);
+    await _client!.saveModelConfig(normalized);
+    final providerList = await _client!.listProviders();
+    final providerAuth = await _client!.listProviderAuth();
+    final recentModelKeys = await _saveRecentModelKeys(normalized);
     state = state.copyWith(
-      modelConfig: config,
+      modelConfig: normalized,
+      providerList: providerList,
+      providerAuth: providerAuth,
       recentModelKeys: recentModelKeys,
+    );
+    notifyListeners();
+  }
+
+  Future<ProviderAuthAuthorization?> authorizeProviderOAuth(
+    String providerId, {
+    required int method,
+    Map<String, String>? inputs,
+  }) async {
+    return _client!.authorizeProviderOAuth(
+      providerId,
+      method: method,
+      inputs: inputs,
+    );
+  }
+
+  Future<void> callbackProviderOAuth(
+    String providerId, {
+    required int method,
+    String? code,
+  }) async {
+    await _client!.callbackProviderOAuth(
+      providerId,
+      method: method,
+      code: code,
+    );
+    final providerList = await _client!.listProviders();
+    final providerAuth = await _client!.listProviderAuth();
+    state = state.copyWith(
+      providerList: providerList,
+      providerAuth: providerAuth,
     );
     notifyListeners();
   }

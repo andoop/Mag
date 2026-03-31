@@ -42,7 +42,8 @@ extension _HomePageTimeline on _HomePageState {
             l(context, '未选择工作区', 'No workspace selected'),
         sessionTitle: state.session?.title ?? l(context, '新会话', 'New session'),
         agentName: _selectedAgent ?? state.session?.agent ?? 'build',
-        providerLabel: _providerLabel(modelConfig.provider, config: modelConfig),
+        providerLabel:
+            _providerLabel(modelConfig.provider, config: modelConfig, state: state),
         modelLabel: currentModelChoice?.name ?? modelConfig.model,
         showModelFreeTag: showModelFreeTag,
         showModelLatestTag: showModelLatestTag,
@@ -64,7 +65,8 @@ extension _HomePageTimeline on _HomePageState {
       if (index == cursor++) {
         return _EmptyTimelineCard(
           onSelectModel: () => _openModelChooser(context),
-          providerLabel: _providerLabel(modelConfig.provider, config: modelConfig),
+          providerLabel:
+              _providerLabel(modelConfig.provider, config: modelConfig, state: state),
           modelLabel: currentModelChoice?.name ?? modelConfig.model,
           showModelFreeTag: showModelFreeTag,
           showModelLatestTag: showModelLatestTag,

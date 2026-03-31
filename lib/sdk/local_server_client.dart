@@ -34,6 +34,42 @@ class LocalServerClient {
         .toList();
   }
 
+  Future<ProviderListResponse> listProviders() async {
+    final data = await _get('/provider');
+    return ProviderListResponse.fromJson(Map<String, dynamic>.from(data as Map));
+  }
+
+  Future<Map<String, List<ProviderAuthMethod>>> listProviderAuth() async {
+    final data = await _get('/provider/auth');
+    return providerAuthMethodsFromJson(Map<String, dynamic>.from(data as Map));
+  }
+
+  Future<ProviderAuthAuthorization?> authorizeProviderOAuth(
+    String providerId, {
+    required int method,
+    Map<String, String>? inputs,
+  }) async {
+    final data = await _post('/provider/$providerId/oauth/authorize', {
+      'method': method,
+      if (inputs != null) 'inputs': inputs,
+    });
+    if (data == null) return null;
+    return ProviderAuthAuthorization.fromJson(
+      Map<String, dynamic>.from(data as Map),
+    );
+  }
+
+  Future<void> callbackProviderOAuth(
+    String providerId, {
+    required int method,
+    String? code,
+  }) async {
+    await _post('/provider/$providerId/oauth/callback', {
+      'method': method,
+      if (code != null) 'code': code,
+    });
+  }
+
   Future<WorkspaceInfo> saveWorkspace(WorkspaceInfo workspace) async {
     final data = await _post('/workspace', workspace.toJson());
     return WorkspaceInfo.fromJson(Map<String, dynamic>.from(data as Map));

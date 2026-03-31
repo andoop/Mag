@@ -414,6 +414,35 @@ int _providerSortRank(String providerId) {
   return index >= 0 ? index : 999;
 }
 
+ProviderListResponse _fallbackProviderListResponse() {
+  final all = fallbackProviderCatalog();
+  return ProviderListResponse(
+    all: all,
+    connected: const ['mag'],
+    defaultModels: {
+      for (final provider in all)
+        if (defaultModelIdForProvider(provider) != null)
+          provider.id: defaultModelIdForProvider(provider)!,
+    },
+  );
+}
+
+ProviderListResponse _providerListForState(AppState? state) {
+  return state?.providerList ?? _fallbackProviderListResponse();
+}
+
+ProviderInfo? _providerInfoById(
+  String id, {
+  AppState? state,
+  ProviderListResponse? providerList,
+}) {
+  final source = providerList ?? _providerListForState(state);
+  for (final item in source.all) {
+    if (item.id == id) return item;
+  }
+  return null;
+}
+
 _ProviderPreset? _builtinProviderById(String id) {
   for (final item in _builtinProviderPresets) {
     if (item.id == id) return item;
@@ -421,14 +450,18 @@ _ProviderPreset? _builtinProviderById(String id) {
   return null;
 }
 
-_ProviderPreset _presetFromConnection(ProviderConnection connection) {
-  final builtin = _builtinProviderById(connection.id);
-  if (builtin != null && !connection.custom) {
+_ProviderPreset _presetFromProviderInfo(ProviderInfo provider) {
+  final builtin = _builtinProviderById(provider.id);
+  final envSummary = provider.env.isNotEmpty ? provider.env.join(', ') : null;
+  if (builtin != null && !provider.custom) {
     return _ProviderPreset(
       id: builtin.id,
-      name: connection.name,
-      baseUrl: connection.baseUrl,
-      note: builtin.note,
+      name: provider.name,
+      baseUrl: provider.api ?? builtin.baseUrl,
+      note: [
+        if ((builtin.note ?? '').isNotEmpty) builtin.note!,
+        if ((envSummary ?? '').isNotEmpty) envSummary!,
+      ].join(' · '),
       recommended: builtin.recommended,
       popular: builtin.popular,
       custom: builtin.custom,
@@ -436,17 +469,25 @@ _ProviderPreset _presetFromConnection(ProviderConnection connection) {
     );
   }
   return _ProviderPreset(
-    id: connection.id,
-    name: connection.name,
-    baseUrl: connection.baseUrl,
-    note: connection.custom ? 'Custom OpenAI-compatible endpoint.' : null,
-    custom: connection.custom,
-    requiresApiKey: true,
+    id: provider.id,
+    name: provider.name,
+    baseUrl: provider.api ?? (_builtinProviderById(provider.id)?.baseUrl ?? ''),
+    note: provider.custom
+        ? 'Custom OpenAI-compatible endpoint.'
+        : envSummary,
+    custom: provider.custom,
+    recommended: _providerSortRank(provider.id) < 4,
+    popular: _providerSortRank(provider.id) < 999,
+    requiresApiKey: provider.id != 'mag' && provider.id != 'ollama',
   );
 }
 
-List<_ProviderPreset> _connectedProviderPresets(ModelConfig config) {
-  return config.connections.map(_presetFromConnection).toList()
+List<_ProviderPreset> _allProviderPresets({
+  AppState? state,
+  ProviderListResponse? providerList,
+}) {
+  final source = providerList ?? _providerListForState(state);
+  return source.all.map(_presetFromProviderInfo).toList()
     ..sort((a, b) {
       final rankCompare = _providerSortRank(a.id).compareTo(_providerSortRank(b.id));
       if (rankCompare != 0) return rankCompare;
@@ -454,17 +495,58 @@ List<_ProviderPreset> _connectedProviderPresets(ModelConfig config) {
     });
 }
 
-_ProviderPreset? _providerById(String id, {ModelConfig? config}) {
+List<_ProviderPreset> _connectedProviderPresets(
+  ModelConfig config, {
+  AppState? state,
+  ProviderListResponse? providerList,
+}) {
+  final source = providerList ?? _providerListForState(state);
+  final connected = source.connected.toSet();
+  return source.all
+      .where((item) => connected.contains(item.id))
+      .map(_presetFromProviderInfo)
+      .toList()
+    ..sort((a, b) {
+      final rankCompare = _providerSortRank(a.id).compareTo(_providerSortRank(b.id));
+      if (rankCompare != 0) return rankCompare;
+      return a.name.toLowerCase().compareTo(b.name.toLowerCase());
+    });
+}
+
+_ProviderPreset? _providerById(
+  String id, {
+  ModelConfig? config,
+  AppState? state,
+  ProviderListResponse? providerList,
+}) {
+  final source = providerList ?? _providerListForState(state);
   if (config != null) {
-    for (final item in _connectedProviderPresets(config)) {
+    for (final item in _connectedProviderPresets(
+      config,
+      state: state,
+      providerList: source,
+    )) {
       if (item.id == id) return item;
     }
   }
+  final info = _providerInfoById(id, providerList: source);
+  if (info != null) return _presetFromProviderInfo(info);
   return _builtinProviderById(id);
 }
 
-String _providerLabel(String id, {ModelConfig? config}) =>
-    _providerById(id, config: config)?.name ?? id;
+String _providerLabel(
+  String id, {
+  ModelConfig? config,
+  AppState? state,
+  ProviderListResponse? providerList,
+}) =>
+    _providerById(
+      id,
+      config: config,
+      state: state,
+      providerList: providerList,
+    )?.name ??
+    id;
 
 _ModelChoice? _builtinModelById(String providerId, String modelId) {
   for (final item in _builtinModelCatalog) {
@@ -489,18 +571,51 @@ String _modelDisplayName(String id) {
       .join(' ');
 }
 
+Set<String> _latestModelIdsForProvider(ProviderInfo provider) {
+  final now = DateTime.now();
+  final byFamily = <String, ProviderModelInfo>{};
+  for (final model in provider.models.values) {
+    final parsed = DateTime.tryParse(model.releaseDate);
+    if (parsed == null) continue;
+    if (parsed.isBefore(now.subtract(const Duration(days: 183)))) continue;
+    final family = (model.family ?? model.id).trim();
+    final existing = byFamily[family];
+    if (existing == null) {
+      byFamily[family] = model;
+      continue;
+    }
+    final existingParsed = DateTime.tryParse(existing.releaseDate);
+    if (existingParsed == null || parsed.isAfter(existingParsed)) {
+      byFamily[family] = model;
+    }
+  }
+  return byFamily.values.map((item) => item.id).toSet().cast<String>();
+}
+
 List<_ModelChoice> _modelsForProvider(
   String providerId, {
   ModelConfig? config,
+  AppState? state,
+  ProviderListResponse? providerList,
 }) {
+  final source = providerList ?? _providerListForState(state);
+  final provider = _providerInfoById(providerId, providerList: source);
   final connection = config?.connectionFor(providerId);
   if (connection != null && connection.models.isNotEmpty) {
     final ids = providerId == 'mag'
         ? filterMagZenFreeModels(connection.models)
         : connection.models;
+    final latestIds =
+        provider != null ? _latestModelIdsForProvider(provider) : <String>{};
     return ids
         .map(
           (id) =>
+              _modelChoiceFromProviderModel(
+                providerId: providerId,
+                id: id,
+                info: provider?.models[id],
+                latestIds: latestIds,
+              ) ??
               _builtinModelById(providerId, id) ??
               _ModelChoice(
                 providerId: providerId,
@@ -513,9 +628,37 @@ List<_ModelChoice> _modelsForProvider(
   return const [];
 }
 
-List<_ModelChoice> _connectedModelChoices(ModelConfig config) {
+_ModelChoice? _modelChoiceFromProviderModel({
+  required String providerId,
+  required String id,
+  required Set<String> latestIds,
+  ProviderModelInfo? info,
+}) {
+  if (info == null) return null;
+  return _ModelChoice(
+    providerId: providerId,
+    id: id,
+    name: info.name.replaceAll('(latest)', '').trim(),
+    latest: latestIds.contains(id) || info.name.contains('(latest)'),
+    free: providerId == 'mag'
+        ? isMagZenFreeModelId(id)
+        : (info.cost.input == 0 &&
+            (id.contains(':free') || id.endsWith('-free') || id.contains('/free'))),
+  );
+}
+
+List<_ModelChoice> _connectedModelChoices(
+  ModelConfig config, {
+  AppState? state,
+  ProviderListResponse? providerList,
+}) {
   return config.connections
-      .expand((item) => _modelsForProvider(item.id, config: config))
+      .expand((item) => _modelsForProvider(
+            item.id,
+            config: config,
+            state: state,
+            providerList: providerList,
+          ))
       .toList();
 }
 
