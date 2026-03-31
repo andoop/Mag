@@ -577,15 +577,15 @@ class _HomePageState extends State<HomePage> {
       case 'deepseek':
         return l(context, 'DeepSeek 官方接口，已预置 deepseek-chat。',
             'Official DeepSeek API with `deepseek-chat` preconfigured.');
-      case 'opencode':
-        return l(context, 'OpenCode Zen 免费模型入口，未填 key 时会尝试 public token。',
-            'OpenCode Zen free-model entry. It will try a public token when no key is set.');
-      case 'opencode_go':
+      case 'mag':
+        return l(context, 'Mag Zen 免费模型入口，未填 key 时会尝试 public token。',
+            'Mag Zen free-model entry. It will try a public token when no key is set.');
+      case 'mag_go':
         return l(
-            context, 'OpenCode Go 推荐入口。', 'Recommended OpenCode Go entry.');
+            context, 'Mag Go 推荐入口。', 'Recommended Mag Go entry.');
       case 'openrouter':
-        return l(context, 'OpenCode 风格推荐入口，支持免费模型和多家模型聚合。',
-            'OpenCode-style recommended entry with free models and aggregated providers.');
+        return l(context, 'Mag 风格推荐入口，支持免费模型和多家模型聚合。',
+            'Mag-style recommended entry with free models and aggregated providers.');
       case 'openai':
         return l(context, '官方 OpenAI API。', 'Official OpenAI API.');
       case 'github_models':
@@ -1523,8 +1523,8 @@ class _HomePageState extends State<HomePage> {
                           style: const TextStyle(fontWeight: FontWeight.bold)),
                       const SizedBox(height: 4),
                       Text(
-                        l(context, '像 OpenCode 一样把 provider 作为模型管理入口来切换。',
-                            'Manage providers as the entry point for model selection, similar to OpenCode.'),
+                        l(context, '像 Mag 一样把 provider 作为模型管理入口来切换。',
+                            'Manage providers as the entry point for model selection, similar to Mag.'),
                         style: Theme.of(context).textTheme.bodySmall,
                       ),
                       const SizedBox(height: 8),
@@ -1692,8 +1692,8 @@ class _HomePageState extends State<HomePage> {
                                 Text(
                                   l(
                                       context,
-                                      '按 OpenCode 的单列表思路展示最近使用、推荐项和完整模型列表。',
-                                      'Show recent, suggested, and the full model catalog in a single OpenCode-style list.'),
+                                      '按 Mag 的单列表思路展示最近使用、推荐项和完整模型列表。',
+                                      'Show recent, suggested, and the full model catalog in a single Mag-style list.'),
                                   style: Theme.of(context).textTheme.bodySmall,
                                 ),
                               ],
@@ -2218,19 +2218,19 @@ const List<_ProviderPreset> _providerPresets = [
     popular: true,
   ),
   _ProviderPreset(
-    id: 'opencode',
-    name: 'OpenCode',
+    id: 'mag',
+    name: 'Mag',
     baseUrl: 'https://opencode.ai/zen/v1',
-    note: 'OpenCode Zen free-model entry with optional public token fallback.',
+    note: 'Mag Zen free-model entry with optional public token fallback.',
     recommended: true,
     popular: true,
     requiresApiKey: false,
   ),
   _ProviderPreset(
-    id: 'opencode_go',
-    name: 'OpenCode Go',
+    id: 'mag_go',
+    name: 'Mag Go',
     baseUrl: 'https://opencode.ai/zen/v1',
-    note: 'Recommended OpenCode Go entry.',
+    note: 'Recommended Mag Go entry.',
     recommended: true,
     popular: true,
     requiresApiKey: false,
@@ -2239,7 +2239,7 @@ const List<_ProviderPreset> _providerPresets = [
     id: 'openrouter',
     name: 'OpenRouter',
     baseUrl: 'https://openrouter.ai/api/v1',
-    note: 'Recommended OpenCode-style entry with free and aggregated models.',
+    note: 'Recommended Mag-style entry with free and aggregated models.',
     recommended: true,
     popular: true,
   ),
@@ -2275,7 +2275,7 @@ const List<_ModelChoice> _modelCatalog = [
     latest: true,
   ),
   _ModelChoice(
-    providerId: 'opencode',
+    providerId: 'mag',
     id: 'minimax-m2.5-free',
     name: 'MiniMax M2.5 Free',
     free: true,
@@ -2283,7 +2283,7 @@ const List<_ModelChoice> _modelCatalog = [
     unpaid: true,
   ),
   _ModelChoice(
-    providerId: 'opencode',
+    providerId: 'mag',
     id: 'mimo-v2-pro-free',
     name: 'MiMo V2 Pro Free',
     free: true,
@@ -2291,7 +2291,7 @@ const List<_ModelChoice> _modelCatalog = [
     unpaid: true,
   ),
   _ModelChoice(
-    providerId: 'opencode',
+    providerId: 'mag',
     id: 'mimo-v2-omni-free',
     name: 'MiMo V2 Omni Free',
     free: true,
@@ -2299,7 +2299,7 @@ const List<_ModelChoice> _modelCatalog = [
     unpaid: true,
   ),
   _ModelChoice(
-    providerId: 'opencode',
+    providerId: 'mag',
     id: 'nemotron-3-super-free',
     name: 'Nemotron 3 Super Free',
     free: true,
@@ -2307,7 +2307,7 @@ const List<_ModelChoice> _modelCatalog = [
     unpaid: true,
   ),
   _ModelChoice(
-    providerId: 'opencode',
+    providerId: 'mag',
     id: 'big-pickle',
     name: 'Big Pickle',
     free: true,
@@ -2621,8 +2621,8 @@ class _ContextStatsCard extends StatelessWidget {
                 _CompactActionButton(
                   onPressed: onInitializeMemory,
                   icon: Icons.note_add_outlined,
-                  label: l(context, '初始化/更新 OpenCode.md',
-                      'Initialize/Update OpenCode.md'),
+                  label: l(context, '初始化/更新 Mag.md',
+                      'Initialize/Update Mag.md'),
                 ),
               ],
             ),
@@ -2736,8 +2736,8 @@ class _EmptyTimelineCard extends StatelessWidget {
           Text(
             l(
                 context,
-                '这个区域现在按 OpenCode web 的结构只保留 timeline 内容。模型、provider、session、agent 都通过顶部入口切换。',
-                'This area now keeps only the timeline content, similar to OpenCode web. Model, provider, session, and agent are switched from the top controls.'),
+                '这个区域现在按 Mag web 的结构只保留 timeline 内容。模型、provider、session、agent 都通过顶部入口切换。',
+                'This area now keeps only the timeline content, similar to Mag web. Model, provider, session, and agent are switched from the top controls.'),
             style: Theme.of(context).textTheme.bodyMedium,
           ),
           if (providerLabel != null || modelLabel != null) ...[
@@ -3467,7 +3467,7 @@ class _PartTile extends StatelessWidget {
           label: l(context, '上下文已压缩', 'Context Compacted'),
           detail: l(
             context,
-            '已按 OpenCode 风格生成续聊摘要，后续上下文将从摘要继续。',
+            '已按 Mag 风格生成续聊摘要，后续上下文将从摘要继续。',
             'A continuation summary was generated and future context will continue from it.',
           ),
           color: const Color(0xFFFFFBEB),

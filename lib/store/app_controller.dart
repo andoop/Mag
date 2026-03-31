@@ -283,8 +283,8 @@ class AppController extends ChangeNotifier {
     _debugLog('sendPrompt',
         'provider=${modelConfig.provider} model=${modelConfig.model}');
     if (modelConfig.apiKey.trim().isEmpty) {
-      final isOpenCodeProvider = modelConfig.provider.startsWith('opencode');
-      if (isOpenCodeProvider) {
+      final isMagProvider = modelConfig.provider.startsWith('mag');
+      if (isMagProvider) {
         state = state.copyWith(isBusy: true, error: null);
         notifyListeners();
       } else {
@@ -318,7 +318,7 @@ class AppController extends ChangeNotifier {
     final session = state.session;
     if (session == null || state.isBusy) return;
     await sendPrompt(
-      openCodeMemoryInitializationPrompt,
+      magMemoryInitializationPrompt,
       agent: session.agent,
     );
   }

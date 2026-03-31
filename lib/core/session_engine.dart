@@ -20,7 +20,7 @@ void _debugLog(String tag, String message, [JsonMap? data]) {
       '[session-engine][$tag] $message${data != null ? ' ${jsonEncode(data)}' : ''}');
 }
 
-/// Dart equivalent of AbortSignal/AbortController from opencode.
+/// Dart equivalent of AbortSignal/AbortController from mag.
 /// Threaded through prompt → model gateway → tool execution → permission/question waits.
 class CancelToken {
   final Completer<Never> _completer = Completer<Never>();
@@ -312,8 +312,8 @@ class ModelGateway {
     FutureOr<void> Function(String delta)? onReasoningDelta,
   }) async {
     cancelToken?.throwIfCancelled();
-    final isOpenCodeProvider = config.provider.startsWith('opencode');
-    final effectiveApiKey = isOpenCodeProvider && config.apiKey.trim().isEmpty
+    final isMagProvider = config.provider.startsWith('mag');
+    final effectiveApiKey = isMagProvider && config.apiKey.trim().isEmpty
         ? 'public'
         : config.apiKey.trim();
     _debugLog('gateway',
@@ -323,7 +323,7 @@ class ModelGateway {
     }
     final client = HttpClient()
       ..connectionTimeout = const Duration(seconds: 30);
-    // Abort the HTTP connection when cancelled (like opencode's AbortSignal on fetch)
+    // Abort the HTTP connection when cancelled (like mag's AbortSignal on fetch)
     if (cancelToken != null) {
       unawaited(cancelToken
           .guard(Completer<Never>().future)
@@ -341,9 +341,9 @@ class ModelGateway {
       'json',
       charset: 'utf-8',
     );
-    if (isOpenCodeProvider) {
+    if (isMagProvider) {
       request.headers.set('HTTP-Referer', 'https://opencode.ai/');
-      request.headers.set('X-Title', 'opencode');
+      request.headers.set('X-Title', 'mag');
     }
     final payload = <String, dynamic>{
       'model': config.model,
@@ -381,8 +381,8 @@ class ModelGateway {
         _formatModelRequestError(
           statusCode: response.statusCode,
           body: body,
-          isOpenCodeProvider: isOpenCodeProvider,
-          usesPublicToken: isOpenCodeProvider && config.apiKey.trim().isEmpty,
+          isMagProvider: isMagProvider,
+          usesPublicToken: isMagProvider && config.apiKey.trim().isEmpty,
           model: config.model,
         ),
       );
@@ -596,7 +596,7 @@ class ModelGateway {
   String _formatModelRequestError({
     required int statusCode,
     required String body,
-    required bool isOpenCodeProvider,
+    required bool isMagProvider,
     required bool usesPublicToken,
     required String model,
   }) {
@@ -607,10 +607,10 @@ class ModelGateway {
         if (error is Map<String, dynamic>) {
           final type = error['type'] as String?;
           final message = error['message'] as String?;
-          if (isOpenCodeProvider &&
+          if (isMagProvider &&
               usesPublicToken &&
               type == 'FreeUsageLimitError') {
-            return 'OpenCode 免费模型当前限流，请稍后再试，或切换其他免费模型/配置你自己的 API Key。当前模型：$model';
+            return 'Mag 免费模型当前限流，请稍后再试，或切换其他免费模型/配置你自己的 API Key。当前模型：$model';
           }
           if (message != null && message.trim().isNotEmpty) {
             return 'Model request failed: $statusCode $message';
@@ -710,7 +710,7 @@ class SessionEngine {
     );
   }
 
-  /// Mirrors opencode's `SessionPrompt.cancel()`.
+  /// Mirrors mag's `SessionPrompt.cancel()`.
   /// Aborts the cancel token, cleans up pending permissions/questions,
   /// and forces idle status.
   Future<void> cancel(String sessionId, {String? directory}) async {
@@ -727,7 +727,7 @@ class SessionEngine {
     ));
   }
 
-  /// Mirrors opencode's fire-and-forget pattern in local_server prompt_async.
+  /// Mirrors mag's fire-and-forget pattern in local_server prompt_async.
   Future<void> promptAsync({
     required WorkspaceInfo workspace,
     required SessionInfo session,
@@ -795,9 +795,9 @@ class SessionEngine {
     }
   }
 
-  /// Mirrors opencode's `SessionPrompt.loop()` + `SessionProcessor.process()`.
+  /// Mirrors mag's `SessionPrompt.loop()` + `SessionProcessor.process()`.
   ///
-  /// Key patterns from opencode:
+  /// Key patterns from mag:
   /// - CancelToken (AbortSignal) threaded through everything
   /// - `defer(() => cancel(sessionId))` guarantees idle on any exit
   /// - Retry with exponential backoff for transient errors
@@ -828,7 +828,7 @@ class SessionEngine {
       },
     );
     // #endregion
-    // Create cancel token (like opencode's AbortController per session)
+    // Create cancel token (like mag's AbortController per session)
     final cancelToken = CancelToken();
     _cancelTokens[session.id] = cancelToken;
     _busy[session.id] = true;
@@ -1035,7 +1035,7 @@ class SessionEngine {
           await saveTrackedPart(streamingReasoningPart!);
         }
 
-        // --- Retry loop (mirrors opencode processor.process() while(true)) ---
+        // --- Retry loop (mirrors mag processor.process() while(true)) ---
         late ModelResponse response;
         var attempt = 0;
         while (true) {
@@ -1130,7 +1130,7 @@ class SessionEngine {
               },
               directory: workspace.treeUri,
             ));
-            // Sleep with cancellation support (like opencode's SessionRetry.sleep)
+            // Sleep with cancellation support (like mag's SessionRetry.sleep)
             try {
               await cancelToken
                   .guard(Future.delayed(Duration(milliseconds: delay)));
@@ -1258,7 +1258,7 @@ class SessionEngine {
       return assistant;
     } on CancelledException {
       _debugLog('prompt', 'cancelled session=${session.id}');
-      // Cleanup incomplete tool parts (mirrors opencode processor cleanup)
+      // Cleanup incomplete tool parts (mirrors mag processor cleanup)
       await _cleanupIncompleteToolParts(
           workspace: workspace, sessionId: session.id);
       rethrow;
@@ -1266,7 +1266,7 @@ class SessionEngine {
       _debugLog('prompt', 'error: $error');
       await _cleanupIncompleteToolParts(
           workspace: workspace, sessionId: session.id);
-      // Emit error event (mirrors opencode: Session.Event.Error + set idle)
+      // Emit error event (mirrors mag: Session.Event.Error + set idle)
       events.emit(ServerEvent(
         type: 'session.error',
         properties: {
@@ -1277,7 +1277,7 @@ class SessionEngine {
       ));
       rethrow;
     } finally {
-      // Mirrors opencode's `defer(() => cancel(sessionId))`.
+      // Mirrors mag's `defer(() => cancel(sessionId))`.
       // Guarantees idle status is always set regardless of how the function exits.
       _cancelTokens.remove(session.id);
       _busy.remove(session.id);
@@ -1289,7 +1289,7 @@ class SessionEngine {
     }
   }
 
-  /// Mirrors opencode's cleanup of incomplete tool parts after stream ends.
+  /// Mirrors mag's cleanup of incomplete tool parts after stream ends.
   Future<void> _cleanupIncompleteToolParts({
     required WorkspaceInfo workspace,
     required String sessionId,
@@ -1331,7 +1331,7 @@ class SessionEngine {
       {
         'role': 'system',
         'content':
-            'You are OpenCode summarizer. Produce a concise but information-dense continuation summary for the same coding task. Preserve user constraints, decisions, errors, pending work, important file paths, and next steps.',
+            'You are Mag summarizer. Produce a concise but information-dense continuation summary for the same coding task. Preserve user constraints, decisions, errors, pending work, important file paths, and next steps.',
       },
       ..._messagesToConversation(
         messages: messages,

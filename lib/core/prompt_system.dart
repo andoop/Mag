@@ -289,10 +289,10 @@ class PromptAssembler {
 const String _structuredOutputPrompt =
     'IMPORTANT: The user requested structured output. You MUST finish by calling the StructuredOutput tool exactly once with valid JSON.';
 
-const String openCodeMemoryInitializationPrompt = '''
-Analyze this workspace and create or update `OpenCode.md` in the project root.
+const String magMemoryInitializationPrompt = '''
+Analyze this workspace and create or update `Mag.md` in the project root.
 
-You must read the workspace before writing. If `OpenCode.md` already exists, improve it instead of replacing useful confirmed facts.
+You must read the workspace before writing. If `Mag.md` already exists, improve it instead of replacing useful confirmed facts.
 
 Write a concise, high-signal markdown file with exactly these sections when information is available:
 
@@ -334,12 +334,12 @@ const List<String> _defaultContextPaths = [
   '.cursor/rules/',
   'CLAUDE.md',
   'CLAUDE.local.md',
-  'opencode.md',
-  'opencode.local.md',
-  'OpenCode.md',
-  'OpenCode.local.md',
-  'OPENCODE.md',
-  'OPENCODE.local.md',
+  'mag.md',
+  'mag.local.md',
+  'Mag.md',
+  'Mag.local.md',
+  'MAG.md',
+  'MAG.local.md',
   'AGENTS.md',
 ];
 
@@ -359,7 +359,7 @@ const String _maxStepsReminder = '''CRITICAL - MAXIMUM STEPS REACHED
 
 You must stop using tools and provide a direct final answer.''';
 
-const String _defaultPrompt = '''You are OpenCode, an interactive coding agent.
+const String _defaultPrompt = '''You are Mag, an interactive coding agent.
 
 You help the user complete software engineering tasks inside the current workspace.
 - Be concise.
@@ -370,7 +370,7 @@ You help the user complete software engineering tasks inside the current workspa
 ''';
 
 const String _anthropicPrompt =
-    '''You are OpenCode, the best coding agent on the planet.
+    '''You are Mag, the best coding agent on the planet.
 
 You are an interactive CLI tool that helps users with software engineering tasks.
 - Be concise and factual.
@@ -380,7 +380,7 @@ You are an interactive CLI tool that helps users with software engineering tasks
 ''';
 
 const String _gptPrompt =
-    '''You are OpenCode, You and the user share the same workspace and collaborate to achieve the user's goals.
+    '''You are Mag, You and the user share the same workspace and collaborate to achieve the user's goals.
 
 You are pragmatic, direct, and technically rigorous.
 - Build context by reading before changing.
@@ -389,7 +389,7 @@ You are pragmatic, direct, and technically rigorous.
 ''';
 
 const String _geminiPrompt =
-    '''You are opencode, an interactive CLI agent specializing in software engineering tasks.
+    '''You are mag, an interactive CLI agent specializing in software engineering tasks.
 
 Core mandates:
 - Follow project conventions.
@@ -398,7 +398,7 @@ Core mandates:
 ''';
 
 const String _codexPrompt =
-    '''You are opencode, an interactive CLI tool that helps users with software engineering tasks.
+    '''You are mag, an interactive CLI tool that helps users with software engineering tasks.
 
 - Keep responses short.
 - Explain non-trivial tool use through clear actions.
@@ -406,7 +406,7 @@ const String _codexPrompt =
 - Finish the job end to end.
 ''';
 
-const String explorePrompt = '''You are OpenCode Explore.
+const String explorePrompt = '''You are Mag Explore.
 
 Use fast search-oriented behavior.
 - Prefer list, glob, and grep before deeper reasoning.

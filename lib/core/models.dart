@@ -634,14 +634,14 @@ class ModelConfig {
   final String model;
   final String provider;
 
-  static const String _defaultOpenCodeBaseUrl = 'https://opencode.ai/zen/v1';
-  static const String _defaultOpenCodeModel = 'minimax-m2.5-free';
+  static const String _defaultMagBaseUrl = 'https://opencode.ai/zen/v1';
+  static const String _defaultMagModel = 'minimax-m2.5-free';
 
   factory ModelConfig.defaults() => ModelConfig(
-        baseUrl: _defaultOpenCodeBaseUrl,
+        baseUrl: _defaultMagBaseUrl,
         apiKey: '',
-        model: _defaultOpenCodeModel,
-        provider: 'opencode',
+        model: _defaultMagModel,
+        provider: 'mag',
       );
 
   JsonMap toJson() => {
@@ -652,19 +652,22 @@ class ModelConfig {
       };
 
   factory ModelConfig.fromJson(JsonMap json) {
-    var baseUrl = (json['baseUrl'] as String?) ?? _defaultOpenCodeBaseUrl;
+    var baseUrl = (json['baseUrl'] as String?) ?? _defaultMagBaseUrl;
     final apiKey = (json['apiKey'] as String?) ?? '';
-    var model = (json['model'] as String?) ?? _defaultOpenCodeModel;
-    final provider = (json['provider'] as String?) ?? 'opencode';
-
+    var model = (json['model'] as String?) ?? _defaultMagModel;
+    var provider = (json['provider'] as String?) ?? 'mag';
     if (provider.startsWith('opencode')) {
+      provider = 'mag${provider.substring('opencode'.length)}';
+    }
+
+    if (provider.startsWith('mag')) {
       final normalizedBaseUrl = baseUrl.trim().replaceAll(RegExp(r'/+$'), '');
       if (normalizedBaseUrl == 'https://opencode.ai' ||
           !normalizedBaseUrl.contains('/zen/v1')) {
-        baseUrl = _defaultOpenCodeBaseUrl;
+        baseUrl = _defaultMagBaseUrl;
       }
-      if (model.trim().isEmpty || model == 'opencode/free') {
-        model = _defaultOpenCodeModel;
+      if (model.trim().isEmpty || model == 'mag/free') {
+        model = _defaultMagModel;
       }
     }
 

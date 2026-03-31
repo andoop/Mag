@@ -162,7 +162,7 @@ class ToolRegistry {
     register(
       ToolDefinition(
         id: 'apply_patch',
-        description: 'Apply an OpenCode style patch to one or more files.',
+        description: 'Apply an Mag style patch to one or more files.',
         parameters: {
           'type': 'object',
           'properties': {
@@ -1147,7 +1147,7 @@ Future<ToolExecutionResult> _skillTool(
     'android_workspace':
         'Use workspace tools before answering. Prefer read, glob, grep, edit, and apply_patch inside the selected Android workspace.',
     'mobile_agent':
-        'This mobile agent mirrors OpenCode semantics. Keep actions observable through parts, permissions, and events.',
+        'This mobile agent mirrors Mag semantics. Keep actions observable through parts, permissions, and events.',
   };
   final content = skills[name];
   if (content == null) {
