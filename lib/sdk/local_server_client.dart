@@ -154,6 +154,7 @@ class LocalServerClient {
     final request = await _client.getUrl(baseUri.resolve(path));
     final response = await request.close();
     final body = await response.transform(utf8.decoder).join();
+    _throwIfHttpError(response.statusCode, body, path);
     return jsonDecode(body);
   }
 
@@ -162,9 +163,20 @@ class LocalServerClient {
     request.headers.contentType = ContentType.json;
     request.write(jsonEncode(body));
     final response = await request.close();
-    if (response.statusCode == 204) return null;
     final text = await response.transform(utf8.decoder).join();
+    if (response.statusCode == 204) {
+      _throwIfHttpError(response.statusCode, text, path);
+      return null;
+    }
+    _throwIfHttpError(response.statusCode, text, path);
     if (text.isEmpty) return null;
     return jsonDecode(text);
+  }
+
+  void _throwIfHttpError(int status, String body, String path) {
+    if (status >= 200 && status < 300) return;
+    final short = body.trim();
+    final msg = short.length > 200 ? '${short.substring(0, 200)}...' : short;
+    throw HttpException('HTTP $status $path${msg.isEmpty ? '' : ': $msg'}');
   }
 }

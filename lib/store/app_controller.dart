@@ -282,26 +282,23 @@ class AppController extends ChangeNotifier {
     final modelConfig = state.modelConfig ?? ModelConfig.defaults();
     _debugLog('sendPrompt',
         'provider=${modelConfig.provider} model=${modelConfig.model}');
-    if (modelConfig.apiKey.trim().isEmpty) {
-      final isMagProvider = modelConfig.provider.startsWith('mag');
-      if (isMagProvider) {
-        state = state.copyWith(isBusy: true, error: null);
-        notifyListeners();
-      } else {
-        state = state.copyWith(
-          isBusy: false,
-          error: 'Missing API key. 请先在设置里配置模型 API Key。',
-        );
-        notifyListeners();
-        return;
-      }
-    } else {
+    final mag = modelConfig.isMagProvider;
+    final hasKey = modelConfig.apiKey.trim().isNotEmpty;
+    final freeMag = mag && modelConfig.isMagZenFreeModel;
+    final needsKey = mag ? (!freeMag && !hasKey) : !hasKey;
+    if (needsKey) {
       state = state.copyWith(
-        isBusy: true,
-        error: null,
+        isBusy: false,
+        error: 'Missing API key. 请先在设置里配置模型 API Key。',
       );
       notifyListeners();
+      return;
     }
+    state = state.copyWith(
+      isBusy: true,
+      error: null,
+    );
+    notifyListeners();
     try {
       await _client!
           .sendPromptAsync(session.id, text, agent: agent, format: format);
@@ -345,8 +342,10 @@ class AppController extends ChangeNotifier {
     if (session == null) return;
     try {
       await _client!.cancelSession(session.id);
+      state = state.copyWith(isBusy: false, error: null);
+      notifyListeners();
     } catch (error) {
-      _debugLog('cancel', 'error: $error');
+      _setError(error);
     }
   }
 
@@ -458,7 +457,10 @@ class AppController extends ChangeNotifier {
   }
 
   void _handleEvent(ServerEvent event) {
-    if (!_matchesWorkspace(event)) return;
+    if (!_matchesWorkspace(event) &&
+        !_sessionLifecycleEventForCurrentSession(event)) {
+      return;
+    }
     if (event.type != 'message.part.delta') {
       _flushPendingPartDeltas();
     }
@@ -581,11 +583,34 @@ class AppController extends ChangeNotifier {
     notifyListeners();
   }
 
+  /// 终止/错误等只带 sessionID 的事件：directory 与 workspace 略有不一致时仍应更新 isBusy，否则点停止后界面一直转圈。
+  bool _sessionLifecycleEventForCurrentSession(ServerEvent event) {
+    if (event.type != 'session.status' && event.type != 'session.error') {
+      return false;
+    }
+    return _isCurrentSession(event.properties['sessionID'] as String?);
+  }
+
   bool _matchesWorkspace(ServerEvent event) {
     final workspace = state.workspace;
     if (workspace == null) return true;
     if (event.directory == null) return true;
-    return event.directory == workspace.treeUri;
+    final d = event.directory!;
+    final w = workspace.treeUri;
+    if (d == w) return true;
+    // file: URI 可能因编码或尾部斜杠不一致，避免 SSE 全部被丢弃导致界面一直 busy、无回复
+    try {
+      final ud = Uri.parse(d);
+      final uw = Uri.parse(w);
+      if (ud.scheme == 'file' && uw.scheme == 'file') {
+        var pd = ud.path;
+        var pw = uw.path;
+        if (pd.endsWith('/')) pd = pd.substring(0, pd.length - 1);
+        if (pw.endsWith('/')) pw = pw.substring(0, pw.length - 1);
+        if (pd == pw) return true;
+      }
+    } catch (_) {}
+    return false;
   }
 
   bool _isCurrentSession(String? sessionId) {

@@ -644,6 +644,22 @@ class ModelConfig {
         provider: 'mag',
       );
 
+  bool get isMagProvider => provider.toLowerCase().startsWith('mag');
+
+  /// Mag Zen 免费档：与 OpenCode 一致使用公共 token，无需用户 API Key。
+  /// 见 `opencode` provider 在无密钥时对 `cost.input == 0` 模型使用 `apiKey: "public"`。
+  bool get isMagZenFreeModel {
+    if (!isMagProvider) return false;
+    final m = model.trim().toLowerCase();
+    if (m.endsWith('-free')) return true;
+    if (m == 'big-pickle') return true;
+    return false;
+  }
+
+  /// 本次请求是否走 `Bearer public`（空密钥或免费模型）。
+  bool get usesMagPublicToken =>
+      isMagProvider && (apiKey.trim().isEmpty || isMagZenFreeModel);
+
   JsonMap toJson() => {
         'baseUrl': baseUrl,
         'apiKey': apiKey,
@@ -656,11 +672,12 @@ class ModelConfig {
     final apiKey = (json['apiKey'] as String?) ?? '';
     var model = (json['model'] as String?) ?? _defaultMagModel;
     var provider = (json['provider'] as String?) ?? 'mag';
-    if (provider.startsWith('opencode')) {
+    final lowerP = provider.toLowerCase();
+    if (lowerP.startsWith('opencode')) {
       provider = 'mag${provider.substring('opencode'.length)}';
     }
 
-    if (provider.startsWith('mag')) {
+    if (provider.toLowerCase().startsWith('mag')) {
       final normalizedBaseUrl = baseUrl.trim().replaceAll(RegExp(r'/+$'), '');
       if (normalizedBaseUrl == 'https://opencode.ai' ||
           !normalizedBaseUrl.contains('/zen/v1')) {

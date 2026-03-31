@@ -312,10 +312,9 @@ class ModelGateway {
     FutureOr<void> Function(String delta)? onReasoningDelta,
   }) async {
     cancelToken?.throwIfCancelled();
-    final isMagProvider = config.provider.startsWith('mag');
-    final effectiveApiKey = isMagProvider && config.apiKey.trim().isEmpty
-        ? 'public'
-        : config.apiKey.trim();
+    final isMagProvider = config.isMagProvider;
+    final usePublic = isMagProvider && config.usesMagPublicToken;
+    final effectiveApiKey = usePublic ? 'public' : config.apiKey.trim();
     _debugLog('gateway',
         'complete start provider=${config.provider} model=${config.model}');
     if (effectiveApiKey.isEmpty) {
@@ -382,7 +381,7 @@ class ModelGateway {
           statusCode: response.statusCode,
           body: body,
           isMagProvider: isMagProvider,
-          usesPublicToken: isMagProvider && config.apiKey.trim().isEmpty,
+          usesPublicToken: usePublic,
           model: config.model,
         ),
       );
