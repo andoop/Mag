@@ -4,6 +4,19 @@ typedef PromptReferenceAction = Future<void> Function(String);
 
 const Color _kPageBackground = Color(0xFFF5F5F4);
 const Color _kPanelBackground = Colors.white;
+
+/// 底部菜单、会话列表等 Sheet（浅色，与 [_kPageBackground] 协调）
+const Color kOcBgDeep = Color(0xFFF4F4F5);
+const Color kOcSurface = Color(0xFFFFFFFF);
+const Color kOcElevated = Color(0xFFE4E4E7);
+const Color kOcSelectedFill = Color(0xFFEFF6FF);
+const Color kOcBorder = Color(0xFFE4E4E7);
+const Color kOcText = Color(0xFF18181B);
+const Color kOcMuted = Color(0xFF71717A);
+const Color kOcAccent = Color(0xFF2563EB);
+const Color kOcAccentMuted = Color(0xFF0891B2);
+const Color kOcGreen = Color(0xFF16A34A);
+const Color kOcOrange = Color(0xFFEA580C);
 const Color _kMutedPanel = Color(0xFFFAFAF9);
 const Color _kBorderColor = Color(0x14000000);
 const Color _kSoftBorderColor = Color(0x0F000000);

@@ -58,6 +58,7 @@ class _MobileAgentAppState extends State<MobileAgentApp> {
         bottomSheetTheme: const BottomSheetThemeData(
           backgroundColor: Color(0xFFFAFAF9),
           surfaceTintColor: Colors.transparent,
+          modalBarrierColor: Colors.transparent,
         ),
         cardTheme: CardTheme(
           elevation: 0,

@@ -178,9 +178,16 @@ class AppController extends ChangeNotifier {
     }
   }
 
+  void _cancelPendingPartDeltas() {
+    _partDeltaFlushTimer?.cancel();
+    _partDeltaFlushTimer = null;
+    _pendingPartDeltas.clear();
+  }
+
   Future<void> selectWorkspace(WorkspaceInfo workspace) async {
     final startedAt = DateTime.now().millisecondsSinceEpoch;
     try {
+      _cancelPendingPartDeltas();
       _clearWorkspacePreviewCaches();
       var sessions = await _client!.listSessions(workspace.id);
       final session = sessions.isNotEmpty
@@ -219,6 +226,7 @@ class AppController extends ChangeNotifier {
     final workspace = state.workspace;
     if (workspace == null) return;
     try {
+      _cancelPendingPartDeltas();
       _clearWorkspacePreviewCaches();
       final session = await _client!.createSession(workspace, agent: agent);
       final sessions = await _client!.listSessions(workspace.id);
@@ -226,7 +234,9 @@ class AppController extends ChangeNotifier {
           session: session,
           sessions: sessions,
           messages: const [],
-          todos: const []);
+          todos: const [],
+          permissions: const [],
+          questions: const []);
       notifyListeners();
       await refreshSession();
     } catch (error) {
@@ -387,8 +397,15 @@ class AppController extends ChangeNotifier {
   }
 
   Future<void> switchSession(SessionInfo session) async {
+    _cancelPendingPartDeltas();
     _clearWorkspacePreviewCaches();
-    state = state.copyWith(session: session);
+    state = state.copyWith(
+      session: session,
+      messages: const [],
+      todos: const [],
+      permissions: const [],
+      questions: const [],
+    );
     notifyListeners();
     await refreshSession();
   }
@@ -653,6 +670,10 @@ class AppController extends ChangeNotifier {
   }
 
   void _queuePartDelta(JsonMap payload) {
+    final sid = payload['sessionID'] as String?;
+    if (!_isCurrentSession(sid)) {
+      return;
+    }
     final partId = payload['partID'] as String?;
     if (partId == null || partId.isEmpty) {
       state =
@@ -684,6 +705,10 @@ class AppController extends ChangeNotifier {
     if (_pendingPartDeltas.isEmpty) return;
     var messages = state.messages;
     for (final payload in _pendingPartDeltas.values) {
+      final deltaSid = payload['sessionID'] as String?;
+      if (!_isCurrentSession(deltaSid)) {
+        continue;
+      }
       messages = _applyPartDelta(messages, payload);
     }
     _pendingPartDeltas.clear();

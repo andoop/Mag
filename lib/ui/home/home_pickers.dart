@@ -6,58 +6,292 @@ extension _HomePagePickers on _HomePageState {
   Future<void> _openSessionPicker(BuildContext context) async {
     final state = widget.controller.state;
     if (state.sessions.isEmpty) return;
+    var query = '';
     await showModalBottomSheet<void>(
       context: context,
+      backgroundColor: _kPageBackground,
+      barrierColor: Colors.transparent,
       isScrollControlled: true,
       builder: (context) {
-        return FractionallySizedBox(
-          heightFactor: 0.72,
-          child: SafeArea(
-            child: Padding(
-              padding: const EdgeInsets.all(16),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Text(l(context, '会话', 'Sessions'),
-                      style: const TextStyle(fontWeight: FontWeight.bold)),
-                  const SizedBox(height: 12),
-                  Expanded(
-                    child: ListView.separated(
-                      itemCount: state.sessions.length,
-                      separatorBuilder: (_, __) => const SizedBox(height: 8),
-                      itemBuilder: (context, index) {
-                        final item = state.sessions[index];
-                        final selected = item.id == state.session?.id;
-                        final currentModel = state.modelConfig?.model ??
-                            ModelConfig.defaults().model;
-                        final ratio = _contextUsageRatio(item, currentModel);
-                        final percent = (ratio * 100).round();
-                        return ListTile(
-                          shape: RoundedRectangleBorder(
-                              borderRadius: BorderRadius.circular(12)),
-                          tileColor: selected
-                              ? Colors.blue.shade50
-                              : Colors.grey.shade50,
-                          title: Text(item.title),
-                          subtitle: Text(
-                            '${item.agent} · ${_contextUsageLabel(item, currentModel)} · $percent%',
-                          ),
-                          trailing: selected
-                              ? const Icon(Icons.check_circle_outline)
-                              : null,
-                          onTap: () async {
-                            _stickToBottom = true;
-                            Navigator.of(context).pop();
-                            await widget.controller.switchSession(item);
-                          },
-                        );
-                      },
-                    ),
-                  ),
-                ],
+        return StatefulBuilder(
+          builder: (context, setModalState) {
+            final filtered = state.sessions.where((item) {
+              if (query.isEmpty) return true;
+              final q = query.toLowerCase();
+              return item.title.toLowerCase().contains(q) ||
+                  item.agent.toLowerCase().contains(q) ||
+                  item.id.toLowerCase().contains(q);
+            }).toList();
+            final currentModel =
+                state.modelConfig?.model ?? ModelConfig.defaults().model;
+            return Padding(
+              padding: EdgeInsets.only(
+                left: 12,
+                right: 12,
+                bottom: MediaQuery.of(context).viewInsets.bottom +
+                    MediaQuery.of(context).padding.bottom +
+                    12,
               ),
-            ),
-          ),
+              child: FractionallySizedBox(
+                heightFactor: 0.78,
+                child: DecoratedBox(
+                  decoration: BoxDecoration(
+                    color: kOcSurface,
+                    borderRadius: BorderRadius.circular(20),
+                    border: Border.all(color: kOcBorder),
+                    boxShadow: [
+                      BoxShadow(
+                        color: Colors.black.withOpacity(0.08),
+                        blurRadius: 20,
+                        offset: const Offset(0, 8),
+                      ),
+                    ],
+                  ),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.stretch,
+                    children: [
+                      _ocSheetDragHandle(),
+                      Padding(
+                        padding: const EdgeInsets.fromLTRB(20, 0, 8, 12),
+                        child: Row(
+                          children: [
+                            Expanded(
+                              child: Column(
+                                crossAxisAlignment: CrossAxisAlignment.start,
+                                children: [
+                                  Text(
+                                    l(context, 'Sessions', 'Sessions'),
+                                    style: const TextStyle(
+                                      color: kOcText,
+                                      fontSize: 18,
+                                      fontWeight: FontWeight.w700,
+                                      letterSpacing: -0.2,
+                                    ),
+                                  ),
+                                  const SizedBox(height: 4),
+                                  Text(
+                                    l(
+                                      context,
+                                      '按更新时间排序 · 最近会话优先',
+                                      'Newest first',
+                                    ),
+                                    style: const TextStyle(
+                                      color: kOcMuted,
+                                      fontSize: 12.5,
+                                      height: 1.25,
+                                    ),
+                                  ),
+                                ],
+                              ),
+                            ),
+                            IconButton(
+                              onPressed: () => Navigator.of(context).pop(),
+                              icon: const Icon(Icons.close_rounded, color: kOcMuted),
+                            ),
+                          ],
+                        ),
+                      ),
+                      Padding(
+                        padding: const EdgeInsets.symmetric(horizontal: 16),
+                        child: TextField(
+                          onChanged: (value) {
+                            query = value.trim().toLowerCase();
+                            setModalState(() {});
+                          },
+                          style: const TextStyle(color: kOcText, fontSize: 15),
+                          cursorColor: kOcAccent,
+                          decoration: InputDecoration(
+                            isDense: true,
+                            filled: true,
+                            fillColor: kOcBgDeep,
+                            hintText:
+                                l(context, '搜索会话…', 'Search sessions…'),
+                            hintStyle:
+                                TextStyle(color: kOcMuted.withOpacity(0.9)),
+                            prefixIcon:
+                                const Icon(Icons.search_rounded, color: kOcMuted),
+                            border: OutlineInputBorder(
+                              borderRadius: BorderRadius.circular(14),
+                              borderSide: const BorderSide(color: kOcBorder),
+                            ),
+                            enabledBorder: OutlineInputBorder(
+                              borderRadius: BorderRadius.circular(14),
+                              borderSide: const BorderSide(color: kOcBorder),
+                            ),
+                            focusedBorder: OutlineInputBorder(
+                              borderRadius: BorderRadius.circular(14),
+                              borderSide:
+                                  const BorderSide(color: kOcAccent, width: 1.5),
+                            ),
+                            contentPadding: const EdgeInsets.symmetric(
+                                horizontal: 14, vertical: 12),
+                          ),
+                        ),
+                      ),
+                      const SizedBox(height: 12),
+                      Expanded(
+                        child: filtered.isEmpty
+                            ? Center(
+                                child: Text(
+                                  l(context, '没有匹配的会话', 'No matching sessions'),
+                                  style: const TextStyle(color: kOcMuted),
+                                ),
+                              )
+                            : ListView.separated(
+                                padding:
+                                    const EdgeInsets.fromLTRB(12, 0, 12, 12),
+                                itemCount: filtered.length,
+                                separatorBuilder: (_, __) =>
+                                    const SizedBox(height: 8),
+                                itemBuilder: (context, index) {
+                                  final item = filtered[index];
+                                  final selected =
+                                      item.id == state.session?.id;
+                                  final ratio =
+                                      _contextUsageRatio(item, currentModel);
+                                  final percent = (ratio * 100).round();
+                                  return Material(
+                                    color: Colors.transparent,
+                                    child: InkWell(
+                                      borderRadius: BorderRadius.circular(16),
+                                      onTap: () async {
+                                        _stickToBottom = true;
+                                        Navigator.of(context).pop();
+                                        await widget.controller
+                                            .switchSession(item);
+                                      },
+                                      child: Container(
+                                        padding: const EdgeInsets.all(14),
+                                        decoration: BoxDecoration(
+                                          color: selected
+                                              ? kOcSelectedFill
+                                              : kOcBgDeep,
+                                          borderRadius: BorderRadius.circular(16),
+                                          border: Border.all(
+                                            color: selected
+                                                ? kOcAccent.withOpacity(0.45)
+                                                : kOcBorder,
+                                            width: selected ? 1.5 : 1,
+                                          ),
+                                        ),
+                                        child: Row(
+                                          crossAxisAlignment:
+                                              CrossAxisAlignment.start,
+                                          children: [
+                                            Container(
+                                              width: 40,
+                                              height: 40,
+                                              decoration: BoxDecoration(
+                                                color: Colors.white,
+                                                borderRadius:
+                                                    BorderRadius.circular(12),
+                                                border: Border.all(
+                                                    color: kOcBorder),
+                                              ),
+                                              child: const Icon(
+                                                Icons.terminal_rounded,
+                                                color: kOcAccentMuted,
+                                                size: 22,
+                                              ),
+                                            ),
+                                            const SizedBox(width: 12),
+                                            Expanded(
+                                              child: Column(
+                                                crossAxisAlignment:
+                                                    CrossAxisAlignment.start,
+                                                children: [
+                                                  Row(
+                                                    crossAxisAlignment:
+                                                        CrossAxisAlignment
+                                                            .start,
+                                                    children: [
+                                                      Expanded(
+                                                        child: Text(
+                                                          item.title.isEmpty
+                                                              ? l(
+                                                                  context,
+                                                                  '未命名会话',
+                                                                  'Untitled session',
+                                                                )
+                                                              : item.title,
+                                                          style: TextStyle(
+                                                            color: kOcText,
+                                                            fontSize: 15,
+                                                            fontWeight: selected
+                                                                ? FontWeight.w700
+                                                                : FontWeight.w600,
+                                                          ),
+                                                          maxLines: 2,
+                                                          overflow: TextOverflow
+                                                              .ellipsis,
+                                                        ),
+                                                      ),
+                                                      if (selected)
+                                                        Padding(
+                                                          padding:
+                                                              const EdgeInsets
+                                                                  .only(
+                                                                  left: 8),
+                                                          child: Container(
+                                                            padding:
+                                                                const EdgeInsets
+                                                                    .symmetric(
+                                                              horizontal: 8,
+                                                              vertical: 4,
+                                                            ),
+                                                            decoration:
+                                                                BoxDecoration(
+                                                              color: kOcAccent
+                                                                  .withOpacity(
+                                                                      0.22),
+                                                              borderRadius:
+                                                                  BorderRadius
+                                                                      .circular(
+                                                                          8),
+                                                            ),
+                                                            child: Text(
+                                                              l(context, '当前',
+                                                                  'Active'),
+                                                              style:
+                                                                  const TextStyle(
+                                                                color:
+                                                                    kOcAccent,
+                                                                fontSize: 11,
+                                                                fontWeight:
+                                                                    FontWeight
+                                                                        .w700,
+                                                              ),
+                                                            ),
+                                                          ),
+                                                        ),
+                                                    ],
+                                                  ),
+                                                  const SizedBox(height: 6),
+                                                  Text(
+                                                    '${_ocRelativeTime(context, item.updatedAt)} · ${item.agent} · ${_contextUsageLabel(item, currentModel)} · $percent%',
+                                                    style: const TextStyle(
+                                                      color: kOcMuted,
+                                                      fontSize: 12.5,
+                                                      height: 1.35,
+                                                    ),
+                                                  ),
+                                                ],
+                                              ),
+                                            ),
+                                          ],
+                                        ),
+                                      ),
+                                    ),
+                                  );
+                                },
+                              ),
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+            );
+          },
         );
       },
     );
@@ -68,44 +302,189 @@ extension _HomePagePickers on _HomePageState {
     if (state.agents.isEmpty) return;
     await showModalBottomSheet<void>(
       context: context,
+      backgroundColor: _kPageBackground,
+      barrierColor: Colors.transparent,
+      isScrollControlled: true,
       builder: (context) {
-        return SafeArea(
-          child: Padding(
-            padding: const EdgeInsets.all(16),
+        return Padding(
+          padding: EdgeInsets.only(
+            left: 12,
+            right: 12,
+            bottom: MediaQuery.of(context).padding.bottom + 12,
+          ),
+          child: DecoratedBox(
+            decoration: BoxDecoration(
+              color: kOcSurface,
+              borderRadius: BorderRadius.circular(20),
+              border: Border.all(color: kOcBorder),
+              boxShadow: [
+                BoxShadow(
+                  color: Colors.black.withOpacity(0.08),
+                  blurRadius: 20,
+                  offset: const Offset(0, 8),
+                ),
+              ],
+            ),
             child: Column(
               mainAxisSize: MainAxisSize.min,
-              crossAxisAlignment: CrossAxisAlignment.start,
+              crossAxisAlignment: CrossAxisAlignment.stretch,
               children: [
-                Text(l(context, 'Agents', 'Agents'),
-                    style: const TextStyle(fontWeight: FontWeight.bold)),
-                const SizedBox(height: 12),
-                ...state.agents.map((agent) {
-                  final selected =
-                      (_selectedAgent ?? state.session?.agent ?? 'build') ==
-                          agent.name;
-                  return Padding(
-                    padding: const EdgeInsets.only(bottom: 8),
-                    child: ListTile(
-                      shape: RoundedRectangleBorder(
-                          borderRadius: BorderRadius.circular(12)),
-                      tileColor:
-                          selected ? Colors.blue.shade50 : Colors.grey.shade50,
-                      title: Text(agent.name),
-                      subtitle: agent.description.isEmpty
-                          ? null
-                          : Text(agent.description),
-                      trailing: selected
-                          ? const Icon(Icons.check_circle_outline)
-                          : null,
-                      onTap: () {
-                        setState(() {
-                          _selectedAgent = agent.name;
-                        });
-                        Navigator.of(context).pop();
-                      },
-                    ),
-                  );
-                }),
+                _ocSheetDragHandle(),
+                Padding(
+                  padding: const EdgeInsets.fromLTRB(20, 0, 12, 12),
+                  child: Row(
+                    children: [
+                      Expanded(
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Text(
+                              l(context, 'Agents', 'Agents'),
+                              style: const TextStyle(
+                                color: kOcText,
+                                fontSize: 18,
+                                fontWeight: FontWeight.w700,
+                              ),
+                            ),
+                            const SizedBox(height: 4),
+                            Text(
+                              l(
+                                context,
+                                '主会话与子代理角色',
+                                'Primary & subagent roles',
+                              ),
+                              style: const TextStyle(
+                                color: kOcMuted,
+                                fontSize: 12.5,
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                      IconButton(
+                        onPressed: () => Navigator.of(context).pop(),
+                        icon: const Icon(Icons.close_rounded, color: kOcMuted),
+                      ),
+                    ],
+                  ),
+                ),
+                SizedBox(
+                  height: (MediaQuery.of(context).size.height * 0.5)
+                      .clamp(220.0, 520.0),
+                  child: ListView.separated(
+                    padding: const EdgeInsets.fromLTRB(12, 0, 12, 16),
+                    itemCount: state.agents.length,
+                    separatorBuilder: (_, __) => const SizedBox(height: 8),
+                    itemBuilder: (context, index) {
+                      final agent = state.agents[index];
+                      final selected =
+                          (_selectedAgent ?? state.session?.agent ?? 'build') ==
+                              agent.name;
+                      return Material(
+                        color: Colors.transparent,
+                        child: InkWell(
+                          borderRadius: BorderRadius.circular(16),
+                          onTap: () {
+                            setState(() {
+                              _selectedAgent = agent.name;
+                            });
+                            Navigator.of(context).pop();
+                          },
+                          child: Container(
+                            padding: const EdgeInsets.all(14),
+                            decoration: BoxDecoration(
+                              color: selected
+                                  ? kOcSelectedFill
+                                  : kOcBgDeep,
+                              borderRadius: BorderRadius.circular(16),
+                              border: Border.all(
+                                color: selected
+                                    ? kOcAccent.withOpacity(0.45)
+                                    : kOcBorder,
+                                width: selected ? 1.5 : 1,
+                              ),
+                            ),
+                            child: Row(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                Container(
+                                  width: 40,
+                                  height: 40,
+                                  decoration: BoxDecoration(
+                                    color: Colors.white,
+                                    borderRadius: BorderRadius.circular(12),
+                                    border: Border.all(color: kOcBorder),
+                                  ),
+                                  child: Icon(
+                                    Icons.smart_toy_outlined,
+                                    color: selected ? kOcAccent : kOcMuted,
+                                    size: 22,
+                                  ),
+                                ),
+                                const SizedBox(width: 12),
+                                Expanded(
+                                  child: Column(
+                                    crossAxisAlignment: CrossAxisAlignment.start,
+                                    children: [
+                                      Row(
+                                        children: [
+                                          Expanded(
+                                            child: Text(
+                                              agent.name,
+                                              style: TextStyle(
+                                                color: kOcText,
+                                                fontSize: 15,
+                                                fontWeight: selected
+                                                    ? FontWeight.w700
+                                                    : FontWeight.w600,
+                                              ),
+                                            ),
+                                          ),
+                                          if (selected)
+                                            Container(
+                                              padding: const EdgeInsets.symmetric(
+                                                horizontal: 8,
+                                                vertical: 4,
+                                              ),
+                                              decoration: BoxDecoration(
+                                                color: kOcAccent.withOpacity(0.22),
+                                                borderRadius:
+                                                    BorderRadius.circular(8),
+                                              ),
+                                              child: Text(
+                                                l(context, '当前', 'Active'),
+                                                style: const TextStyle(
+                                                  color: kOcAccent,
+                                                  fontSize: 11,
+                                                  fontWeight: FontWeight.w700,
+                                                ),
+                                              ),
+                                            ),
+                                        ],
+                                      ),
+                                      if (agent.description.isNotEmpty) ...[
+                                        const SizedBox(height: 6),
+                                        Text(
+                                          agent.description,
+                                          style: const TextStyle(
+                                            color: kOcMuted,
+                                            fontSize: 12.5,
+                                            height: 1.35,
+                                          ),
+                                        ),
+                                      ],
+                                    ],
+                                  ),
+                                ),
+                              ],
+                            ),
+                          ),
+                        ),
+                      );
+                    },
+                  ),
+                ),
+                const SizedBox(height: 4),
               ],
             ),
           ),

@@ -21,6 +21,7 @@ part 'home/home_constants.dart';
 part 'home/home_catalog.dart';
 part 'home/home_timeline.dart';
 part 'home/home_composer.dart';
+part 'home/home_shell.dart';
 part 'home/home_pickers.dart';
 part 'home/home_parts.dart';
 part 'home/home_panels.dart';
@@ -56,6 +57,8 @@ class _HomePageState extends State<HomePage> {
   int _lastBackfillAt = 0;
   int _lastTimelineSyncAt = 0;
   String _lastStateRenderKey = '';
+  /// 会话切换时必须重建时间线；不能仅依赖 [_stateRenderKey]，否则新建/切换会话后可能与旧 key 碰撞而不调用 setState，界面仍显示旧消息。
+  String? _lastObservedSessionId;
 
   @override
   void initState() {
@@ -78,7 +81,21 @@ class _HomePageState extends State<HomePage> {
   void _onStateChanged() {
     if (!mounted) return;
     final state = widget.controller.state;
+    final sid = state.session?.id;
     final renderKey = _stateRenderKey(state);
+    final sessionChanged = sid != _lastObservedSessionId;
+    if (sessionChanged) {
+      _lastObservedSessionId = sid;
+      _lastStateRenderKey = renderKey;
+      _reconcileTimelineWindow(state);
+      _scheduleTimelineSync(state);
+      setState(() {});
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (!mounted || !_timelineController.hasClients) return;
+        _timelineController.jumpTo(0);
+      });
+      return;
+    }
     if (renderKey == _lastStateRenderKey) {
       return;
     }
@@ -448,50 +465,9 @@ class _HomePageState extends State<HomePage> {
             ),
             icon: const Icon(Icons.add_comment),
           ),
-          PopupMenuButton<String>(
+          IconButton(
             tooltip: l(context, '更多', 'More'),
-            onSelected: (value) {
-              switch (value) {
-                case 'agent':
-                  _openAgentPicker(context);
-                  return;
-                case 'session':
-                  _openSessionPicker(context);
-                  return;
-                case 'compact':
-                  widget.controller.compactSession();
-                  return;
-                case 'memory':
-                  widget.controller.initializeProjectMemory();
-                  return;
-                case 'settings':
-                  _openSettings(context, state.modelConfig);
-                  return;
-              }
-            },
-            itemBuilder: (context) => [
-              PopupMenuItem(
-                value: 'agent',
-                child: Text(l(context, '切换 Agent', 'Switch Agent')),
-              ),
-              PopupMenuItem(
-                value: 'session',
-                child: Text(l(context, '切换会话', 'Switch Session')),
-              ),
-              PopupMenuItem(
-                value: 'compact',
-                child: Text(l(context, '压缩当前会话', 'Compact Session')),
-              ),
-              PopupMenuItem(
-                value: 'memory',
-                child: Text(l(
-                    context, '初始化/更新项目记忆', 'Initialize/Update Project Memory')),
-              ),
-              PopupMenuItem(
-                value: 'settings',
-                child: Text(l(context, '设置', 'Settings')),
-              ),
-            ],
+            onPressed: () => _openMoreMenu(context),
             icon: const Icon(Icons.more_horiz),
           ),
         ],
@@ -521,6 +497,8 @@ class _HomePageState extends State<HomePage> {
                     child: NotificationListener<ScrollNotification>(
                       onNotification: _handleTimelineNotification,
                       child: ListView.builder(
+                        key: ValueKey<String>(
+                            'timeline-${state.session?.id ?? 'none'}'),
                         controller: _timelineController,
                         keyboardDismissBehavior:
                             ScrollViewKeyboardDismissBehavior.onDrag,
