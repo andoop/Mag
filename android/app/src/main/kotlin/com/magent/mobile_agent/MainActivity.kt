@@ -2,6 +2,8 @@ package com.magent.mobile_agent
 
 import android.content.Intent
 import android.net.Uri
+import android.os.Build
+import android.provider.DocumentsContract
 import android.util.Log
 import android.webkit.MimeTypeMap
 import androidx.documentfile.provider.DocumentFile
@@ -16,7 +18,13 @@ import java.util.concurrent.Executors
 class MainActivity : FlutterActivity() {
     companion object {
         private const val PICK_WORKSPACE_REQUEST = 4107
+        private const val MAX_COPY_DEPTH = 32
+        private const val MAX_COPY_FILES = 5000
     }
+
+    private class CopyStats(
+        var files: Int = 0,
+    )
 
     private var pendingResult: MethodChannel.Result? = null
     private val workspaceExecutor: ExecutorService by lazy {
@@ -49,6 +57,9 @@ class MainActivity : FlutterActivity() {
             "readBytes" -> runWorkspaceCall(result, "readBytes") { handleReadBytes(call) }
             "writeText" -> runWorkspaceCall(result, "writeText") { handleWriteText(call) }
             "deleteEntry" -> runWorkspaceCall(result, "deleteEntry") { handleDeleteEntry(call) }
+            "renameEntry" -> runWorkspaceCall(result, "renameEntry") { handleRenameEntry(call) }
+            "moveEntry" -> runWorkspaceCall(result, "moveEntry") { handleMoveEntry(call) }
+            "copyEntry" -> runWorkspaceCall(result, "copyEntry") { handleCopyEntry(call) }
             else -> result.notImplemented()
         }
     }
@@ -241,7 +252,242 @@ class MainActivity : FlutterActivity() {
         val relativePath = call.argument<String>("relativePath") ?: ""
         val target = resolveDocument(treeUri, relativePath)
             ?: throw WorkspaceMethodException("missing_entry", "Unable to resolve entry")
-        return target.delete()
+        return deleteRecursive(target)
+    }
+
+    private fun handleRenameEntry(call: MethodCall): Map<String, Any?> {
+        val treeUri = requireTreeUri(call)
+        val relativePath = call.argument<String>("relativePath") ?: ""
+        val newName =
+            call.argument<String>("newName")?.trim()
+                ?: throw WorkspaceMethodException("missing_name", "Missing newName")
+        if (newName.isEmpty() || newName.contains('/') || newName.contains('\\')) {
+            throw WorkspaceMethodException("invalid_name", "newName must be a single path segment")
+        }
+        val source =
+            resolveDocument(treeUri, relativePath)
+                ?: throw WorkspaceMethodException("not_found", "Unable to resolve entry")
+        val parentPath = parentRelativePath(relativePath)
+        val newPath = if (parentPath.isEmpty()) newName else "$parentPath/$newName"
+        val normalizedNew = normalizeRelativePath(newPath)
+        if (normalizeRelativePath(relativePath) == normalizedNew) {
+            return toEntry(source, normalizedNew)
+        }
+        if (resolveDocument(treeUri, newPath) != null) {
+            throw WorkspaceMethodException("exists", "Destination already exists")
+        }
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.LOLLIPOP) {
+            if (!source.renameTo(newName)) {
+                throw WorkspaceMethodException("rename_failed", "Rename failed")
+            }
+        } else {
+            if (source.isDirectory) {
+                throw WorkspaceMethodException("rename_unsupported", "Renaming directories requires API 21+")
+            }
+            copyFileTo(source, treeUri, normalizedNew)
+            if (!source.delete()) {
+                throw WorkspaceMethodException("rename_failed", "Could not remove source after copy")
+            }
+        }
+        val resolved =
+            resolveDocument(treeUri, newPath)
+                ?: throw WorkspaceMethodException("not_found", "Unable to resolve renamed entry")
+        return toEntry(resolved, normalizedNew)
+    }
+
+    private fun handleMoveEntry(call: MethodCall): Map<String, Any?> {
+        val treeUri = requireTreeUri(call)
+        val fromPath = call.argument<String>("fromPath") ?: ""
+        val toPath = call.argument<String>("toPath") ?: ""
+        val normalizedFrom = normalizeRelativePath(fromPath)
+        val normalizedTo = normalizeRelativePath(toPath)
+        if (normalizedFrom.isEmpty() || normalizedTo.isEmpty()) {
+            throw WorkspaceMethodException("invalid_path", "Paths must not be empty")
+        }
+        if (normalizedFrom == normalizedTo) {
+            val doc =
+                resolveDocument(treeUri, fromPath)
+                    ?: throw WorkspaceMethodException("not_found", "Source not found")
+            return toEntry(doc, normalizedFrom)
+        }
+        if (normalizedTo.startsWith("$normalizedFrom/")) {
+            throw WorkspaceMethodException("invalid_move", "Cannot move a path into itself")
+        }
+        val source =
+            resolveDocument(treeUri, fromPath)
+                ?: throw WorkspaceMethodException("not_found", "Source not found")
+        if (resolveDocument(treeUri, toPath) != null) {
+            throw WorkspaceMethodException("exists", "Destination already exists")
+        }
+        val destParentPath = parentRelativePath(toPath)
+        val destName = fileNameSegment(toPath)
+        val targetParent =
+            resolveDocument(treeUri, destParentPath)
+                ?: throw WorkspaceMethodException("not_found", "Target parent not found")
+        val sourceParent =
+            resolveDocument(treeUri, parentRelativePath(fromPath))
+                ?: throw WorkspaceMethodException("not_found", "Source parent not found")
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N) {
+            val newUri =
+                DocumentsContract.moveDocument(
+                    contentResolver,
+                    source.uri,
+                    sourceParent.uri,
+                    targetParent.uri,
+                ) ?: throw WorkspaceMethodException("move_failed", "moveDocument failed")
+            var finalDoc = DocumentFile.fromSingleUri(this, newUri)
+            if (finalDoc != null && finalDoc.name != destName) {
+                if (!finalDoc.renameTo(destName)) {
+                    throw WorkspaceMethodException("rename_failed", "Rename after move failed")
+                }
+            }
+        } else {
+            val stats = CopyStats()
+            copyRecursive(source, treeUri, normalizedTo, depth = 0, stats)
+            if (!deleteRecursive(source)) {
+                throw WorkspaceMethodException("move_failed", "Could not remove source after copy")
+            }
+        }
+        val resolved =
+            resolveDocument(treeUri, toPath)
+                ?: throw WorkspaceMethodException("not_found", "Unable to resolve moved entry")
+        return toEntry(resolved, normalizedTo)
+    }
+
+    private fun handleCopyEntry(call: MethodCall): Map<String, Any?> {
+        val treeUri = requireTreeUri(call)
+        val fromPath = call.argument<String>("fromPath") ?: ""
+        val toPath = call.argument<String>("toPath") ?: ""
+        val normalizedFrom = normalizeRelativePath(fromPath)
+        val normalizedTo = normalizeRelativePath(toPath)
+        if (normalizedFrom.isEmpty() || normalizedTo.isEmpty()) {
+            throw WorkspaceMethodException("invalid_path", "Paths must not be empty")
+        }
+        if (normalizedFrom == normalizedTo) {
+            val doc =
+                resolveDocument(treeUri, fromPath)
+                    ?: throw WorkspaceMethodException("not_found", "Source not found")
+            return toEntry(doc, normalizedFrom)
+        }
+        if (normalizedTo.startsWith("$normalizedFrom/")) {
+            throw WorkspaceMethodException("invalid_copy", "Cannot copy a path into itself")
+        }
+        val source =
+            resolveDocument(treeUri, fromPath)
+                ?: throw WorkspaceMethodException("not_found", "Source not found")
+        if (resolveDocument(treeUri, toPath) != null) {
+            throw WorkspaceMethodException("exists", "Destination already exists")
+        }
+        val stats = CopyStats()
+        copyRecursive(source, treeUri, normalizedTo, depth = 0, stats)
+        val resolved =
+            resolveDocument(treeUri, toPath)
+                ?: throw WorkspaceMethodException("not_found", "Unable to resolve copy result")
+        return toEntry(resolved, normalizedTo)
+    }
+
+    private fun copyRecursive(
+        source: DocumentFile,
+        treeUri: String,
+        destRelativePath: String,
+        depth: Int,
+        stats: CopyStats,
+    ) {
+        if (depth > MAX_COPY_DEPTH) {
+            throw WorkspaceMethodException("copy_too_deep", "Maximum directory depth exceeded")
+        }
+        if (source.isDirectory) {
+            val created =
+                createDirectoryPath(treeUri, destRelativePath)
+                    ?: throw WorkspaceMethodException("copy_failed", "Could not create destination directory")
+            if (!created.isDirectory) {
+                throw WorkspaceMethodException("copy_failed", "Destination path is not a directory")
+            }
+            for (child in source.listFiles()) {
+                val name = child.name ?: continue
+                val childDest =
+                    if (destRelativePath.isEmpty()) name else "$destRelativePath/$name"
+                copyRecursive(child, treeUri, childDest, depth + 1, stats)
+            }
+        } else {
+            stats.files += 1
+            if (stats.files > MAX_COPY_FILES) {
+                throw WorkspaceMethodException("copy_too_large", "Too many files to copy")
+            }
+            copyFileTo(source, treeUri, destRelativePath)
+        }
+    }
+
+    private fun createDirectoryPath(
+        treeUri: String,
+        relativePath: String,
+    ): DocumentFile? {
+        val segments = normalizePathSegments(relativePath)
+        if (segments.isEmpty()) {
+            return DocumentFile.fromTreeUri(this, Uri.parse(treeUri))
+        }
+        var current = DocumentFile.fromTreeUri(this, Uri.parse(treeUri)) ?: return null
+        for (segment in segments) {
+            val existing = current.findFile(segment)
+            val next =
+                if (existing != null) {
+                    if (!existing.isDirectory) return null
+                    existing
+                } else {
+                    current.createDirectory(segment) ?: return null
+                }
+            current = next
+        }
+        return current
+    }
+
+    private fun copyFileTo(
+        source: DocumentFile,
+        treeUri: String,
+        destRelativePath: String,
+    ) {
+        val dest =
+            ensureFile(treeUri, destRelativePath)
+                ?: throw WorkspaceMethodException("copy_failed", "Unable to create destination file")
+        contentResolver.openInputStream(source.uri).use { input ->
+            if (input == null) {
+                throw WorkspaceMethodException("copy_failed", "Unable to read source")
+            }
+            contentResolver.openOutputStream(dest.uri, "wt").use { output ->
+                if (output == null) {
+                    throw WorkspaceMethodException("copy_failed", "Unable to write destination")
+                }
+                input.copyTo(output)
+            }
+        }
+    }
+
+    private fun deleteRecursive(doc: DocumentFile): Boolean {
+        if (doc.isDirectory) {
+            for (child in doc.listFiles()) {
+                if (!deleteRecursive(child)) {
+                    return false
+                }
+            }
+        }
+        return doc.delete()
+    }
+
+    private fun parentRelativePath(relativePath: String): String {
+        val normalized = normalizeRelativePath(relativePath)
+        if (!normalized.contains('/')) {
+            return ""
+        }
+        return normalized.substringBeforeLast('/')
+    }
+
+    private fun fileNameSegment(relativePath: String): String {
+        val normalized = normalizeRelativePath(relativePath)
+        return if (normalized.contains('/')) {
+            normalized.substringAfterLast('/')
+        } else {
+            normalized
+        }
     }
 
     private fun requireTreeUri(call: MethodCall): String {

@@ -227,6 +227,89 @@ class ToolRegistry {
     );
     register(
       ToolDefinition(
+        id: 'stat',
+        description:
+            'Get file or directory metadata (path, size, lastModified, mimeType, isDirectory) in the workspace.',
+        parameters: {
+          'type': 'object',
+          'properties': {
+            'path': {'type': 'string'},
+          },
+          'required': ['path'],
+          'additionalProperties': false,
+        },
+        execute: _statTool,
+      ),
+    );
+    register(
+      ToolDefinition(
+        id: 'delete',
+        description:
+            'Delete a file or directory in the workspace. Directories are removed recursively.',
+        parameters: {
+          'type': 'object',
+          'properties': {
+            'path': {'type': 'string'},
+          },
+          'required': ['path'],
+          'additionalProperties': false,
+        },
+        execute: _deleteTool,
+      ),
+    );
+    register(
+      ToolDefinition(
+        id: 'rename',
+        description:
+            'Rename a file or directory within the same parent folder (provide `newName` only, not a path).',
+        parameters: {
+          'type': 'object',
+          'properties': {
+            'path': {'type': 'string'},
+            'newName': {'type': 'string'},
+          },
+          'required': ['path', 'newName'],
+          'additionalProperties': false,
+        },
+        execute: _renameTool,
+      ),
+    );
+    register(
+      ToolDefinition(
+        id: 'move',
+        description:
+            'Move or rename a file or directory to a new workspace-relative path (`toPath` is the final destination path).',
+        parameters: {
+          'type': 'object',
+          'properties': {
+            'fromPath': {'type': 'string'},
+            'toPath': {'type': 'string'},
+          },
+          'required': ['fromPath', 'toPath'],
+          'additionalProperties': false,
+        },
+        execute: _moveTool,
+      ),
+    );
+    register(
+      ToolDefinition(
+        id: 'copy',
+        description:
+            'Copy a file or directory to another path within the workspace. Directory copies are recursive (subject to platform limits).',
+        parameters: {
+          'type': 'object',
+          'properties': {
+            'fromPath': {'type': 'string'},
+            'toPath': {'type': 'string'},
+          },
+          'required': ['fromPath', 'toPath'],
+          'additionalProperties': false,
+        },
+        execute: _copyTool,
+      ),
+    );
+    register(
+      ToolDefinition(
         id: 'todowrite',
         description: 'Persist todos for the current session.',
         parameters: {
@@ -1028,6 +1111,251 @@ Future<ToolExecutionResult> _grepTool(
         'items': visible,
       },
     ],
+  );
+}
+
+String _formatStatEntry(WorkspaceEntry entry) {
+  final m = DateTime.fromMillisecondsSinceEpoch(entry.lastModified);
+  final lines = <String>[
+    'path: ${entry.path}',
+    'name: ${entry.name}',
+    'isDirectory: ${entry.isDirectory}',
+    'size: ${entry.size}',
+    'lastModified: ${entry.lastModified} (${m.toIso8601String()})',
+  ];
+  if (entry.mimeType != null && entry.mimeType!.isNotEmpty) {
+    lines.add('mimeType: ${entry.mimeType}');
+  }
+  return lines.join('\n');
+}
+
+Future<ToolExecutionResult> _statTool(
+    JsonMap args, ToolRuntimeContext ctx) async {
+  final filePath = _toolFilePathArg(args);
+  if (filePath.isEmpty) {
+    throw Exception('Missing required `path`.');
+  }
+  final entry = await ctx.bridge.stat(
+    treeUri: ctx.workspace.treeUri,
+    relativePath: filePath,
+  );
+  if (entry == null) {
+    throw Exception('Not found: $filePath');
+  }
+  final output = _formatStatEntry(entry);
+  return ToolExecutionResult(
+    title: filePath,
+    output: output,
+    displayOutput: 'Stat $filePath',
+    metadata: {
+      'path': entry.path,
+      'isDirectory': entry.isDirectory,
+      'size': entry.size,
+      'lastModified': entry.lastModified,
+      'mimeType': entry.mimeType,
+    },
+  );
+}
+
+Future<ToolExecutionResult> _deleteTool(
+    JsonMap args, ToolRuntimeContext ctx) async {
+  final filePath = _toolFilePathArg(args);
+  if (filePath.isEmpty) {
+    throw Exception('Missing required `path`.');
+  }
+  final existing = await ctx.bridge.stat(
+    treeUri: ctx.workspace.treeUri,
+    relativePath: filePath,
+  );
+  if (existing == null) {
+    throw Exception('Not found: $filePath');
+  }
+  await ctx.askPermission(
+    PermissionRequest(
+      id: newId('perm'),
+      sessionId: ctx.session.id,
+      permission: 'edit',
+      patterns: [filePath],
+      metadata: {
+        'tool': 'delete',
+        'path': filePath,
+        'filePath': filePath,
+        'preview': {
+          'kind': 'delete',
+          'path': filePath,
+          'isDirectory': existing.isDirectory,
+        },
+      },
+      always: [filePath],
+      messageId: ctx.message.id,
+      callId: newId('call'),
+    ),
+  );
+  await ctx.bridge.deleteEntry(
+    treeUri: ctx.workspace.treeUri,
+    relativePath: filePath,
+  );
+  return ToolExecutionResult(
+    title: filePath,
+    output: 'Deleted successfully.',
+    displayOutput: 'Deleted $filePath',
+    metadata: {'path': filePath},
+  );
+}
+
+Future<ToolExecutionResult> _renameTool(
+    JsonMap args, ToolRuntimeContext ctx) async {
+  final filePath = _toolFilePathArg(args);
+  final newName = (args['newName'] as String? ?? '').trim();
+  if (filePath.isEmpty || newName.isEmpty) {
+    throw Exception('Missing required `path` or `newName`.');
+  }
+  if (newName.contains('/') || newName.contains('\\')) {
+    throw Exception('`newName` must be a single segment (no slashes). Use `move` for paths.');
+  }
+  final existing = await ctx.bridge.stat(
+    treeUri: ctx.workspace.treeUri,
+    relativePath: filePath,
+  );
+  if (existing == null) {
+    throw Exception('Not found: $filePath');
+  }
+  final parent = _parentPath(filePath);
+  final newPath =
+      parent.isEmpty ? newName : '$parent/$newName';
+  await ctx.askPermission(
+    PermissionRequest(
+      id: newId('perm'),
+      sessionId: ctx.session.id,
+      permission: 'edit',
+      patterns: [filePath, newPath],
+      metadata: {
+        'tool': 'rename',
+        'path': filePath,
+        'filePath': filePath,
+        'newPath': newPath,
+        'preview': _buildDiffAttachment(
+          kind: 'rename',
+          path: newPath,
+          before: filePath,
+          after: newPath,
+        ),
+      },
+      always: [filePath],
+      messageId: ctx.message.id,
+      callId: newId('call'),
+    ),
+  );
+  final entry = await ctx.bridge.renameEntry(
+    treeUri: ctx.workspace.treeUri,
+    relativePath: filePath,
+    newName: newName,
+  );
+  return ToolExecutionResult(
+    title: newPath,
+    output: 'Renamed to ${_formatStatEntry(entry)}',
+    displayOutput: 'Renamed $filePath → $newPath',
+    metadata: {'path': entry.path, 'from': filePath},
+  );
+}
+
+Future<ToolExecutionResult> _moveTool(
+    JsonMap args, ToolRuntimeContext ctx) async {
+  final fromPath = _cleanPath(args['fromPath'] as String? ?? '');
+  final toPath = _cleanPath(args['toPath'] as String? ?? '');
+  if (fromPath.isEmpty || toPath.isEmpty) {
+    throw Exception('Missing required `fromPath` or `toPath`.');
+  }
+  final existing = await ctx.bridge.stat(
+    treeUri: ctx.workspace.treeUri,
+    relativePath: fromPath,
+  );
+  if (existing == null) {
+    throw Exception('Not found: $fromPath');
+  }
+  await ctx.askPermission(
+    PermissionRequest(
+      id: newId('perm'),
+      sessionId: ctx.session.id,
+      permission: 'edit',
+      patterns: [fromPath, toPath],
+      metadata: {
+        'tool': 'move',
+        'path': fromPath,
+        'filePath': fromPath,
+        'newPath': toPath,
+        'preview': _buildDiffAttachment(
+          kind: 'move',
+          path: toPath,
+          before: fromPath,
+          after: toPath,
+        ),
+      },
+      always: [fromPath, toPath],
+      messageId: ctx.message.id,
+      callId: newId('call'),
+    ),
+  );
+  final entry = await ctx.bridge.moveEntry(
+    treeUri: ctx.workspace.treeUri,
+    fromPath: fromPath,
+    toPath: toPath,
+  );
+  return ToolExecutionResult(
+    title: toPath,
+    output: _formatStatEntry(entry),
+    displayOutput: 'Moved $fromPath → $toPath',
+    metadata: {'path': entry.path, 'from': fromPath},
+  );
+}
+
+Future<ToolExecutionResult> _copyTool(
+    JsonMap args, ToolRuntimeContext ctx) async {
+  final fromPath = _cleanPath(args['fromPath'] as String? ?? '');
+  final toPath = _cleanPath(args['toPath'] as String? ?? '');
+  if (fromPath.isEmpty || toPath.isEmpty) {
+    throw Exception('Missing required `fromPath` or `toPath`.');
+  }
+  final existing = await ctx.bridge.stat(
+    treeUri: ctx.workspace.treeUri,
+    relativePath: fromPath,
+  );
+  if (existing == null) {
+    throw Exception('Not found: $fromPath');
+  }
+  await ctx.askPermission(
+    PermissionRequest(
+      id: newId('perm'),
+      sessionId: ctx.session.id,
+      permission: 'edit',
+      patterns: [fromPath, toPath],
+      metadata: {
+        'tool': 'copy',
+        'path': fromPath,
+        'filePath': fromPath,
+        'newPath': toPath,
+        'preview': _buildDiffAttachment(
+          kind: 'copy',
+          path: toPath,
+          before: fromPath,
+          after: toPath,
+        ),
+      },
+      always: [toPath],
+      messageId: ctx.message.id,
+      callId: newId('call'),
+    ),
+  );
+  final entry = await ctx.bridge.copyEntry(
+    treeUri: ctx.workspace.treeUri,
+    fromPath: fromPath,
+    toPath: toPath,
+  );
+  return ToolExecutionResult(
+    title: toPath,
+    output: _formatStatEntry(entry),
+    displayOutput: 'Copied $fromPath → $toPath',
+    metadata: {'path': entry.path, 'from': fromPath},
   );
 }
 

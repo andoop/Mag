@@ -119,6 +119,13 @@ class WorkspaceBridge {
     return future;
   }
 
+  /// Metadata for a file or directory (same as [getEntry]; alias for tool naming).
+  Future<WorkspaceEntry?> stat({
+    required String treeUri,
+    required String relativePath,
+  }) =>
+      getEntry(treeUri: treeUri, relativePath: relativePath);
+
   Future<WorkspaceEntry?> getEntry({
     required String treeUri,
     required String relativePath,
@@ -320,6 +327,76 @@ class WorkspaceBridge {
       },
     );
     invalidateCaches(treeUri: treeUri, relativePath: relativePath);
+  }
+
+  Future<WorkspaceEntry> renameEntry({
+    required String treeUri,
+    required String relativePath,
+    required String newName,
+  }) async {
+    final raw = await _channel.invokeMapMethod<String, dynamic>(
+      'renameEntry',
+      {
+        'treeUri': treeUri,
+        'relativePath': _normalizeCachePath(relativePath),
+        'newName': newName.trim(),
+      },
+    );
+    if (raw == null) {
+      throw Exception('renameEntry returned null');
+    }
+    final newPath = raw['path'] as String? ?? '';
+    invalidateCaches(treeUri: treeUri, relativePath: relativePath);
+    if (newPath.isNotEmpty && newPath != _normalizeCachePath(relativePath)) {
+      invalidateCaches(treeUri: treeUri, relativePath: newPath);
+    }
+    return WorkspaceEntry.fromJson(raw);
+  }
+
+  Future<WorkspaceEntry> moveEntry({
+    required String treeUri,
+    required String fromPath,
+    required String toPath,
+  }) async {
+    final from = _normalizeCachePath(fromPath);
+    final to = _normalizeCachePath(toPath);
+    final raw = await _channel.invokeMapMethod<String, dynamic>(
+      'moveEntry',
+      {
+        'treeUri': treeUri,
+        'fromPath': from,
+        'toPath': to,
+      },
+    );
+    if (raw == null) {
+      throw Exception('moveEntry returned null');
+    }
+    invalidateCaches(treeUri: treeUri, relativePath: from);
+    invalidateCaches(treeUri: treeUri, relativePath: to);
+    return WorkspaceEntry.fromJson(raw);
+  }
+
+  Future<WorkspaceEntry> copyEntry({
+    required String treeUri,
+    required String fromPath,
+    required String toPath,
+  }) async {
+    final from = _normalizeCachePath(fromPath);
+    final to = _normalizeCachePath(toPath);
+    final raw = await _channel.invokeMapMethod<String, dynamic>(
+      'copyEntry',
+      {
+        'treeUri': treeUri,
+        'fromPath': from,
+        'toPath': to,
+      },
+    );
+    if (raw == null) {
+      throw Exception('copyEntry returned null');
+    }
+    invalidateCaches(treeUri: treeUri, relativePath: from);
+    invalidateCaches(treeUri: treeUri, relativePath: to);
+    return WorkspaceEntry.fromJson(raw);
   }
 
   void invalidateCaches({required String treeUri, String? relativePath}) {
