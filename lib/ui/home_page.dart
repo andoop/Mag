@@ -242,54 +242,111 @@ class _HomePageState extends State<HomePage> {
     _showInfo(context, l(context, '已作为下一条消息发送', 'Sent as the next message.'));
   }
 
-  Future<void> _selectProvider(_ProviderPreset preset) async {
-    final current =
-        widget.controller.state.modelConfig ?? ModelConfig.defaults();
-    final models = _modelsForProvider(preset.id);
-    final selectedModel = models.any((item) => item.id == current.model)
-        ? current.model
-        : (models.isNotEmpty ? models.first.id : current.model);
-    await widget.controller.saveModelConfig(
-      ModelConfig(
-        baseUrl: preset.baseUrl,
-        apiKey: current.apiKey,
-        model: selectedModel,
-        provider: preset.id,
-      ),
-    );
-    if (!mounted) return;
-    Navigator.of(context).maybePop();
-  }
-
   Future<void> _selectModel(_ModelChoice model) async {
-    final current =
-        widget.controller.state.modelConfig ?? ModelConfig.defaults();
-    final provider = _providerById(model.providerId);
-    await widget.controller.saveModelConfig(
-      ModelConfig(
-        baseUrl: provider?.baseUrl ?? current.baseUrl,
-        apiKey: current.apiKey,
-        model: model.id,
-        provider: model.providerId,
-      ),
+    await widget.controller.setCurrentModel(
+      providerId: model.providerId,
+      modelId: model.id,
     );
     if (!mounted) return;
     Navigator.of(context).maybePop();
   }
 
-  bool _hasPaidProvider(AppState state) {
-    final config = state.modelConfig ?? ModelConfig.defaults();
-    final preset = _providerById(config.provider);
-    if (preset == null) return false;
-    if (!preset.requiresApiKey) return false;
-    return config.apiKey.trim().isNotEmpty;
+  Future<List<String>> _discoverModelsForProvider({
+    required String providerId,
+    required String baseUrl,
+    required String apiKey,
+    bool usePublicToken = false,
+  }) async {
+    final discovered = await widget.controller.discoverProviderModels(
+      providerId: providerId,
+      baseUrl: baseUrl,
+      apiKey: apiKey,
+      usePublicToken: usePublicToken,
+    );
+    if (discovered.isNotEmpty) return discovered;
+    if (providerId == 'mag') {
+      return const [
+        'minimax-m2.5-free',
+        'mimo-v2-pro-free',
+        'mimo-v2-omni-free',
+        'nemotron-3-super-free',
+        'big-pickle',
+      ];
+    }
+    return const [];
   }
 
-  List<_ModelChoice> _unpaidModelChoices() =>
-      _modelCatalog.where((item) => item.unpaid).toList();
+  Future<void> _connectProviderPreset(
+    _ProviderPreset preset, {
+    required String apiKey,
+    String? overrideBaseUrl,
+  }) async {
+    final current = widget.controller.state.modelConfig ?? ModelConfig.defaults();
+    final baseUrl = (overrideBaseUrl ?? preset.baseUrl).trim();
+    final models = await _discoverModelsForProvider(
+      providerId: preset.id,
+      baseUrl: baseUrl,
+      apiKey: apiKey,
+      usePublicToken: !preset.requiresApiKey && preset.id.startsWith('mag'),
+    );
+    final selectedModel = models.isNotEmpty
+        ? models.first
+        : (current.provider == preset.id ? current.model : ModelConfig.defaults().model);
+    await widget.controller.connectProvider(
+      ProviderConnection(
+        id: preset.id,
+        name: preset.name,
+        baseUrl: baseUrl,
+        apiKey: apiKey.trim(),
+        models: models,
+        custom: preset.custom,
+      ),
+      currentModelId: selectedModel,
+      select: true,
+    );
+  }
 
-  _ModelChoice? _findModelChoice(String providerId, String modelId) {
-    for (final item in _modelCatalog) {
+  Future<void> _connectCustomProvider({
+    required String providerId,
+    required String name,
+    required String baseUrl,
+    required String apiKey,
+    required List<String> models,
+  }) async {
+    final filteredModels = models
+        .map((item) => item.trim())
+        .where((item) => item.isNotEmpty)
+        .toSet()
+        .toList();
+    await widget.controller.connectProvider(
+      ProviderConnection(
+        id: providerId.trim(),
+        name: name.trim(),
+        baseUrl: baseUrl.trim(),
+        apiKey: apiKey.trim(),
+        models: filteredModels,
+        custom: true,
+      ),
+      currentModelId:
+          filteredModels.isNotEmpty ? filteredModels.first : ModelConfig.defaults().model,
+      select: true,
+    );
+  }
+
+  List<_ModelChoice> _visibleModelChoices(AppState state) {
+    final config = state.modelConfig ?? ModelConfig.defaults();
+    return _connectedModelChoices(config)
+        .where((item) => _isModelVisible(config, item))
+        .toList();
+  }
+
+  _ModelChoice? _findModelChoice(
+    String providerId,
+    String modelId, {
+    ModelConfig? config,
+  }) {
+    final source = config != null ? _connectedModelChoices(config) : _builtinModelCatalog;
+    for (final item in source) {
       if (item.providerId == providerId && item.id == modelId) {
         return item;
       }
@@ -301,45 +358,14 @@ class _HomePageState extends State<HomePage> {
 
   bool _matchesModelQuery(_ModelChoice item, String query) {
     if (query.isEmpty) return true;
-    final providerLabel = _providerLabel(item.providerId).toLowerCase();
+    final providerLabel = _providerLabel(
+      item.providerId,
+      config: widget.controller.state.modelConfig,
+    ).toLowerCase();
     return item.name.toLowerCase().contains(query) ||
         item.id.toLowerCase().contains(query) ||
         item.providerId.toLowerCase().contains(query) ||
         providerLabel.contains(query);
-  }
-
-  List<_ModelChoice> _recentModelChoices(AppState state) {
-    final items = <_ModelChoice>[];
-    for (final key in state.recentModelKeys) {
-      final split = key.indexOf('/');
-      if (split <= 0 || split >= key.length - 1) continue;
-      final item =
-          _findModelChoice(key.substring(0, split), key.substring(split + 1));
-      if (item != null) {
-        items.add(item);
-      }
-    }
-    return items;
-  }
-
-  List<_ModelChoice> _suggestedModelChoices(AppState state) {
-    final config = state.modelConfig ?? ModelConfig.defaults();
-    final currentProviderModels = _modelsForProvider(config.provider);
-    final candidates = <_ModelChoice>[
-      ...currentProviderModels
-          .where((item) => item.free || item.recommended || item.latest),
-      ..._unpaidModelChoices(),
-      ..._modelCatalog.where((item) => item.latest || item.recommended),
-    ];
-    final seen = <String>{};
-    final output = <_ModelChoice>[];
-    for (final item in candidates) {
-      final key = _modelKey(item.providerId, item.id);
-      if (seen.add(key)) {
-        output.add(item);
-      }
-    }
-    return output.take(6).toList();
   }
 
   int _compareModelChoices(_ModelChoice a, _ModelChoice b, AppState state) {
@@ -369,8 +395,8 @@ class _HomePageState extends State<HomePage> {
     if (a.recommended != b.recommended) return a.recommended ? -1 : 1;
     if (a.free != b.free) return a.free ? -1 : 1;
 
-    final aProvider = _providerById(a.providerId);
-    final bProvider = _providerById(b.providerId);
+    final aProvider = _providerById(a.providerId, config: current);
+    final bProvider = _providerById(b.providerId, config: current);
     if ((aProvider?.recommended ?? false) !=
         (bProvider?.recommended ?? false)) {
       return (aProvider?.recommended ?? false) ? -1 : 1;
@@ -379,48 +405,6 @@ class _HomePageState extends State<HomePage> {
       return (aProvider?.popular ?? false) ? -1 : 1;
     }
     return a.name.toLowerCase().compareTo(b.name.toLowerCase());
-  }
-
-  int _providerModelCount(String providerId) =>
-      _modelsForProvider(providerId).length;
-
-  bool _providerHasFreeModels(String providerId) =>
-      _modelsForProvider(providerId).any((item) => item.free || item.unpaid);
-
-  String _providerAvailabilityLabel(
-      BuildContext context, _ProviderPreset preset) {
-    if (!preset.requiresApiKey) return l(context, '免费可用', 'Free access');
-    if (_providerHasFreeModels(preset.id)) {
-      return l(context, '免费和付费', 'Free and paid');
-    }
-    return l(context, '需要 API Key', 'API key required');
-  }
-
-  String _providerNote(BuildContext context, _ProviderPreset preset) {
-    switch (preset.id) {
-      case 'deepseek':
-        return l(context, 'DeepSeek 官方接口，已预置 deepseek-chat。',
-            'Official DeepSeek API with `deepseek-chat` preconfigured.');
-      case 'mag':
-        return l(context, 'Mag Zen 免费模型入口，未填 key 时会尝试 public token。',
-            'Mag Zen free-model entry. It will try a public token when no key is set.');
-      case 'mag_go':
-        return l(
-            context, 'Mag Go 推荐入口。', 'Recommended Mag Go entry.');
-      case 'openrouter':
-        return l(context, 'Mag 风格推荐入口，支持免费模型和多家模型聚合。',
-            'Mag-style recommended entry with free models and aggregated providers.');
-      case 'openai':
-        return l(context, '官方 OpenAI API。', 'Official OpenAI API.');
-      case 'github_models':
-        return l(context, 'GitHub Models，使用 GitHub token。',
-            'GitHub Models using your GitHub token.');
-      case 'openai_compatible':
-        return l(
-            context, '自定义 OpenAI 兼容接口。', 'Custom OpenAI-compatible endpoint.');
-      default:
-        return preset.note ?? preset.baseUrl;
-    }
   }
 
   Future<void> _openModelChooser(BuildContext context) async {
@@ -434,7 +418,11 @@ class _HomePageState extends State<HomePage> {
     final isKeyboardOpen = mediaQuery.viewInsets.bottom > 0;
     final modelConfig = state.modelConfig ?? ModelConfig.defaults();
     final currentModelChoice =
-        _findModelChoice(modelConfig.provider, modelConfig.model);
+        _findModelChoice(modelConfig.provider, modelConfig.model, config: modelConfig);
+    final showModelFreeTag = currentModelChoice != null &&
+        _modelChoiceIsFree(currentModelChoice);
+    final showModelLatestTag = currentModelChoice != null &&
+        _modelChoiceIsLatest(currentModelChoice);
     final renderedMessages = _renderedTimelineMessages(state);
     return Scaffold(
       appBar: AppBar(
@@ -444,7 +432,8 @@ class _HomePageState extends State<HomePage> {
               ? state.session!.title
               : (state.workspace?.name ?? l(context, '移动代理', 'Mobile Agent')),
           subtitle:
-              '${currentModelChoice?.name ?? modelConfig.model} · ${_providerLabel(modelConfig.provider)}',
+              '${currentModelChoice?.name ?? modelConfig.model} · ${_providerLabel(modelConfig.provider, config: modelConfig)}',
+          showFreeTag: showModelFreeTag,
           running: state.isBusy,
         ),
         actions: [
@@ -512,6 +501,8 @@ class _HomePageState extends State<HomePage> {
                           state: state,
                           modelConfig: modelConfig,
                           currentModelChoice: currentModelChoice,
+                          showModelFreeTag: showModelFreeTag,
+                          showModelLatestTag: showModelLatestTag,
                           isKeyboardOpen: isKeyboardOpen,
                           renderedMessages: renderedMessages,
                           index: index,
@@ -647,6 +638,7 @@ class _HomePageState extends State<HomePage> {
     final lastBundle = state.messages.isEmpty ? null : state.messages.last;
     final lastPart =
         lastBundle?.parts.isEmpty == false ? lastBundle!.parts.last : null;
+    final mc = state.modelConfig;
     return [
       state.session?.id ?? '',
       state.messages.length,
@@ -655,6 +647,8 @@ class _HomePageState extends State<HomePage> {
       state.todos.length,
       state.isBusy,
       state.error ?? '',
+      mc?.provider ?? '',
+      mc?.model ?? '',
       lastBundle?.message.id ?? '',
       lastBundle?.message.text.length ?? 0,
       lastPart?.id ?? '',

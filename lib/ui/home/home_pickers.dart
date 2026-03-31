@@ -2,6 +2,50 @@ part of '../home_page.dart';
 
 // ignore_for_file: invalid_use_of_protected_member
 
+/// OpenCode 式紧凑底部面板：矮把手 + 不占满屏。
+Widget _compactPickerHandle() {
+  return Padding(
+    padding: const EdgeInsets.only(top: 4, bottom: 2),
+    child: Center(
+      child: Container(
+        width: 36,
+        height: 3,
+        decoration: BoxDecoration(
+          color: kOcMuted.withOpacity(0.28),
+          borderRadius: BorderRadius.circular(999),
+        ),
+      ),
+    ),
+  );
+}
+
+InputDecoration _compactPickerSearchDecoration(
+  BuildContext context, {
+  required String hint,
+}) {
+  return InputDecoration(
+    isDense: true,
+    hintText: hint,
+    hintStyle: const TextStyle(fontSize: 13, color: Color(0xFF9CA3AF)),
+    prefixIcon: const Icon(Icons.search, size: 18, color: kOcMuted),
+    filled: true,
+    fillColor: const Color(0xFFF4F4F5),
+    border: OutlineInputBorder(
+      borderRadius: BorderRadius.circular(10),
+      borderSide: const BorderSide(color: Color(0xFFE4E4E7)),
+    ),
+    enabledBorder: OutlineInputBorder(
+      borderRadius: BorderRadius.circular(10),
+      borderSide: const BorderSide(color: Color(0xFFE4E4E7)),
+    ),
+    focusedBorder: OutlineInputBorder(
+      borderRadius: BorderRadius.circular(10),
+      borderSide: const BorderSide(color: kOcAccent, width: 1.2),
+    ),
+    contentPadding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+  );
+}
+
 extension _HomePagePickers on _HomePageState {
   Future<void> _openSessionPicker(BuildContext context) async {
     final state = widget.controller.state;
@@ -495,8 +539,10 @@ extension _HomePagePickers on _HomePageState {
 
   Future<void> _openSettings(BuildContext context, ModelConfig? config) async {
     final current = config ?? ModelConfig.defaults();
-    final baseUrl = TextEditingController(text: current.baseUrl);
-    final apiKey = TextEditingController(text: current.apiKey);
+    final connection = current.currentConnection;
+    if (connection == null) return;
+    final baseUrl = TextEditingController(text: connection.baseUrl);
+    final apiKey = TextEditingController(text: connection.apiKey);
     final model = TextEditingController(text: current.model);
     await showModalBottomSheet<void>(
       context: context,
@@ -525,13 +571,18 @@ extension _HomePagePickers on _HomePageState {
               const SizedBox(height: 16),
               FilledButton(
                 onPressed: () async {
-                  await widget.controller.saveModelConfig(
-                    ModelConfig(
+                  await widget.controller.connectProvider(
+                    connection.copyWith(
                       baseUrl: baseUrl.text.trim(),
                       apiKey: apiKey.text.trim(),
-                      model: model.text.trim(),
-                      provider: current.provider,
+                      models: model.text.trim().isEmpty
+                          ? connection.models
+                          : [model.text.trim(), ...connection.models],
                     ),
+                    currentModelId: model.text.trim().isEmpty
+                        ? current.model
+                        : model.text.trim(),
+                    select: true,
                   );
                   if (mounted) Navigator.of(context).pop();
                 },
@@ -544,6 +595,457 @@ extension _HomePagePickers on _HomePageState {
     );
   }
 
+  Future<void> _openConnectPresetProvider(
+    BuildContext context,
+    _ProviderPreset preset,
+  ) async {
+    final apiKeyController = TextEditingController();
+    final baseUrlController = TextEditingController(text: preset.baseUrl);
+    await showModalBottomSheet<void>(
+      context: context,
+      isScrollControlled: true,
+      builder: (sheetContext) {
+        return Padding(
+          padding: EdgeInsets.fromLTRB(
+            16,
+            16,
+            16,
+            MediaQuery.of(sheetContext).viewInsets.bottom + 16,
+          ),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Row(
+                children: [
+                  Expanded(
+                    child: Text(
+                      l(context, '连接 ${preset.name}', 'Connect ${preset.name}'),
+                      style: const TextStyle(
+                        fontSize: 16,
+                        fontWeight: FontWeight.w700,
+                      ),
+                    ),
+                  ),
+                  IconButton(
+                    onPressed: () => Navigator.of(sheetContext).pop(),
+                    icon: const Icon(Icons.close),
+                  ),
+                ],
+              ),
+              if ((preset.note ?? '').isNotEmpty)
+                Padding(
+                  padding: const EdgeInsets.only(bottom: 12),
+                  child: Text(
+                    preset.note!,
+                    style: const TextStyle(fontSize: 13, color: kOcMuted),
+                  ),
+                ),
+              TextField(
+                controller: baseUrlController,
+                decoration: InputDecoration(
+                  labelText: l(context, 'Base URL', 'Base URL'),
+                ),
+              ),
+              if (preset.requiresApiKey) ...[
+                const SizedBox(height: 12),
+                TextField(
+                  controller: apiKeyController,
+                  decoration: InputDecoration(
+                    labelText: l(context, 'API Key', 'API Key'),
+                  ),
+                ),
+              ],
+              const SizedBox(height: 16),
+              FilledButton.icon(
+                onPressed: () async {
+                  if (baseUrlController.text.trim().isEmpty) {
+                    _showInfo(
+                      context,
+                      l(context, 'Base URL 不能为空', 'Base URL is required'),
+                    );
+                    return;
+                  }
+                  if (preset.requiresApiKey &&
+                      apiKeyController.text.trim().isEmpty) {
+                    _showInfo(
+                      context,
+                      l(context, '请先填写 API Key', 'Please enter an API key'),
+                    );
+                    return;
+                  }
+                  await _connectProviderPreset(
+                    preset,
+                    apiKey: apiKeyController.text.trim(),
+                    overrideBaseUrl: baseUrlController.text.trim(),
+                  );
+                  if (!mounted) return;
+                  Navigator.of(sheetContext).pop();
+                },
+                icon: const Icon(Icons.link_rounded),
+                label: Text(l(context, '连接', 'Connect')),
+              ),
+            ],
+          ),
+        );
+      },
+    );
+  }
+
+  Future<void> _openCustomProviderSheet(BuildContext context) async {
+    final providerId = TextEditingController();
+    final providerName = TextEditingController();
+    final baseUrl = TextEditingController();
+    final apiKey = TextEditingController();
+    final models = TextEditingController();
+    await showModalBottomSheet<void>(
+      context: context,
+      isScrollControlled: true,
+      builder: (sheetContext) {
+        return Padding(
+          padding: EdgeInsets.fromLTRB(
+            16,
+            16,
+            16,
+            MediaQuery.of(sheetContext).viewInsets.bottom + 16,
+          ),
+          child: SingleChildScrollView(
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Row(
+                  children: [
+                    Expanded(
+                      child: Text(
+                        l(context, '自定义供应商', 'Custom Provider'),
+                        style: const TextStyle(
+                          fontSize: 16,
+                          fontWeight: FontWeight.w700,
+                        ),
+                      ),
+                    ),
+                    IconButton(
+                      onPressed: () => Navigator.of(sheetContext).pop(),
+                      icon: const Icon(Icons.close),
+                    ),
+                  ],
+                ),
+                TextField(
+                  controller: providerId,
+                  decoration: InputDecoration(
+                    labelText: l(context, 'Provider ID', 'Provider ID'),
+                  ),
+                ),
+                const SizedBox(height: 12),
+                TextField(
+                  controller: providerName,
+                  decoration: InputDecoration(
+                    labelText: l(context, '显示名称', 'Display name'),
+                  ),
+                ),
+                const SizedBox(height: 12),
+                TextField(
+                  controller: baseUrl,
+                  decoration: InputDecoration(
+                    labelText: l(context, 'Base URL', 'Base URL'),
+                  ),
+                ),
+                const SizedBox(height: 12),
+                TextField(
+                  controller: apiKey,
+                  decoration: InputDecoration(
+                    labelText: l(context, 'API Key', 'API Key'),
+                  ),
+                ),
+                const SizedBox(height: 12),
+                TextField(
+                  controller: models,
+                  minLines: 3,
+                  maxLines: 6,
+                  decoration: InputDecoration(
+                    labelText: l(context, '模型列表（每行一个）', 'Models (one per line)'),
+                  ),
+                ),
+                const SizedBox(height: 16),
+                FilledButton.icon(
+                  onPressed: () async {
+                    final providerIdValue = providerId.text.trim();
+                    final providerNameValue = providerName.text.trim();
+                    final baseUrlValue = baseUrl.text.trim();
+                    final ids = models.text
+                        .split(RegExp(r'[\n,]'))
+                        .map((item) => item.trim())
+                        .where((item) => item.isNotEmpty)
+                        .toList();
+                    final current =
+                        widget.controller.state.modelConfig ?? ModelConfig.defaults();
+                    if (providerIdValue.isEmpty ||
+                        !RegExp(r'^[a-z0-9][a-z0-9-_]*$').hasMatch(providerIdValue)) {
+                      _showInfo(
+                        context,
+                        l(
+                          context,
+                          'Provider ID 需为小写字母/数字，可包含 - 或 _',
+                          'Provider ID must use lowercase letters/numbers, with optional - or _',
+                        ),
+                      );
+                      return;
+                    }
+                    if (current.connectionFor(providerIdValue) != null) {
+                      _showInfo(
+                        context,
+                        l(context, '这个 Provider ID 已存在', 'This provider ID already exists'),
+                      );
+                      return;
+                    }
+                    if (providerNameValue.isEmpty || baseUrlValue.isEmpty) {
+                      _showInfo(
+                        context,
+                        l(context, '名称和 Base URL 不能为空', 'Name and Base URL are required'),
+                      );
+                      return;
+                    }
+                    if (ids.isEmpty) {
+                      _showInfo(
+                        context,
+                        l(context, '请至少填写一个模型 ID', 'Please add at least one model ID'),
+                      );
+                      return;
+                    }
+                    await _connectCustomProvider(
+                      providerId: providerIdValue,
+                      name: providerNameValue,
+                      baseUrl: baseUrlValue,
+                      apiKey: apiKey.text.trim(),
+                      models: ids,
+                    );
+                    if (!mounted) return;
+                    Navigator.of(sheetContext).pop();
+                  },
+                  icon: const Icon(Icons.add_link_rounded),
+                  label: Text(l(context, '添加供应商', 'Add provider')),
+                ),
+              ],
+            ),
+          ),
+        );
+      },
+    );
+  }
+
+  Future<void> _openManageModelsSheet(BuildContext context) async {
+    var query = '';
+    await showModalBottomSheet<void>(
+      context: context,
+      backgroundColor: _kPageBackground,
+      barrierColor: Colors.transparent,
+      isScrollControlled: true,
+      builder: (sheetContext) {
+        return StatefulBuilder(
+          builder: (sheetContext, setModalState) {
+            final config = widget.controller.state.modelConfig ?? ModelConfig.defaults();
+            final connectedProviders = _connectedProviderPresets(config);
+            final grouped = <_ProviderPreset, List<_ModelChoice>>{};
+            for (final provider in connectedProviders) {
+              final matches = _modelsForProvider(provider.id, config: config)
+                  .where((item) => _matchesModelQuery(item, query))
+                  .toList();
+              if (matches.isNotEmpty) {
+                grouped[provider] = matches;
+              }
+            }
+            return FractionallySizedBox(
+              heightFactor: 0.72,
+              child: SafeArea(
+                child: Padding(
+                  padding: EdgeInsets.fromLTRB(
+                    12,
+                    0,
+                    12,
+                    MediaQuery.of(sheetContext).viewInsets.bottom + 8,
+                  ),
+                  child: DecoratedBox(
+                    decoration: BoxDecoration(
+                      color: kOcSurface,
+                      borderRadius: BorderRadius.circular(20),
+                      border: Border.all(color: kOcBorder),
+                      boxShadow: [
+                        BoxShadow(
+                          color: Colors.black.withOpacity(0.08),
+                          blurRadius: 20,
+                          offset: const Offset(0, 8),
+                        ),
+                      ],
+                    ),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.stretch,
+                      children: [
+                        _compactPickerHandle(),
+                        Padding(
+                          padding: const EdgeInsets.fromLTRB(14, 0, 6, 0),
+                          child: Row(
+                            children: [
+                              Expanded(
+                                child: Text(
+                                  l(context, '模型管理', 'Manage Models'),
+                                  style: const TextStyle(
+                                    fontWeight: FontWeight.w600,
+                                    fontSize: 15,
+                                    color: kOcText,
+                                  ),
+                                ),
+                              ),
+                              IconButton(
+                                visualDensity: VisualDensity.compact,
+                                onPressed: () =>
+                                    Navigator.of(sheetContext).pop(),
+                                icon: const Icon(Icons.close, size: 20),
+                              ),
+                            ],
+                          ),
+                        ),
+                        Padding(
+                          padding: const EdgeInsets.fromLTRB(12, 4, 12, 8),
+                          child: TextField(
+                            onChanged: (value) {
+                              query = value.trim().toLowerCase();
+                              setModalState(() {});
+                            },
+                            decoration: _compactPickerSearchDecoration(
+                              context,
+                              hint: l(context, '过滤模型…', 'Filter models…'),
+                            ),
+                          ),
+                        ),
+                        Expanded(
+                          child: ListView(
+                            padding: const EdgeInsets.fromLTRB(12, 0, 12, 12),
+                            children: grouped.entries.map((entry) {
+                            final provider = entry.key;
+                            final models = entry.value;
+                            final allVisible = models.every(
+                              (item) => _isModelVisible(config, item),
+                            );
+                            return Padding(
+                              padding: const EdgeInsets.only(bottom: 14),
+                              child: Column(
+                                crossAxisAlignment: CrossAxisAlignment.start,
+                                children: [
+                                  Row(
+                                    children: [
+                                      Expanded(
+                                        child: Text(
+                                          provider.name,
+                                          style: const TextStyle(
+                                            fontSize: 13.5,
+                                            fontWeight: FontWeight.w700,
+                                            color: kOcText,
+                                          ),
+                                        ),
+                                      ),
+                                      Switch.adaptive(
+                                        value: allVisible,
+                                        onChanged: (value) async {
+                                          for (final item in models) {
+                                            await widget.controller.setModelVisibility(
+                                              providerId: item.providerId,
+                                              modelId: item.id,
+                                              visible: value,
+                                            );
+                                          }
+                                          if (!mounted) return;
+                                          setModalState(() {});
+                                        },
+                                      ),
+                                    ],
+                                  ),
+                                  Container(
+                                    decoration: BoxDecoration(
+                                      color: Colors.white,
+                                      borderRadius: BorderRadius.circular(14),
+                                      border: Border.all(color: kOcBorder),
+                                    ),
+                                    child: Column(
+                                      children: models.map((item) {
+                                        final visible = _isModelVisible(config, item);
+                                        return SwitchListTile.adaptive(
+                                          value: visible,
+                                          dense: true,
+                                          contentPadding: const EdgeInsets.symmetric(
+                                            horizontal: 12,
+                                            vertical: 4,
+                                          ),
+                                          title: Row(
+                                            crossAxisAlignment:
+                                                CrossAxisAlignment.start,
+                                            children: [
+                                              Expanded(
+                                                child: Text(
+                                                  item.name,
+                                                  style: const TextStyle(
+                                                    fontSize: 13.5,
+                                                    fontWeight: FontWeight.w500,
+                                                  ),
+                                                ),
+                                              ),
+                                              if (_modelChoiceIsFree(item)) ...[
+                                                const SizedBox(width: 6),
+                                                OcModelTag(
+                                                  label: l(context, '免费', 'Free'),
+                                                ),
+                                              ],
+                                              if (_modelChoiceIsLatest(item)) ...[
+                                                const SizedBox(width: 6),
+                                                OcModelTag(
+                                                  label:
+                                                      l(context, '最新', 'Latest'),
+                                                ),
+                                              ],
+                                            ],
+                                          ),
+                                          subtitle: Padding(
+                                            padding: const EdgeInsets.only(top: 4),
+                                            child: Text(
+                                              item.id,
+                                              style: const TextStyle(
+                                                fontSize: 11.5,
+                                                color: kOcMuted,
+                                              ),
+                                            ),
+                                          ),
+                                          onChanged: (value) async {
+                                            await widget.controller.setModelVisibility(
+                                              providerId: item.providerId,
+                                              modelId: item.id,
+                                              visible: value,
+                                            );
+                                            if (!mounted) return;
+                                            setModalState(() {});
+                                          },
+                                        );
+                                      }).toList(),
+                                    ),
+                                  ),
+                                ],
+                              ),
+                            );
+                          }).toList(),
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+            ),
+            );
+          },
+        );
+      },
+    );
+  }
+
+  /// OpenCode 风格：选择要连接的 provider，而不是直接切当前 provider。
   Future<void> _openProviderPicker(BuildContext context) async {
     var query = '';
     await showModalBottomSheet<void>(
@@ -552,131 +1054,172 @@ extension _HomePagePickers on _HomePageState {
       builder: (context) {
         return StatefulBuilder(
           builder: (context, setModalState) {
-            final state = widget.controller.state;
-            final current = state.modelConfig ?? ModelConfig.defaults();
-            final items = _providerPresets.where((item) {
+            final current = widget.controller.state.modelConfig ?? ModelConfig.defaults();
+            bool matchesPreset(_ProviderPreset item) {
               if (query.isEmpty) return true;
-              return item.name.toLowerCase().contains(query) ||
-                  item.id.toLowerCase().contains(query) ||
-                  (item.note?.toLowerCase().contains(query) ?? false);
-            }).toList()
+              final q = query;
+              return item.name.toLowerCase().contains(q) ||
+                  item.id.toLowerCase().contains(q) ||
+                  item.baseUrl.toLowerCase().contains(q);
+            }
+            final popularItems = _builtinProviderPresets
+                .where((item) => item.popular && matchesPreset(item))
+                .toList()
               ..sort((a, b) {
-                final aCurrent = a.id == current.provider;
-                final bCurrent = b.id == current.provider;
-                if (aCurrent != bCurrent) return aCurrent ? -1 : 1;
-                if (a.recommended && !b.recommended) return -1;
-                if (!a.recommended && b.recommended) return 1;
-                if (a.popular && !b.popular) return -1;
-                if (!a.popular && b.popular) return 1;
-                return a.name.compareTo(b.name);
+                final rankCompare =
+                    _providerSortRank(a.id).compareTo(_providerSortRank(b.id));
+                if (rankCompare != 0) return rankCompare;
+                return a.name.toLowerCase().compareTo(b.name.toLowerCase());
               });
-            final popular = items.where((item) => item.popular).toList();
-            final other = items.where((item) => !item.popular).toList();
-            final currentProvider = _providerById(current.provider);
+            final otherItems = _builtinProviderPresets
+                .where(matchesPreset)
+                .where((item) => !item.popular)
+                .toList()
+              ..sort((a, b) => a.name.toLowerCase().compareTo(b.name.toLowerCase()));
             return FractionallySizedBox(
-              heightFactor: 0.9,
+              heightFactor: 0.7,
               child: SafeArea(
                 child: Padding(
-                  padding: EdgeInsets.fromLTRB(16, 16, 16,
-                      MediaQuery.of(context).viewInsets.bottom + 16),
+                  padding: EdgeInsets.fromLTRB(
+                    12,
+                    0,
+                    12,
+                    MediaQuery.of(context).viewInsets.bottom + 8,
+                  ),
                   child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
+                    crossAxisAlignment: CrossAxisAlignment.stretch,
                     children: [
-                      Text(l(context, 'Providers', 'Providers'),
-                          style: const TextStyle(fontWeight: FontWeight.bold)),
-                      const SizedBox(height: 4),
-                      Text(
-                        l(context, '像 Mag 一样把 provider 作为模型管理入口来切换。',
-                            'Manage providers as the entry point for model selection, similar to Mag.'),
-                        style: Theme.of(context).textTheme.bodySmall,
+                      _compactPickerHandle(),
+                      Row(
+                        children: [
+                          Expanded(
+                            child: Text(
+                              l(context, '连接供应商', 'Connect provider'),
+                              style: const TextStyle(
+                                fontWeight: FontWeight.w600,
+                                fontSize: 15,
+                                letterSpacing: -0.2,
+                                color: kOcText,
+                              ),
+                            ),
+                          ),
+                          IconButton(
+                            icon: const Icon(Icons.close, size: 20),
+                            onPressed: () => Navigator.of(context).pop(),
+                          ),
+                        ],
                       ),
-                      const SizedBox(height: 8),
+                      const SizedBox(height: 4),
                       TextField(
+                        style: const TextStyle(fontSize: 13.5, height: 1.25),
                         onChanged: (value) {
                           query = value.trim().toLowerCase();
                           setModalState(() {});
                         },
-                        decoration: InputDecoration(
-                          border: const OutlineInputBorder(),
-                          hintText:
-                              l(context, '搜索 provider', 'Search provider'),
-                          prefixIcon: const Icon(Icons.search),
+                        decoration: _compactPickerSearchDecoration(
+                          context,
+                          hint: l(context, '过滤…', 'Filter…'),
                         ),
                       ),
-                      const SizedBox(height: 12),
+                      const SizedBox(height: 6),
                       Expanded(
-                        child: ListView(
-                          children: [
-                            if (currentProvider != null)
-                              Container(
-                                padding: const EdgeInsets.all(12),
-                                decoration: BoxDecoration(
-                                  color: Colors.grey.shade50,
-                                  borderRadius: BorderRadius.circular(16),
-                                  border: Border.all(color: Colors.black12),
+                        child: popularItems.isEmpty && otherItems.isEmpty
+                            ? Center(
+                                child: Text(
+                                  l(context, '没有匹配项', 'No matches'),
+                                  style: const TextStyle(
+                                    fontSize: 13,
+                                    color: kOcMuted,
+                                  ),
                                 ),
-                                child: Column(
-                                  crossAxisAlignment: CrossAxisAlignment.start,
-                                  children: [
-                                    Text(l(context, '当前', 'Current'),
-                                        style: const TextStyle(
-                                            fontWeight: FontWeight.bold)),
-                                    const SizedBox(height: 8),
-                                    Text(
-                                      currentProvider.name,
-                                      style: const TextStyle(
-                                          fontSize: 16,
-                                          fontWeight: FontWeight.w600),
+                              )
+                            : ListView(
+                                padding: EdgeInsets.zero,
+                                children: [
+                                  Padding(
+                                    padding: const EdgeInsets.only(bottom: 8),
+                                    child: TextButton.icon(
+                                      onPressed: () {
+                                        Navigator.of(context).pop();
+                                        _openCustomProviderSheet(this.context);
+                                      },
+                                      icon: const Icon(Icons.add_circle_outline),
+                                      label: Text(
+                                        l(context, '自定义 Provider', 'Custom Provider'),
+                                      ),
                                     ),
-                                    const SizedBox(height: 4),
-                                    Text(
-                                      '${modelCountText(context, _providerModelCount(currentProvider.id))} · ${_providerAvailabilityLabel(context, currentProvider)}',
-                                      style:
-                                          Theme.of(context).textTheme.bodySmall,
+                                  ),
+                                  if (popularItems.isNotEmpty) ...[
+                                    Padding(
+                                      padding: const EdgeInsets.fromLTRB(4, 4, 4, 6),
+                                      child: Text(
+                                        l(context, '热门', 'Popular'),
+                                        style: const TextStyle(
+                                          fontSize: 11.5,
+                                          fontWeight: FontWeight.w600,
+                                          color: kOcMuted,
+                                        ),
+                                      ),
                                     ),
                                   ],
-                                ),
+                                  ...popularItems.map(
+                                    (item) => Column(
+                                      mainAxisSize: MainAxisSize.min,
+                                      children: [
+                                        _ProviderListTile(
+                                          item: item,
+                                          selected: current.connectionFor(item.id) != null,
+                                          onTap: () {
+                                            Navigator.of(context).pop();
+                                            _openConnectPresetProvider(this.context, item);
+                                          },
+                                        ),
+                                        const Divider(
+                                          height: 1,
+                                          thickness: 1,
+                                          color: Color(0xFFE4E4E7),
+                                        ),
+                                      ],
+                                    ),
+                                  ),
+                                  if (otherItems.isNotEmpty) ...[
+                                    Padding(
+                                      padding: const EdgeInsets.fromLTRB(
+                                          4, 10, 4, 6),
+                                      child: Text(
+                                        l(context, '其他', 'Other'),
+                                        style: const TextStyle(
+                                          fontSize: 11.5,
+                                          fontWeight: FontWeight.w600,
+                                          color: kOcMuted,
+                                          letterSpacing: 0.2,
+                                        ),
+                                      ),
+                                    ),
+                                    ...otherItems.map(
+                                      (item) => Column(
+                                        mainAxisSize: MainAxisSize.min,
+                                        children: [
+                                          _ProviderListTile(
+                                            item: item,
+                                            selected: current.connectionFor(item.id) != null,
+                                            onTap: () {
+                                              Navigator.of(context).pop();
+                                              _openConnectPresetProvider(
+                                                  this.context, item);
+                                            },
+                                          ),
+                                          const Divider(
+                                            height: 1,
+                                            thickness: 1,
+                                            color: Color(0xFFE4E4E7),
+                                          ),
+                                        ],
+                                      ),
+                                    ),
+                                  ],
+                                ],
                               ),
-                            if (popular.isNotEmpty) ...[
-                              const SizedBox(height: 16),
-                              Text(l(context, '热门', 'Popular'),
-                                  style: const TextStyle(
-                                      fontWeight: FontWeight.bold)),
-                              const SizedBox(height: 8),
-                              ...popular.map((item) => Padding(
-                                    padding: const EdgeInsets.only(bottom: 8),
-                                    child: _ProviderListTile(
-                                      item: item,
-                                      selected: item.id == current.provider,
-                                      modelCount: _providerModelCount(item.id),
-                                      availability: _providerAvailabilityLabel(
-                                          context, item),
-                                      description: _providerNote(context, item),
-                                      onTap: () => _selectProvider(item),
-                                    ),
-                                  )),
-                            ],
-                            if (other.isNotEmpty) ...[
-                              const SizedBox(height: 8),
-                              Text(l(context, '所有 Providers', 'All Providers'),
-                                  style: const TextStyle(
-                                      fontWeight: FontWeight.bold)),
-                              const SizedBox(height: 8),
-                              ...other.map((item) => Padding(
-                                    padding: const EdgeInsets.only(bottom: 8),
-                                    child: _ProviderListTile(
-                                      item: item,
-                                      selected: item.id == current.provider,
-                                      modelCount: _providerModelCount(item.id),
-                                      availability: _providerAvailabilityLabel(
-                                          context, item),
-                                      description: _providerNote(context, item),
-                                      onTap: () => _selectProvider(item),
-                                    ),
-                                  )),
-                            ],
-                          ],
-                        ),
                       ),
                     ],
                   ),
@@ -689,297 +1232,206 @@ extension _HomePagePickers on _HomePageState {
     );
   }
 
+  /// OpenCode `/models` 风格：分组模型列表，右上保留 `+` 与管理入口。
   Future<void> _openModelPicker(BuildContext context) async {
     var query = '';
     await showModalBottomSheet<void>(
       context: context,
+      backgroundColor: _kPageBackground,
+      barrierColor: Colors.transparent,
       isScrollControlled: true,
       builder: (context) {
         return StatefulBuilder(
           builder: (context, setModalState) {
             final state = widget.controller.state;
             final current = state.modelConfig ?? ModelConfig.defaults();
-            final currentChoice =
-                _findModelChoice(current.provider, current.model);
-            final filteredRecent = _recentModelChoices(state)
-                .where((item) => _matchesModelQuery(item, query))
-                .toList();
-            final recentKeys = filteredRecent
-                .map((item) => _modelKey(item.providerId, item.id))
-                .toSet();
-            final filteredSuggested = _suggestedModelChoices(state)
-                .where((item) => _matchesModelQuery(item, query))
-                .where((item) =>
-                    !recentKeys.contains(_modelKey(item.providerId, item.id)))
-                .toList();
-            final allModels = _modelCatalog
+            final visible = _visibleModelChoices(state);
+            final filtered = visible
                 .where((item) => _matchesModelQuery(item, query))
                 .toList()
               ..sort((a, b) => _compareModelChoices(a, b, state));
-            final promotedKeys = <String>{
-              _modelKey(current.provider, current.model),
-              if (query.isEmpty)
-                ...filteredRecent
-                    .map((item) => _modelKey(item.providerId, item.id)),
-              if (query.isEmpty)
-                ...filteredSuggested
-                    .map((item) => _modelKey(item.providerId, item.id)),
-            };
-            final visibleModels = query.isEmpty
-                ? allModels
-                    .where((item) => !promotedKeys
-                        .contains(_modelKey(item.providerId, item.id)))
-                    .toList()
-                : allModels;
-            final popularProviders =
-                _providerPresets.where((item) => item.popular).take(4).toList();
+            final grouped = <String, List<_ModelChoice>>{};
+            for (final item in filtered) {
+              grouped.putIfAbsent(item.providerId, () => []).add(item);
+            }
             return FractionallySizedBox(
-              heightFactor: 0.92,
+              heightFactor: 0.64,
               child: SafeArea(
                 child: Padding(
-                  padding: EdgeInsets.fromLTRB(16, 16, 16,
-                      MediaQuery.of(context).viewInsets.bottom + 16),
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Row(
-                        children: [
-                          Expanded(
-                            child: Column(
-                              crossAxisAlignment: CrossAxisAlignment.start,
-                              children: [
-                                Text(l(context, '模型', 'Models'),
-                                    style: const TextStyle(
-                                        fontWeight: FontWeight.bold)),
-                                const SizedBox(height: 4),
-                                Text(
-                                  l(
-                                      context,
-                                      '按 Mag 的单列表思路展示最近使用、推荐项和完整模型列表。',
-                                      'Show recent, suggested, and the full model catalog in a single Mag-style list.'),
-                                  style: Theme.of(context).textTheme.bodySmall,
+                  padding: EdgeInsets.fromLTRB(
+                    12,
+                    0,
+                    12,
+                    MediaQuery.of(context).viewInsets.bottom + 8,
+                  ),
+                  child: DecoratedBox(
+                    decoration: BoxDecoration(
+                      color: kOcSurface,
+                      borderRadius: BorderRadius.circular(20),
+                      border: Border.all(color: kOcBorder),
+                      boxShadow: [
+                        BoxShadow(
+                          color: Colors.black.withOpacity(0.08),
+                          blurRadius: 20,
+                          offset: const Offset(0, 8),
+                        ),
+                      ],
+                    ),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.stretch,
+                      children: [
+                        _compactPickerHandle(),
+                        Padding(
+                          padding: const EdgeInsets.fromLTRB(14, 0, 6, 0),
+                          child: Row(
+                            children: [
+                              Expanded(
+                                child: Text(
+                                  l(context, '模型', 'Models'),
+                                  style: const TextStyle(
+                                    fontWeight: FontWeight.w600,
+                                    fontSize: 15,
+                                    letterSpacing: -0.2,
+                                    color: kOcText,
+                                  ),
                                 ),
-                              ],
-                            ),
+                              ),
+                              IconButton(
+                                tooltip: l(
+                                    context, '连接供应商', 'Connect provider'),
+                                icon: const Icon(Icons.add, size: 20),
+                                visualDensity: VisualDensity.compact,
+                                onPressed: () {
+                                  Navigator.of(context).pop();
+                                  _openProviderPicker(this.context);
+                                },
+                              ),
+                              IconButton(
+                                tooltip:
+                                    l(context, '模型管理', 'Manage models'),
+                                icon: const Icon(Icons.tune_rounded, size: 20),
+                                visualDensity: VisualDensity.compact,
+                                onPressed: () {
+                                  Navigator.of(context).pop();
+                                  _openManageModelsSheet(this.context);
+                                },
+                              ),
+                              IconButton(
+                                icon: const Icon(Icons.close, size: 20),
+                                visualDensity: VisualDensity.compact,
+                                onPressed: () => Navigator.of(context).pop(),
+                              ),
+                            ],
                           ),
-                          OutlinedButton.icon(
-                            onPressed: () {
-                              Navigator.of(context).pop();
-                              _openProviderPicker(this.context);
+                        ),
+                        Padding(
+                          padding: const EdgeInsets.fromLTRB(12, 4, 12, 6),
+                          child: TextField(
+                            style: const TextStyle(
+                                fontSize: 13.5, height: 1.25),
+                            onChanged: (value) {
+                              query = value.trim().toLowerCase();
+                              setModalState(() {});
                             },
-                            icon: const Icon(Icons.hub_outlined),
-                            label: Text(l(context, 'Provider', 'Provider')),
+                            decoration: _compactPickerSearchDecoration(
+                              context,
+                              hint: l(context, '过滤模型…', 'Filter models…'),
+                            ),
                           ),
-                        ],
-                      ),
-                      const SizedBox(height: 8),
-                      TextField(
-                        onChanged: (value) {
-                          query = value.trim().toLowerCase();
-                          setModalState(() {});
-                        },
-                        decoration: InputDecoration(
-                          border: const OutlineInputBorder(),
-                          hintText: l(context, '搜索模型或 provider',
-                              'Search model or provider'),
-                          prefixIcon: const Icon(Icons.search),
                         ),
-                      ),
-                      const SizedBox(height: 12),
-                      Expanded(
-                        child: ListView(
-                          children: [
-                            Container(
-                              padding: const EdgeInsets.all(12),
-                              decoration: BoxDecoration(
-                                color: Colors.grey.shade50,
-                                borderRadius: BorderRadius.circular(16),
-                                border: Border.all(color: Colors.black12),
-                              ),
-                              child: Column(
-                                crossAxisAlignment: CrossAxisAlignment.start,
-                                children: [
-                                  Text(l(context, '当前', 'Current'),
+                        Expanded(
+                          child: filtered.isEmpty
+                              ? Center(
+                                  child: Padding(
+                                    padding: const EdgeInsets.symmetric(
+                                        horizontal: 20),
+                                    child: Text(
+                                      visible.isEmpty
+                                          ? l(
+                                              context,
+                                              '还没有可见模型，请先连接供应商或在模型管理中开启模型。',
+                                              'No visible models yet. Connect a provider or enable models in Manage Models.',
+                                            )
+                                          : l(context, '没有匹配的模型',
+                                              'No matching models'),
+                                      textAlign: TextAlign.center,
                                       style: const TextStyle(
-                                          fontWeight: FontWeight.bold)),
-                                  const SizedBox(height: 8),
-                                  Text(
-                                    currentChoice?.name ?? current.model,
-                                    style: const TextStyle(
-                                        fontSize: 16,
-                                        fontWeight: FontWeight.w600),
-                                  ),
-                                  const SizedBox(height: 4),
-                                  Text(
-                                    '${_providerLabel(current.provider)} · ${current.model}',
-                                    style:
-                                        Theme.of(context).textTheme.bodySmall,
-                                  ),
-                                  if (!_hasPaidProvider(state)) ...[
-                                    const SizedBox(height: 8),
-                                    Text(
-                                      l(
-                                          context,
-                                          '当前还没有付费 provider，免费模型会优先排在前面。',
-                                          'No paid provider is configured yet, so free models are prioritized first.'),
-                                      style:
-                                          Theme.of(context).textTheme.bodySmall,
-                                    ),
-                                  ],
-                                ],
-                              ),
-                            ),
-                            if (query.isEmpty && filteredRecent.isNotEmpty) ...[
-                              const SizedBox(height: 16),
-                              Text(l(context, '最近使用', 'Recent'),
-                                  style: const TextStyle(
-                                      fontWeight: FontWeight.bold)),
-                              const SizedBox(height: 8),
-                              ...filteredRecent.map(
-                                (item) => Padding(
-                                  padding: const EdgeInsets.only(bottom: 8),
-                                  child: _ModelListTile(
-                                    item: item,
-                                    selected:
-                                        current.provider == item.providerId &&
-                                            current.model == item.id,
-                                    onTap: () => _selectModel(item),
-                                  ),
-                                ),
-                              ),
-                            ],
-                            if (query.isEmpty &&
-                                filteredSuggested.isNotEmpty) ...[
-                              const SizedBox(height: 8),
-                              Text(l(context, '推荐', 'Suggested'),
-                                  style: const TextStyle(
-                                      fontWeight: FontWeight.bold)),
-                              const SizedBox(height: 8),
-                              ...filteredSuggested.map(
-                                (item) => Padding(
-                                  padding: const EdgeInsets.only(bottom: 8),
-                                  child: _ModelListTile(
-                                    item: item,
-                                    selected:
-                                        current.provider == item.providerId &&
-                                            current.model == item.id,
-                                    onTap: () => _selectModel(item),
-                                  ),
-                                ),
-                              ),
-                            ],
-                            const SizedBox(height: 8),
-                            Text(
-                              query.isEmpty
-                                  ? l(context, '所有模型', 'All Models')
-                                  : l(context, '结果', 'Results'),
-                              style:
-                                  const TextStyle(fontWeight: FontWeight.bold),
-                            ),
-                            const SizedBox(height: 8),
-                            if (visibleModels.isEmpty)
-                              Container(
-                                padding: const EdgeInsets.all(16),
-                                decoration: BoxDecoration(
-                                  color: Colors.grey.shade50,
-                                  borderRadius: BorderRadius.circular(16),
-                                  border: Border.all(color: Colors.black12),
-                                ),
-                                child: Text(l(context, '没有找到匹配的模型',
-                                    'No matching models found')),
-                              )
-                            else
-                              ...visibleModels.map(
-                                (item) => Padding(
-                                  padding: const EdgeInsets.only(bottom: 8),
-                                  child: _ModelListTile(
-                                    item: item,
-                                    selected:
-                                        current.provider == item.providerId &&
-                                            current.model == item.id,
-                                    onTap: () => _selectModel(item),
-                                  ),
-                                ),
-                              ),
-                            if (query.isEmpty && !_hasPaidProvider(state)) ...[
-                              const SizedBox(height: 8),
-                              Container(
-                                padding: const EdgeInsets.all(12),
-                                decoration: BoxDecoration(
-                                  color: Colors.grey.shade50,
-                                  borderRadius: BorderRadius.circular(16),
-                                  border: Border.all(color: Colors.black12),
-                                ),
-                                child: Column(
-                                  crossAxisAlignment: CrossAxisAlignment.start,
-                                  children: [
-                                    Text(
-                                        l(context, '连接更多 Providers',
-                                            'Connect More Providers'),
-                                        style: const TextStyle(
-                                            fontWeight: FontWeight.bold)),
-                                    const SizedBox(height: 8),
-                                    ...popularProviders.map(
-                                      (item) => Padding(
-                                        padding:
-                                            const EdgeInsets.only(bottom: 8),
-                                        child: ListTile(
-                                          dense: true,
-                                          contentPadding:
-                                              const EdgeInsets.symmetric(
-                                                  horizontal: 8, vertical: 2),
-                                          shape: RoundedRectangleBorder(
-                                            borderRadius:
-                                                BorderRadius.circular(12),
-                                          ),
-                                          tileColor: Colors.white,
-                                          title: Row(
-                                            children: [
-                                              Expanded(child: Text(item.name)),
-                                              if (item.recommended)
-                                                _TinyTag(
-                                                  label: 'Recommended',
-                                                  color: Colors.green.shade100,
-                                                ),
-                                            ],
-                                          ),
-                                          subtitle:
-                                              Text(item.note ?? item.baseUrl),
-                                          onTap: () async {
-                                            Navigator.of(context).pop();
-                                            await _selectProvider(item);
-                                            if (!mounted) return;
-                                            if (item.requiresApiKey) {
-                                              _openSettings(
-                                                  this.context,
-                                                  widget.controller.state
-                                                      .modelConfig);
-                                            }
-                                          },
-                                        ),
+                                        fontSize: 13,
+                                        color: kOcMuted,
+                                        height: 1.35,
                                       ),
                                     ),
-                                    Align(
-                                      alignment: Alignment.centerLeft,
-                                      child: TextButton.icon(
-                                        onPressed: () {
-                                          Navigator.of(context).pop();
-                                          _openProviderPicker(this.context);
-                                        },
-                                        icon: const Icon(
-                                            Icons.grid_view_outlined),
-                                        label: Text(l(context, '查看全部 providers',
-                                            'View all providers')),
+                                  ),
+                                )
+                              : ListView(
+                                  padding: const EdgeInsets.fromLTRB(
+                                      12, 0, 12, 12),
+                                  children: grouped.entries.map((entry) {
+                                    final providerId = entry.key;
+                                    final items = entry.value;
+                                    return Padding(
+                                      padding:
+                                          const EdgeInsets.only(bottom: 10),
+                                      child: Column(
+                                        crossAxisAlignment:
+                                            CrossAxisAlignment.start,
+                                        children: [
+                                          Padding(
+                                            padding: const EdgeInsets.fromLTRB(
+                                                4, 4, 4, 6),
+                                            child: Text(
+                                              _providerLabel(providerId,
+                                                  config: current),
+                                              style: const TextStyle(
+                                                fontSize: 11,
+                                                fontWeight: FontWeight.w700,
+                                                color: kOcMuted,
+                                                letterSpacing: 0.3,
+                                              ),
+                                            ),
+                                          ),
+                                          Container(
+                                            decoration: BoxDecoration(
+                                              color: Colors.white,
+                                              borderRadius:
+                                                  BorderRadius.circular(12),
+                                              border: Border.all(
+                                                  color: kOcBorder),
+                                            ),
+                                            child: Column(
+                                              children: [
+                                                for (var i = 0;
+                                                    i < items.length;
+                                                    i++) ...[
+                                                  _ModelListTile(
+                                                    item: items[i],
+                                                    selected: current
+                                                                .provider ==
+                                                            items[i]
+                                                                .providerId &&
+                                                        current.model ==
+                                                            items[i].id,
+                                                    onTap: () => _selectModel(
+                                                        items[i]),
+                                                  ),
+                                                  if (i != items.length - 1)
+                                                    const Divider(
+                                                      height: 1,
+                                                      thickness: 1,
+                                                      color: Color(0xFFE4E4E7),
+                                                    ),
+                                                ],
+                                              ],
+                                            ),
+                                          ),
+                                        ],
                                       ),
-                                    ),
-                                  ],
+                                    );
+                                  }).toList(),
                                 ),
-                              ),
-                            ],
-                          ],
                         ),
-                      ),
-                    ],
+                      ],
+                    ),
                   ),
                 ),
               ),

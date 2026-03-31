@@ -7,7 +7,11 @@ extension _HomePageComposer on _HomePageState {
       BuildContext context, AppState state, bool isKeyboardOpen) {
     final currentModel = state.modelConfig ?? ModelConfig.defaults();
     final currentModelChoice =
-        _findModelChoice(currentModel.provider, currentModel.model);
+        _findModelChoice(
+      currentModel.provider,
+      currentModel.model,
+      config: currentModel,
+    );
     return AnimatedContainer(
       duration: const Duration(milliseconds: 180),
       curve: Curves.easeOut,
@@ -346,15 +350,6 @@ extension _HomePageComposer on _HomePageState {
                     ),
                   ),
                   const SizedBox(height: 12),
-                  _ComposerOptionTile(
-                    icon: Icons.hub_outlined,
-                    title: l(context, '切换 Provider', 'Switch Provider'),
-                    subtitle: l(context, '选择模型来源', 'Choose model provider'),
-                    onTap: () {
-                      Navigator.of(sheetContext).pop();
-                      _openProviderPicker(context);
-                    },
-                  ),
                   _ComposerOptionTile(
                     icon: Icons.tune_outlined,
                     title: _structuredOutputEnabled

@@ -29,6 +29,8 @@ extension _HomePageTimeline on _HomePageState {
     required AppState state,
     required ModelConfig modelConfig,
     required _ModelChoice? currentModelChoice,
+    required bool showModelFreeTag,
+    required bool showModelLatestTag,
     required bool isKeyboardOpen,
     required List<SessionMessageBundle> renderedMessages,
     required int index,
@@ -40,8 +42,10 @@ extension _HomePageTimeline on _HomePageState {
             l(context, '未选择工作区', 'No workspace selected'),
         sessionTitle: state.session?.title ?? l(context, '新会话', 'New session'),
         agentName: _selectedAgent ?? state.session?.agent ?? 'build',
-        providerLabel: _providerLabel(modelConfig.provider),
+        providerLabel: _providerLabel(modelConfig.provider, config: modelConfig),
         modelLabel: currentModelChoice?.name ?? modelConfig.model,
+        showModelFreeTag: showModelFreeTag,
+        showModelLatestTag: showModelLatestTag,
         showMeta: !isKeyboardOpen,
       );
     }
@@ -60,9 +64,10 @@ extension _HomePageTimeline on _HomePageState {
       if (index == cursor++) {
         return _EmptyTimelineCard(
           onSelectModel: () => _openModelChooser(context),
-          onSelectProvider: () => _openProviderPicker(context),
-          providerLabel: _providerLabel(modelConfig.provider),
+          providerLabel: _providerLabel(modelConfig.provider, config: modelConfig),
           modelLabel: currentModelChoice?.name ?? modelConfig.model,
+          showModelFreeTag: showModelFreeTag,
+          showModelLatestTag: showModelLatestTag,
         );
       }
     } else {
@@ -166,11 +171,13 @@ class _SessionAppBarTitle extends StatelessWidget {
     required this.title,
     required this.subtitle,
     required this.running,
+    this.showFreeTag = false,
   });
 
   final String title;
   final String subtitle;
   final bool running;
+  final bool showFreeTag;
 
   @override
   Widget build(BuildContext context) {
@@ -197,13 +204,23 @@ class _SessionAppBarTitle extends StatelessWidget {
                 style:
                     const TextStyle(fontSize: 16, fontWeight: FontWeight.w600),
               ),
-              Text(
-                subtitle,
-                overflow: TextOverflow.ellipsis,
-                style: Theme.of(context)
-                    .textTheme
-                    .labelMedium
-                    ?.copyWith(color: Colors.black54),
+              Wrap(
+                spacing: 6,
+                runSpacing: 4,
+                crossAxisAlignment: WrapCrossAlignment.center,
+                children: [
+                  Text(
+                    subtitle,
+                    style: Theme.of(context)
+                        .textTheme
+                        .labelMedium
+                        ?.copyWith(color: Colors.black54),
+                  ),
+                  if (showFreeTag)
+                    OcModelTag(
+                      label: l(context, '免费', 'Free'),
+                    ),
+                ],
               ),
             ],
           ),
@@ -220,6 +237,8 @@ class _TimelineHeaderCard extends StatelessWidget {
     required this.agentName,
     required this.providerLabel,
     required this.modelLabel,
+    required this.showModelFreeTag,
+    required this.showModelLatestTag,
     required this.showMeta,
   });
 
@@ -228,6 +247,8 @@ class _TimelineHeaderCard extends StatelessWidget {
   final String agentName;
   final String providerLabel;
   final String modelLabel;
+  final bool showModelFreeTag;
+  final bool showModelLatestTag;
   final bool showMeta;
 
   @override
@@ -266,10 +287,19 @@ class _TimelineHeaderCard extends StatelessWidget {
             Wrap(
               spacing: 8,
               runSpacing: 8,
+              crossAxisAlignment: WrapCrossAlignment.center,
               children: [
                 _TinyTag(label: agentName, color: Colors.blueGrey.shade100),
                 _TinyTag(label: providerLabel, color: Colors.green.shade100),
                 _TinyTag(label: modelLabel, color: Colors.blue.shade100),
+                if (showModelFreeTag)
+                  OcModelTag(
+                    label: l(context, '免费', 'Free'),
+                  ),
+                if (showModelLatestTag)
+                  OcModelTag(
+                    label: l(context, '最新', 'Latest'),
+                  ),
               ],
             ),
           ],
@@ -455,15 +485,17 @@ class _ContextRingButton extends StatelessWidget {
 class _EmptyTimelineCard extends StatelessWidget {
   const _EmptyTimelineCard({
     required this.onSelectModel,
-    required this.onSelectProvider,
     this.providerLabel,
     this.modelLabel,
+    this.showModelFreeTag = false,
+    this.showModelLatestTag = false,
   });
 
   final VoidCallback onSelectModel;
-  final VoidCallback onSelectProvider;
   final String? providerLabel;
   final String? modelLabel;
+  final bool showModelFreeTag;
+  final bool showModelLatestTag;
 
   @override
   Widget build(BuildContext context) {
@@ -499,30 +531,28 @@ class _EmptyTimelineCard extends StatelessWidget {
             Wrap(
               spacing: 8,
               runSpacing: 8,
+              crossAxisAlignment: WrapCrossAlignment.center,
               children: [
                 if (modelLabel != null)
                   _TinyTag(label: modelLabel!, color: Colors.blue.shade100),
                 if (providerLabel != null)
                   _TinyTag(label: providerLabel!, color: Colors.green.shade100),
+                if (showModelFreeTag)
+                  OcModelTag(
+                    label: l(context, '免费', 'Free'),
+                  ),
+                if (showModelLatestTag)
+                  OcModelTag(
+                    label: l(context, '最新', 'Latest'),
+                  ),
               ],
             ),
           ],
           const SizedBox(height: 12),
-          Wrap(
-            spacing: 8,
-            runSpacing: 8,
-            children: [
-              OutlinedButton.icon(
-                onPressed: onSelectProvider,
-                icon: const Icon(Icons.hub_outlined),
-                label: Text(l(context, 'Provider', 'Provider')),
-              ),
-              OutlinedButton.icon(
-                onPressed: onSelectModel,
-                icon: const Icon(Icons.auto_awesome_outlined),
-                label: Text(l(context, '模型', 'Model')),
-              ),
-            ],
+          OutlinedButton.icon(
+            onPressed: onSelectModel,
+            icon: const Icon(Icons.auto_awesome_outlined),
+            label: Text(l(context, '选择模型', 'Choose model')),
           ),
         ],
       ),
@@ -634,43 +664,73 @@ class _ModelListTile extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return ListTile(
-      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
-      tileColor: selected ? const Color(0xFFF0FDF4) : _kMutedPanel,
-      contentPadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 4),
-      title: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Row(
+    final free = _modelChoiceIsFree(item);
+    final latest = _modelChoiceIsLatest(item);
+    return Material(
+      color: selected ? kOcSelectedFill : Colors.transparent,
+      child: InkWell(
+        onTap: onTap,
+        child: Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+          child: Row(
+            crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              Expanded(child: Text(item.name)),
-              if (item.free)
-                _TinyTag(
-                    label: l(context, '免费', 'Free'),
-                    color: Colors.green.shade100),
-              if (item.recommended)
-                _TinyTag(
-                    label: l(context, '推荐', 'Recommended'),
-                    color: Colors.orange.shade100),
-              if (item.latest)
-                _TinyTag(
-                    label: l(context, '最新', 'Latest'),
-                    color: Colors.blue.shade100),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Row(
+                      crossAxisAlignment: CrossAxisAlignment.center,
+                      children: [
+                        Expanded(
+                          child: Text(
+                            item.name,
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                            style: const TextStyle(
+                              fontSize: 13,
+                              fontWeight: FontWeight.w500,
+                              height: 1.25,
+                              color: kOcText,
+                              letterSpacing: -0.1,
+                            ),
+                          ),
+                        ),
+                        if (free) ...[
+                          const SizedBox(width: 6),
+                          OcModelTag(
+                            label: l(context, '免费', 'Free'),
+                          ),
+                        ],
+                        if (latest) ...[
+                          const SizedBox(width: 6),
+                          OcModelTag(
+                            label: l(context, '最新', 'Latest'),
+                          ),
+                        ],
+                      ],
+                    ),
+                    const SizedBox(height: 3),
+                    Text(
+                      '${item.providerId}/${item.id}',
+                      style: const TextStyle(
+                        fontSize: 11.5,
+                        height: 1.2,
+                        color: kOcMuted,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+              if (selected)
+                const Padding(
+                  padding: EdgeInsets.only(left: 6, top: 1),
+                  child: Icon(Icons.check, size: 16, color: kOcAccent),
+                ),
             ],
           ),
-          const SizedBox(height: 2),
-          Text(
-            _providerLabel(item.providerId),
-            style: Theme.of(context)
-                .textTheme
-                .bodySmall
-                ?.copyWith(color: Colors.black54),
-          ),
-        ],
+        ),
       ),
-      subtitle: Text(item.id),
-      trailing: selected ? const Icon(Icons.check_circle_outline) : null,
-      onTap: onTap,
     );
   }
 }
@@ -679,47 +739,73 @@ class _ProviderListTile extends StatelessWidget {
   const _ProviderListTile({
     required this.item,
     required this.selected,
-    required this.modelCount,
-    required this.availability,
-    required this.description,
     required this.onTap,
   });
 
   final _ProviderPreset item;
   final bool selected;
-  final int modelCount;
-  final String availability;
-  final String description;
   final VoidCallback onTap;
 
   @override
   Widget build(BuildContext context) {
-    return ListTile(
-      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
-      tileColor: selected ? const Color(0xFFF0FDF4) : _kMutedPanel,
-      contentPadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 4),
-      title: Row(
-        children: [
-          Expanded(child: Text(item.name)),
-          if (item.recommended)
-            _TinyTag(
-                label: l(context, '推荐', 'Recommended'),
-                color: Colors.green.shade100),
-          if (item.custom)
-            _TinyTag(
-                label: l(context, '自定义', 'Custom'),
-                color: Colors.blueGrey.shade100),
-        ],
+    return Material(
+      color: selected ? kOcSelectedFill : Colors.transparent,
+      child: InkWell(
+        onTap: onTap,
+        child: Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 7),
+          child: Row(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      item.name,
+                      style: const TextStyle(
+                        fontSize: 13.5,
+                        fontWeight: FontWeight.w500,
+                        height: 1.25,
+                        color: kOcText,
+                      ),
+                    ),
+                    const SizedBox(height: 2),
+                    Text(
+                      item.note ?? item.baseUrl,
+                      maxLines: 2,
+                      overflow: TextOverflow.ellipsis,
+                      style: const TextStyle(
+                        fontSize: 11.5,
+                        height: 1.2,
+                        color: kOcMuted,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+              if (selected)
+                Container(
+                  margin: const EdgeInsets.only(left: 6, top: 1),
+                  padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 3),
+                  decoration: BoxDecoration(
+                    color: kOcSelectedFill,
+                    borderRadius: BorderRadius.circular(999),
+                    border: Border.all(color: kOcBorder),
+                  ),
+                  child: Text(
+                    l(context, '已连接', 'Connected'),
+                    style: const TextStyle(
+                      fontSize: 10.5,
+                      fontWeight: FontWeight.w600,
+                      color: kOcAccent,
+                    ),
+                  ),
+                ),
+            ],
+          ),
+        ),
       ),
-      subtitle: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Text('${modelCountText(context, modelCount)} · $availability'),
-          if (description.isNotEmpty) Text(description),
-        ],
-      ),
-      trailing: selected ? const Icon(Icons.check_circle_outline) : null,
-      onTap: onTap,
     );
   }
 }

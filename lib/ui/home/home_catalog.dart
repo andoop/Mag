@@ -117,13 +117,28 @@ const Map<String, Map<String, dynamic>> _structuredSchemaTemplates = {
   },
 };
 
-const List<_ProviderPreset> _providerPresets = [
+const List<_ProviderPreset> _builtinProviderPresets = [
+  _ProviderPreset(
+    id: 'anthropic',
+    name: 'Anthropic',
+    baseUrl: 'https://api.anthropic.com/v1',
+    note: 'Claude models via the official Anthropic API.',
+    recommended: true,
+    popular: true,
+  ),
   _ProviderPreset(
     id: 'deepseek',
     name: 'DeepSeek',
     baseUrl: 'https://api.deepseek.com/v1',
     note: 'Official DeepSeek API with deepseek-chat as the default model.',
     recommended: true,
+    popular: true,
+  ),
+  _ProviderPreset(
+    id: 'google',
+    name: 'Google',
+    baseUrl: 'https://generativelanguage.googleapis.com/v1beta/openai',
+    note: 'Gemini models via the Google Generative AI API.',
     popular: true,
   ),
   _ProviderPreset(
@@ -136,21 +151,31 @@ const List<_ProviderPreset> _providerPresets = [
     requiresApiKey: false,
   ),
   _ProviderPreset(
-    id: 'mag_go',
-    name: 'Mag Go',
-    baseUrl: 'https://opencode.ai/zen/v1',
-    note: 'Recommended Mag Go entry.',
-    recommended: true,
-    popular: true,
-    requiresApiKey: false,
-  ),
-  _ProviderPreset(
     id: 'openrouter',
     name: 'OpenRouter',
     baseUrl: 'https://openrouter.ai/api/v1',
     note: 'Recommended Mag-style entry with free and aggregated models.',
     recommended: true,
     popular: true,
+  ),
+  _ProviderPreset(
+    id: 'groq',
+    name: 'Groq',
+    baseUrl: 'https://api.groq.com/openai/v1',
+    note: 'Fast OpenAI-compatible inference from Groq.',
+  ),
+  _ProviderPreset(
+    id: 'mistral',
+    name: 'Mistral',
+    baseUrl: 'https://api.mistral.ai/v1',
+    note: 'Official Mistral API.',
+  ),
+  _ProviderPreset(
+    id: 'ollama',
+    name: 'Ollama',
+    baseUrl: 'http://localhost:11434/v1',
+    note: 'Local Ollama endpoint exposed in OpenAI-compatible mode.',
+    requiresApiKey: false,
   ),
   _ProviderPreset(
     id: 'openai',
@@ -167,6 +192,19 @@ const List<_ProviderPreset> _providerPresets = [
     popular: true,
   ),
   _ProviderPreset(
+    id: 'vercel',
+    name: 'Vercel AI Gateway',
+    baseUrl: 'https://ai-gateway.vercel.sh/v1',
+    note: 'Vercel AI Gateway in OpenAI-compatible mode.',
+    popular: true,
+  ),
+  _ProviderPreset(
+    id: 'xai',
+    name: 'xAI',
+    baseUrl: 'https://api.x.ai/v1',
+    note: 'Grok models via the xAI API.',
+  ),
+  _ProviderPreset(
     id: 'openai_compatible',
     name: 'OpenAI Compatible',
     baseUrl: 'https://api.openai.com/v1',
@@ -175,12 +213,38 @@ const List<_ProviderPreset> _providerPresets = [
   ),
 ];
 
-const List<_ModelChoice> _modelCatalog = [
+const List<_ModelChoice> _builtinModelCatalog = [
+  _ModelChoice(
+    providerId: 'anthropic',
+    id: 'claude-sonnet-4-5',
+    name: 'Claude Sonnet 4.5',
+    latest: true,
+    recommended: true,
+  ),
+  _ModelChoice(
+    providerId: 'anthropic',
+    id: 'claude-haiku-4.5',
+    name: 'Claude Haiku 4.5',
+    latest: true,
+  ),
   _ModelChoice(
     providerId: 'deepseek',
     id: 'deepseek-chat',
     name: 'DeepSeek Chat',
     recommended: true,
+    latest: true,
+  ),
+  _ModelChoice(
+    providerId: 'google',
+    id: 'gemini-2.5-pro',
+    name: 'Gemini 2.5 Pro',
+    latest: true,
+    recommended: true,
+  ),
+  _ModelChoice(
+    providerId: 'google',
+    id: 'gemini-2.5-flash',
+    name: 'Gemini 2.5 Flash',
     latest: true,
   ),
   _ModelChoice(
@@ -264,6 +328,24 @@ const List<_ModelChoice> _modelCatalog = [
     latest: true,
   ),
   _ModelChoice(
+    providerId: 'groq',
+    id: 'llama-3.3-70b-versatile',
+    name: 'Llama 3.3 70B Versatile',
+    latest: true,
+  ),
+  _ModelChoice(
+    providerId: 'mistral',
+    id: 'mistral-large-latest',
+    name: 'Mistral Large Latest',
+    latest: true,
+  ),
+  _ModelChoice(
+    providerId: 'ollama',
+    id: 'qwen2.5-coder:latest',
+    name: 'Qwen2.5 Coder Latest',
+    latest: true,
+  ),
+  _ModelChoice(
     providerId: 'openai',
     id: 'gpt-4.1-mini',
     name: 'GPT-4.1 Mini',
@@ -285,6 +367,24 @@ const List<_ModelChoice> _modelCatalog = [
     name: 'GPT-4.1',
   ),
   _ModelChoice(
+    providerId: 'vercel',
+    id: 'openai/gpt-4.1-mini',
+    name: 'GPT-4.1 Mini',
+    latest: true,
+  ),
+  _ModelChoice(
+    providerId: 'xai',
+    id: 'grok-4',
+    name: 'Grok 4',
+    latest: true,
+  ),
+  _ModelChoice(
+    providerId: 'xai',
+    id: 'grok-3-mini',
+    name: 'Grok 3 Mini',
+    latest: true,
+  ),
+  _ModelChoice(
     providerId: 'openai_compatible',
     id: 'gpt-4.1-mini',
     name: 'GPT-4.1 Mini',
@@ -298,20 +398,149 @@ const List<_ModelChoice> _modelCatalog = [
   ),
 ];
 
-_ProviderPreset? _providerById(String id) {
-  for (final item in _providerPresets) {
+const List<String> _popularProviderOrder = [
+  'mag',
+  'anthropic',
+  'openai',
+  'google',
+  'openrouter',
+  'vercel',
+  'deepseek',
+  'github_models',
+];
+
+int _providerSortRank(String providerId) {
+  final index = _popularProviderOrder.indexOf(providerId);
+  return index >= 0 ? index : 999;
+}
+
+_ProviderPreset? _builtinProviderById(String id) {
+  for (final item in _builtinProviderPresets) {
     if (item.id == id) return item;
   }
   return null;
 }
 
-String _providerLabel(String id) => _providerById(id)?.name ?? id;
+_ProviderPreset _presetFromConnection(ProviderConnection connection) {
+  final builtin = _builtinProviderById(connection.id);
+  if (builtin != null && !connection.custom) {
+    return _ProviderPreset(
+      id: builtin.id,
+      name: connection.name,
+      baseUrl: connection.baseUrl,
+      note: builtin.note,
+      recommended: builtin.recommended,
+      popular: builtin.popular,
+      custom: builtin.custom,
+      requiresApiKey: builtin.requiresApiKey,
+    );
+  }
+  return _ProviderPreset(
+    id: connection.id,
+    name: connection.name,
+    baseUrl: connection.baseUrl,
+    note: connection.custom ? 'Custom OpenAI-compatible endpoint.' : null,
+    custom: connection.custom,
+    requiresApiKey: true,
+  );
+}
 
-List<_ModelChoice> _modelsForProvider(String providerId) {
-  final items =
-      _modelCatalog.where((item) => item.providerId == providerId).toList();
-  if (items.isNotEmpty) return items;
-  return _modelCatalog
-      .where((item) => item.providerId == 'openai_compatible')
+List<_ProviderPreset> _connectedProviderPresets(ModelConfig config) {
+  return config.connections.map(_presetFromConnection).toList()
+    ..sort((a, b) {
+      final rankCompare = _providerSortRank(a.id).compareTo(_providerSortRank(b.id));
+      if (rankCompare != 0) return rankCompare;
+      return a.name.toLowerCase().compareTo(b.name.toLowerCase());
+    });
+}
+
+_ProviderPreset? _providerById(String id, {ModelConfig? config}) {
+  if (config != null) {
+    for (final item in _connectedProviderPresets(config)) {
+      if (item.id == id) return item;
+    }
+  }
+  return _builtinProviderById(id);
+}
+
+String _providerLabel(String id, {ModelConfig? config}) =>
+    _providerById(id, config: config)?.name ?? id;
+
+_ModelChoice? _builtinModelById(String providerId, String modelId) {
+  for (final item in _builtinModelCatalog) {
+    if (item.providerId == providerId && item.id == modelId) return item;
+  }
+  return null;
+}
+
+String _modelDisplayName(String id) {
+  final normalized = id
+      .replaceAll(':free', ' free')
+      .replaceAll(':', ' ')
+      .replaceAll('/', ' ')
+      .replaceAll('-', ' ')
+      .trim();
+  if (normalized.isEmpty) return id;
+  return normalized
+      .split(RegExp(r'\s+'))
+      .map((part) => part.isEmpty
+          ? part
+          : '${part[0].toUpperCase()}${part.substring(1)}')
+      .join(' ');
+}
+
+List<_ModelChoice> _modelsForProvider(
+  String providerId, {
+  ModelConfig? config,
+}) {
+  final connection = config?.connectionFor(providerId);
+  if (connection != null && connection.models.isNotEmpty) {
+    final ids = providerId == 'mag'
+        ? filterMagZenFreeModels(connection.models)
+        : connection.models;
+    return ids
+        .map(
+          (id) =>
+              _builtinModelById(providerId, id) ??
+              _ModelChoice(
+                providerId: providerId,
+                id: id,
+                name: _modelDisplayName(id),
+              ),
+        )
+        .toList();
+  }
+  return const [];
+}
+
+List<_ModelChoice> _connectedModelChoices(ModelConfig config) {
+  return config.connections
+      .expand((item) => _modelsForProvider(item.id, config: config))
       .toList();
+}
+
+bool _isModelVisible(ModelConfig config, _ModelChoice item) {
+  final visibility =
+      config.visibilityFor(providerId: item.providerId, modelId: item.id);
+  if (visibility == null) return true;
+  return visibility == ModelVisibility.show;
+}
+
+/// OpenCode 风格：列表中与 `Tag` 一致的「免费」判定（含 Mag Zen 与 `:free` 路由等）。
+bool _modelChoiceIsFree(_ModelChoice item) {
+  if (item.free || item.unpaid) return true;
+  if (item.providerId == 'mag') return isMagZenFreeModelId(item.id);
+  final id = item.id.toLowerCase();
+  if (id.endsWith('-free') ||
+      id.contains(':free') ||
+      id.contains('/free')) {
+    return true;
+  }
+  return false;
+}
+
+bool _modelChoiceIsLatest(_ModelChoice item) {
+  if (item.latest) return true;
+  final id = item.id.toLowerCase();
+  return id.contains('latest');
 }

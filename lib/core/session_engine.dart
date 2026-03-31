@@ -302,48 +302,20 @@ class QuestionCenter {
 }
 
 class ModelGateway {
-  Future<ModelResponse> complete({
+  bool _usesAnthropicApi(ModelConfig config) => config.provider == 'anthropic';
+
+  bool _usesGitHubModelsApi(ModelConfig config) =>
+      config.provider == 'github_models';
+
+  bool _allowsEmptyApiKey(ModelConfig config) =>
+      config.provider == 'ollama' || config.isMagProvider;
+
+  Map<String, dynamic> _buildOpenAiPayload({
     required ModelConfig config,
     required List<Map<String, dynamic>> messages,
     required List<ToolDefinitionModel> tools,
     required MessageFormat? format,
-    CancelToken? cancelToken,
-    FutureOr<void> Function(String delta)? onTextDelta,
-    FutureOr<void> Function(String delta)? onReasoningDelta,
-  }) async {
-    cancelToken?.throwIfCancelled();
-    final isMagProvider = config.isMagProvider;
-    final usePublic = isMagProvider && config.usesMagPublicToken;
-    final effectiveApiKey = usePublic ? 'public' : config.apiKey.trim();
-    _debugLog('gateway',
-        'complete start provider=${config.provider} model=${config.model}');
-    if (effectiveApiKey.isEmpty) {
-      throw Exception('Missing API key');
-    }
-    final client = HttpClient()
-      ..connectionTimeout = const Duration(seconds: 30);
-    // Abort the HTTP connection when cancelled (like mag's AbortSignal on fetch)
-    if (cancelToken != null) {
-      unawaited(cancelToken
-          .guard(Completer<Never>().future)
-          .then<void>((_) {})
-          .catchError((_) {
-        client.close(force: true);
-      }));
-    }
-    final uri = Uri.parse('${config.baseUrl}/chat/completions');
-    final request = await client.postUrl(uri);
-    request.headers
-        .set(HttpHeaders.authorizationHeader, 'Bearer $effectiveApiKey');
-    request.headers.contentType = ContentType(
-      'application',
-      'json',
-      charset: 'utf-8',
-    );
-    if (isMagProvider) {
-      request.headers.set('HTTP-Referer', 'https://opencode.ai/');
-      request.headers.set('X-Title', 'mag');
-    }
+  }) {
     final payload = <String, dynamic>{
       'model': config.model,
       'messages': messages,
@@ -368,6 +340,210 @@ class ModelGateway {
         'function': {'name': 'StructuredOutput'}
       };
     }
+    return payload;
+  }
+
+  JsonMap _buildAnthropicPayload({
+    required ModelConfig config,
+    required List<Map<String, dynamic>> messages,
+    required List<ToolDefinitionModel> tools,
+    required MessageFormat? format,
+  }) {
+    final systemParts = <String>[];
+    final conversation = <JsonMap>[];
+
+    for (final message in messages) {
+      final role = (message['role'] as String? ?? 'user').trim();
+      if (role == 'system') {
+        final text = _extractText(message['content']).trim();
+        if (text.isNotEmpty) systemParts.add(text);
+        continue;
+      }
+      if (role == 'tool') {
+        final toolUseId = message['tool_call_id'] as String? ?? '';
+        if (toolUseId.isEmpty) continue;
+        conversation.add({
+          'role': 'user',
+          'content': [
+            {
+              'type': 'tool_result',
+              'tool_use_id': toolUseId,
+              'content': _extractText(message['content']),
+            },
+          ],
+        });
+        continue;
+      }
+
+      final blocks = <JsonMap>[];
+      final text = _extractText(message['content']).trim();
+      if (text.isNotEmpty) {
+        blocks.add({'type': 'text', 'text': text});
+      }
+      if (role == 'assistant') {
+        final toolCalls = (message['tool_calls'] as List?) ?? const [];
+        for (final item in toolCalls) {
+          final map = Map<String, dynamic>.from(item as Map);
+          final function =
+              Map<String, dynamic>.from(map['function'] as Map? ?? const {});
+          blocks.add({
+            'type': 'tool_use',
+            'id': map['id'] as String? ?? newId('toolcall'),
+            'name': function['name'] as String? ?? 'invalid',
+            'input': _decodeArguments(
+              function['arguments'] as String? ?? '{}',
+            ),
+          });
+        }
+      }
+      if (blocks.isEmpty) continue;
+      conversation.add({
+        'role': role == 'assistant' ? 'assistant' : 'user',
+        'content': blocks,
+      });
+    }
+
+    final payload = <String, dynamic>{
+      'model': config.model,
+      'max_tokens': 4096,
+      'messages': conversation,
+    };
+    if (systemParts.isNotEmpty) {
+      payload['system'] = systemParts.join('\n\n');
+    }
+    if (tools.isNotEmpty) {
+      payload['tools'] = tools
+          .map(
+            (tool) => {
+              'name': tool.id,
+              'description': tool.description,
+              'input_schema': tool.parameters,
+            },
+          )
+          .toList();
+    }
+    if (format?.type == OutputFormatType.jsonSchema) {
+      payload['tool_choice'] = {
+        'type': 'tool',
+        'name': 'StructuredOutput',
+      };
+    }
+    return payload;
+  }
+
+  Future<ModelResponse> _completeAnthropic({
+    required ModelConfig config,
+    required List<Map<String, dynamic>> messages,
+    required List<ToolDefinitionModel> tools,
+    required MessageFormat? format,
+    CancelToken? cancelToken,
+  }) async {
+    cancelToken?.throwIfCancelled();
+    final apiKey = config.apiKey.trim();
+    if (apiKey.isEmpty) {
+      throw Exception('Missing API key');
+    }
+    final client = HttpClient()
+      ..connectionTimeout = const Duration(seconds: 30);
+    if (cancelToken != null) {
+      unawaited(cancelToken
+          .guard(Completer<Never>().future)
+          .then<void>((_) {})
+          .catchError((_) {
+        client.close(force: true);
+      }));
+    }
+    final request = await client.postUrl(Uri.parse('${config.baseUrl}/messages'));
+    request.headers.set('x-api-key', apiKey);
+    request.headers.set('anthropic-version', '2023-06-01');
+    request.headers.contentType = ContentType(
+      'application',
+      'json',
+      charset: 'utf-8',
+    );
+    final payload = _buildAnthropicPayload(
+      config: config,
+      messages: messages,
+      tools: tools,
+      format: format,
+    );
+    final encodedPayload = utf8.encode(jsonEncode(payload));
+    request.contentLength = encodedPayload.length;
+    request.add(encodedPayload);
+    final response = await request.close();
+    if (response.statusCode >= 400) {
+      final body = await response.transform(utf8.decoder).join();
+      client.close(force: true);
+      throw Exception(
+        _formatModelRequestError(
+          statusCode: response.statusCode,
+          body: body,
+          isMagProvider: false,
+          usesPublicToken: false,
+          model: config.model,
+        ),
+      );
+    }
+    final body = await response.transform(utf8.decoder).join();
+    client.close(force: true);
+    final decoded = Map<String, dynamic>.from(jsonDecode(body) as Map);
+    return _decodeAnthropicResponse(decoded);
+  }
+
+  Future<ModelResponse> _completeOpenAiCompatible({
+    required ModelConfig config,
+    required List<Map<String, dynamic>> messages,
+    required List<ToolDefinitionModel> tools,
+    required MessageFormat? format,
+    CancelToken? cancelToken,
+    FutureOr<void> Function(String delta)? onTextDelta,
+    FutureOr<void> Function(String delta)? onReasoningDelta,
+  }) async {
+    cancelToken?.throwIfCancelled();
+    final isMagProvider = config.isMagProvider;
+    final usePublic = isMagProvider && config.usesMagPublicToken;
+    final rawApiKey = config.apiKey.trim();
+    final effectiveApiKey = usePublic ? 'public' : rawApiKey;
+    _debugLog('gateway',
+        'complete start provider=${config.provider} model=${config.model}');
+    if (effectiveApiKey.isEmpty && !_allowsEmptyApiKey(config)) {
+      throw Exception('Missing API key');
+    }
+    final client = HttpClient()
+      ..connectionTimeout = const Duration(seconds: 30);
+    if (cancelToken != null) {
+      unawaited(cancelToken
+          .guard(Completer<Never>().future)
+          .then<void>((_) {})
+          .catchError((_) {
+        client.close(force: true);
+      }));
+    }
+    final uri = Uri.parse('${config.baseUrl}/chat/completions');
+    final request = await client.postUrl(uri);
+    if (effectiveApiKey.isNotEmpty) {
+      request.headers
+          .set(HttpHeaders.authorizationHeader, 'Bearer $effectiveApiKey');
+    }
+    request.headers.contentType = ContentType(
+      'application',
+      'json',
+      charset: 'utf-8',
+    );
+    if (isMagProvider) {
+      request.headers.set('HTTP-Referer', 'https://opencode.ai/');
+      request.headers.set('X-Title', 'mag');
+    }
+    if (_usesGitHubModelsApi(config)) {
+      request.headers.set('Accept', 'application/vnd.github+json');
+      request.headers.set('X-GitHub-Api-Version', '2026-03-10');
+    }
+    final payload = _buildOpenAiPayload(
+      config: config,
+      messages: messages,
+      tools: tools,
+      format: format,
+    );
     final encodedPayload = utf8.encode(jsonEncode(payload));
     request.contentLength = encodedPayload.length;
     request.add(encodedPayload);
@@ -481,6 +657,65 @@ class ModelGateway {
       finishReason: finishReason,
       raw: lastChunk,
       usage: usage,
+    );
+  }
+
+  Future<ModelResponse> complete({
+    required ModelConfig config,
+    required List<Map<String, dynamic>> messages,
+    required List<ToolDefinitionModel> tools,
+    required MessageFormat? format,
+    CancelToken? cancelToken,
+    FutureOr<void> Function(String delta)? onTextDelta,
+    FutureOr<void> Function(String delta)? onReasoningDelta,
+  }) async {
+    if (_usesAnthropicApi(config)) {
+      return _completeAnthropic(
+        config: config,
+        messages: messages,
+        tools: tools,
+        format: format,
+        cancelToken: cancelToken,
+      );
+    }
+    return _completeOpenAiCompatible(
+      config: config,
+      messages: messages,
+      tools: tools,
+      format: format,
+      cancelToken: cancelToken,
+      onTextDelta: onTextDelta,
+      onReasoningDelta: onReasoningDelta,
+    );
+  }
+
+  ModelResponse _decodeAnthropicResponse(JsonMap decoded) {
+    final content = (decoded['content'] as List? ?? const []);
+    final text = StringBuffer();
+    final toolCalls = <ToolCall>[];
+    for (final item in content) {
+      final block = Map<String, dynamic>.from(item as Map);
+      final type = block['type'] as String? ?? '';
+      if (type == 'text') {
+        text.write(block['text'] as String? ?? '');
+        continue;
+      }
+      if (type == 'tool_use') {
+        toolCalls.add(ToolCall(
+          id: block['id'] as String? ?? newId('toolcall'),
+          name: block['name'] as String? ?? 'invalid',
+          arguments: Map<String, dynamic>.from(
+            block['input'] as Map? ?? const {},
+          ),
+        ));
+      }
+    }
+    return ModelResponse(
+      text: text.toString(),
+      toolCalls: toolCalls,
+      finishReason: decoded['stop_reason'] as String? ?? 'stop',
+      raw: decoded,
+      usage: _extractUsage(decoded),
     );
   }
 

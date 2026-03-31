@@ -23,6 +23,38 @@ const Color _kSoftBorderColor = Color(0x0F000000);
 const Color _kAgentBubble = Colors.white;
 const Color _kUserBubble = Color(0xFFF0FDF4);
 
+/// OpenCode `Tag` 风格：小胶囊、浅底细边框（用于 Free / Latest）。
+class OcModelTag extends StatelessWidget {
+  const OcModelTag({
+    super.key,
+    required this.label,
+  });
+
+  final String label;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+      decoration: BoxDecoration(
+        color: const Color(0xFFF4F4F5),
+        borderRadius: BorderRadius.circular(4),
+        border: Border.all(color: kOcBorder),
+      ),
+      child: Text(
+        label,
+        style: const TextStyle(
+          fontSize: 10.5,
+          fontWeight: FontWeight.w600,
+          height: 1.15,
+          color: kOcMuted,
+          letterSpacing: 0.02,
+        ),
+      ),
+    );
+  }
+}
+
 BoxDecoration _panelDecoration({
   Color background = _kPanelBackground,
   double radius = 18,
