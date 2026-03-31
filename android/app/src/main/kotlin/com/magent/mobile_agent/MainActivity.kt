@@ -2,12 +2,14 @@ package com.magent.mobile_agent
 
 import android.content.Intent
 import android.net.Uri
+import android.util.Log
 import android.webkit.MimeTypeMap
 import androidx.documentfile.provider.DocumentFile
 import io.flutter.embedding.android.FlutterActivity
 import io.flutter.embedding.engine.FlutterEngine
 import io.flutter.plugin.common.MethodCall
 import io.flutter.plugin.common.MethodChannel
+import org.json.JSONObject
 import java.util.concurrent.ExecutorService
 import java.util.concurrent.Executors
 
@@ -39,29 +41,58 @@ class MainActivity : FlutterActivity() {
                 val intent = Intent(Intent.ACTION_OPEN_DOCUMENT_TREE)
                 startActivityForResult(intent, PICK_WORKSPACE_REQUEST)
             }
-            "listDirectory" -> runWorkspaceCall(result) { handleListDirectory(call) }
-            "getEntry" -> runWorkspaceCall(result) { handleGetEntry(call) }
-            "searchEntries" -> runWorkspaceCall(result) { handleSearchEntries(call) }
-            "grepText" -> runWorkspaceCall(result) { handleGrepText(call) }
-            "readText" -> runWorkspaceCall(result) { handleReadText(call) }
-            "readBytes" -> runWorkspaceCall(result) { handleReadBytes(call) }
-            "writeText" -> runWorkspaceCall(result) { handleWriteText(call) }
-            "deleteEntry" -> runWorkspaceCall(result) { handleDeleteEntry(call) }
+            "listDirectory" -> runWorkspaceCall(result, "listDirectory") { handleListDirectory(call) }
+            "getEntry" -> runWorkspaceCall(result, "getEntry") { handleGetEntry(call) }
+            "searchEntries" -> runWorkspaceCall(result, "searchEntries") { handleSearchEntries(call) }
+            "grepText" -> runWorkspaceCall(result, "grepText") { handleGrepText(call) }
+            "readText" -> runWorkspaceCall(result, "readText") { handleReadText(call) }
+            "readBytes" -> runWorkspaceCall(result, "readBytes") { handleReadBytes(call) }
+            "writeText" -> runWorkspaceCall(result, "writeText") { handleWriteText(call) }
+            "deleteEntry" -> runWorkspaceCall(result, "deleteEntry") { handleDeleteEntry(call) }
             else -> result.notImplemented()
         }
     }
 
     private fun runWorkspaceCall(
         result: MethodChannel.Result,
+        method: String,
         action: () -> Any?,
     ) {
         workspaceExecutor.execute {
+            val startedAt = System.currentTimeMillis()
             try {
                 val value = action()
+                // #region agent log
+                debugTrace(
+                    runId = "workspace-native",
+                    hypothesisId = "H1",
+                    location = "MainActivity.kt:runWorkspaceCall",
+                    message = "workspace call completed",
+                    data =
+                        mapOf(
+                            "method" to method,
+                            "elapsedMs" to (System.currentTimeMillis() - startedAt),
+                        ),
+                )
+                // #endregion
                 runOnUiThread {
                     result.success(value)
                 }
             } catch (error: WorkspaceMethodException) {
+                // #region agent log
+                debugTrace(
+                    runId = "workspace-native",
+                    hypothesisId = "H1",
+                    location = "MainActivity.kt:runWorkspaceCall",
+                    message = "workspace call failed",
+                    data =
+                        mapOf(
+                            "method" to method,
+                            "code" to error.code,
+                            "elapsedMs" to (System.currentTimeMillis() - startedAt),
+                        ),
+                )
+                // #endregion
                 runOnUiThread {
                     result.error(error.code, error.message, error.details)
                 }
@@ -487,6 +518,25 @@ class MainActivity : FlutterActivity() {
                 ".sh",
             )
         return textExtensions.none { name.endsWith(it) }
+    }
+
+    private fun debugTrace(
+        runId: String,
+        hypothesisId: String,
+        location: String,
+        message: String,
+        data: Map<String, Any?>,
+    ) {
+        val payload =
+            JSONObject()
+                .put("sessionId", "28850c")
+                .put("runId", runId)
+                .put("hypothesisId", hypothesisId)
+                .put("location", location)
+                .put("message", message)
+                .put("data", JSONObject(data))
+                .put("timestamp", System.currentTimeMillis())
+        Log.d("PERFDBG", payload.toString())
     }
 }
 

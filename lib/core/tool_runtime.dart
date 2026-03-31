@@ -108,15 +108,15 @@ class ToolRegistry {
     register(
       ToolDefinition(
         id: 'read',
-        description: 'Read a file or list a directory in the workspace.',
+        description:
+            'Read a file or list a directory in the workspace. Use `path`; omit it to read the workspace root.',
         parameters: {
           'type': 'object',
           'properties': {
-            'filePath': {'type': 'string'},
+            'path': {'type': 'string'},
             'offset': {'type': 'integer'},
             'limit': {'type': 'integer'},
           },
-          'required': ['filePath'],
           'additionalProperties': false,
         },
         execute: _readTool,
@@ -125,14 +125,16 @@ class ToolRegistry {
     register(
       ToolDefinition(
         id: 'write',
-        description: 'Write a file in the workspace.',
+        description:
+            'Write a file in the workspace. Always provide `path`. For short content, provide `content`. For large or code-heavy content, put it in assistant text inside `<write_content id="...">...</write_content>` and provide `contentRef`.',
         parameters: {
           'type': 'object',
           'properties': {
-            'filePath': {'type': 'string'},
+            'path': {'type': 'string'},
             'content': {'type': 'string'},
+            'contentRef': {'type': 'string'},
           },
-          'required': ['filePath', 'content'],
+          'required': ['path'],
           'additionalProperties': false,
         },
         execute: _writeTool,
@@ -141,16 +143,17 @@ class ToolRegistry {
     register(
       ToolDefinition(
         id: 'edit',
-        description: 'Replace text in a file using oldString and newString.',
+        description:
+            'Replace text in a file at `path` using `oldString` and `newString`.',
         parameters: {
           'type': 'object',
           'properties': {
-            'filePath': {'type': 'string'},
+            'path': {'type': 'string'},
             'oldString': {'type': 'string'},
             'newString': {'type': 'string'},
             'replaceAll': {'type': 'boolean'},
           },
-          'required': ['filePath', 'oldString', 'newString'],
+          'required': ['path', 'oldString', 'newString'],
           'additionalProperties': false,
         },
         execute: _editTool,
@@ -376,9 +379,80 @@ class ToolRegistry {
   ToolDefinition? operator [](String id) => _definitions[id];
 }
 
+String _toolFilePathArg(JsonMap args) =>
+    _cleanPath((args['filePath'] ?? args['path']) as String? ?? '');
+
+String _normalizeWriteContent(Object? value) {
+  if (value == null) {
+    return '';
+  }
+  if (value is String) {
+    return value;
+  }
+  if (value is Map || value is List) {
+    return const JsonEncoder.withIndent('  ').convert(value);
+  }
+  return value.toString();
+}
+
+String? _extractWriteContentRef(String source, String contentRef) {
+  if (source.isEmpty || contentRef.isEmpty) {
+    return null;
+  }
+  final pattern = RegExp(
+    r"""<write_content\s+id=(?:"([^"]+)"|'([^']+)')\s*>([\s\S]*?)</write_content>""",
+    multiLine: true,
+  );
+  for (final match in pattern.allMatches(source)) {
+    final id = match.group(1) ?? match.group(2) ?? '';
+    if (id != contentRef) {
+      continue;
+    }
+    var body = match.group(3) ?? '';
+    body = body.replaceFirst(RegExp(r'^\r?\n'), '');
+    body = body.replaceFirst(RegExp(r'\r?\n$'), '');
+    final trimmed = body.trim();
+    final fenced = RegExp(
+      r'^```[^\n]*\n([\s\S]*?)\n```$',
+      multiLine: true,
+    ).firstMatch(trimmed);
+    if (fenced != null) {
+      return fenced.group(1) ?? '';
+    }
+    return body;
+  }
+  return null;
+}
+
+Future<String> _resolveWriteContent(
+    JsonMap args, ToolRuntimeContext ctx) async {
+  if (args.containsKey('content')) {
+    return _normalizeWriteContent(args['content']);
+  }
+  final contentRef = (args['contentRef'] as String? ?? '').trim();
+  if (contentRef.isEmpty) {
+    throw Exception(
+      'Missing write payload. Provide `content` for short text or `contentRef` for a `<write_content id="...">` block.',
+    );
+  }
+  final parts = await ctx.database.listPartsForMessage(ctx.message.id);
+  final source = parts
+      .where((item) => item.type == PartType.text)
+      .map((item) =>
+          (item.data['rawText'] ?? item.data['text']) as String? ?? '')
+      .join('\n');
+  final resolved = _extractWriteContentRef(source, contentRef);
+  if (resolved == null) {
+    throw Exception(
+      'contentRef `$contentRef` not found. Add `<write_content id="$contentRef">...</write_content>` to the assistant text before calling `write`.',
+    );
+  }
+  return resolved;
+}
+
 Future<ToolExecutionResult> _readTool(
     JsonMap args, ToolRuntimeContext ctx) async {
-  final filePath = _cleanPath(args['filePath'] as String? ?? '');
+  final filePath = _toolFilePathArg(args);
   final safeOffset = ((args['offset'] as int?) ?? 1).clamp(1, 1 << 30);
   final limit = ((args['limit'] as int?) ?? _kDefaultReadLimit).clamp(1, 5000);
   final pathLabel = filePath.isEmpty ? '.' : filePath;
@@ -561,8 +635,11 @@ Future<ToolExecutionResult> _readTool(
 
 Future<ToolExecutionResult> _writeTool(
     JsonMap args, ToolRuntimeContext ctx) async {
-  final filePath = _cleanPath(args['filePath'] as String? ?? '');
-  final content = args['content'] as String? ?? '';
+  final filePath = _toolFilePathArg(args);
+  final content = await _resolveWriteContent(args, ctx);
+  if (filePath.isEmpty) {
+    throw Exception('Missing required `path`.');
+  }
   String existing = '';
   try {
     existing = await ctx.bridge.readText(
@@ -578,6 +655,7 @@ Future<ToolExecutionResult> _writeTool(
       patterns: [filePath],
       metadata: {
         'tool': 'write',
+        'path': filePath,
         'filePath': filePath,
         'preview': _buildDiffAttachment(
           kind: existing.isEmpty ? 'write' : 'write_update',
@@ -601,6 +679,7 @@ Future<ToolExecutionResult> _writeTool(
     output: 'Wrote file successfully.',
     displayOutput: 'Wrote $filePath',
     metadata: {
+      'path': filePath,
       'filepath': filePath,
       'exists': existing.isNotEmpty,
       'diagnostics': const <String, dynamic>{},
@@ -618,10 +697,13 @@ Future<ToolExecutionResult> _writeTool(
 
 Future<ToolExecutionResult> _editTool(
     JsonMap args, ToolRuntimeContext ctx) async {
-  final filePath = _cleanPath(args['filePath'] as String? ?? '');
+  final filePath = _toolFilePathArg(args);
   final oldString = args['oldString'] as String? ?? '';
   final newString = args['newString'] as String? ?? '';
   final replaceAll = (args['replaceAll'] as bool?) ?? false;
+  if (filePath.isEmpty) {
+    throw Exception('Missing required `path`.');
+  }
   final existing = await ctx.bridge.readText(
     treeUri: ctx.workspace.treeUri,
     relativePath: filePath,
@@ -640,6 +722,7 @@ Future<ToolExecutionResult> _editTool(
       patterns: [filePath],
       metadata: {
         'tool': 'edit',
+        'path': filePath,
         'filePath': filePath,
         'preview': _buildDiffAttachment(
           kind: 'edit',
@@ -663,6 +746,7 @@ Future<ToolExecutionResult> _editTool(
     output: 'Updated file successfully.',
     displayOutput: 'Updated $filePath',
     metadata: {
+      'path': filePath,
       'filepath': filePath,
       'diagnostics': const <String, dynamic>{},
     },

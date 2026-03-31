@@ -4,6 +4,7 @@ import 'dart:convert';
 import 'package:flutter/foundation.dart';
 
 import '../core/database.dart';
+import '../core/debug_trace.dart';
 import '../core/local_server.dart';
 import '../core/models.dart';
 import '../core/prompt_system.dart';
@@ -178,6 +179,7 @@ class AppController extends ChangeNotifier {
   }
 
   Future<void> selectWorkspace(WorkspaceInfo workspace) async {
+    final startedAt = DateTime.now().millisecondsSinceEpoch;
     try {
       _clearWorkspacePreviewCaches();
       var sessions = await _client!.listSessions(workspace.id);
@@ -194,6 +196,20 @@ class AppController extends ChangeNotifier {
           error: null);
       notifyListeners();
       await refreshSession();
+      // #region agent log
+      debugTrace(
+        runId: 'workspace-select',
+        hypothesisId: 'H2',
+        location: 'app_controller.dart:180',
+        message: 'selectWorkspace completed',
+        data: {
+          'workspaceId': workspace.id,
+          'sessionId': session.id,
+          'sessions': sessions.length,
+          'elapsedMs': DateTime.now().millisecondsSinceEpoch - startedAt,
+        },
+      );
+      // #endregion
     } catch (error) {
       _setError(error);
     }
@@ -223,6 +239,7 @@ class AppController extends ChangeNotifier {
     if (session == null) return;
     final workspace = state.workspace;
     if (workspace == null) return;
+    final startedAt = DateTime.now().millisecondsSinceEpoch;
     final messages = await _client!.listSessionMessages(session.id);
     final sessions = await _client!.listSessions(workspace.id);
     final permissions = await _client!.listPermissions();
@@ -238,6 +255,23 @@ class AppController extends ChangeNotifier {
       todos: todos,
     );
     notifyListeners();
+    // #region agent log
+    debugTrace(
+      runId: 'workspace-refresh',
+      hypothesisId: 'H2',
+      location: 'app_controller.dart:221',
+      message: 'refreshSession completed',
+      data: {
+        'sessionId': session.id,
+        'messages': messages.length,
+        'parts': messages.fold<int>(0, (sum, item) => sum + item.parts.length),
+        'permissions': state.permissions.length,
+        'questions': state.questions.length,
+        'todos': todos.length,
+        'elapsedMs': DateTime.now().millisecondsSinceEpoch - startedAt,
+      },
+    );
+    // #endregion
   }
 
   Future<void> sendPrompt(String text,
@@ -618,6 +652,8 @@ class AppController extends ChangeNotifier {
   }
 
   void _flushPendingPartDeltas() {
+    final pendingCount = _pendingPartDeltas.length;
+    final startedAt = DateTime.now().millisecondsSinceEpoch;
     _partDeltaFlushTimer?.cancel();
     _partDeltaFlushTimer = null;
     if (_pendingPartDeltas.isEmpty) return;
@@ -628,6 +664,19 @@ class AppController extends ChangeNotifier {
     _pendingPartDeltas.clear();
     state = state.copyWith(messages: messages);
     notifyListeners();
+    // #region agent log
+    debugTrace(
+      runId: 'delta-flush',
+      hypothesisId: 'H5',
+      location: 'app_controller.dart:620',
+      message: 'delta flush applied',
+      data: {
+        'pendingCount': pendingCount,
+        'messageCount': messages.length,
+        'elapsedMs': DateTime.now().millisecondsSinceEpoch - startedAt,
+      },
+    );
+    // #endregion
   }
 
   List<SessionInfo> _upsertSession(

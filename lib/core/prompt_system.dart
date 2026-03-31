@@ -1,3 +1,4 @@
+import 'debug_trace.dart';
 import 'models.dart';
 import 'workspace_bridge.dart';
 
@@ -123,6 +124,9 @@ class PromptAssembler {
       'Current step: ${context.currentStep}/${context.maxSteps}.',
       'Do not assume shell, PTY, or desktop-only capabilities exist.',
       'Prefer available tools and stay within the workspace boundary.',
+      'Prefer `edit` or `apply_patch` for modifying existing files.',
+      'For large writes or code with many quotes/braces, do not inline the full file body in tool JSON.',
+      'Instead, put the body in assistant text using `<write_content id="name">...</write_content>` and call `write` with `path` plus `contentRef: "name"`.',
     ].join('\n');
   }
 
@@ -132,8 +136,35 @@ class PromptAssembler {
   }
 
   Future<String> _projectContextPrompt(WorkspaceInfo workspace) async {
+    final cacheHit = _projectContextCache.containsKey(workspace.treeUri);
+    // #region agent log
+    debugTrace(
+      runId: 'project-context',
+      hypothesisId: 'H4',
+      location: 'prompt_system.dart:134',
+      message: 'project context requested',
+      data: {
+        'workspaceId': workspace.id,
+        'cacheHit': cacheHit,
+      },
+    );
+    // #endregion
     return _projectContextCache.putIfAbsent(workspace.treeUri, () async {
+      final startedAt = DateTime.now().millisecondsSinceEpoch;
       final fragments = await _collectContextFragments(workspace);
+      // #region agent log
+      debugTrace(
+        runId: 'project-context',
+        hypothesisId: 'H4',
+        location: 'prompt_system.dart:136',
+        message: 'project context built',
+        data: {
+          'workspaceId': workspace.id,
+          'fragmentCount': fragments.length,
+          'elapsedMs': DateTime.now().millisecondsSinceEpoch - startedAt,
+        },
+      );
+      // #endregion
       if (fragments.isEmpty) return '';
       return [
         '# Project-Specific Context',

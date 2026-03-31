@@ -5504,7 +5504,8 @@ class _PermissionPanel extends StatelessWidget {
         ? Map<String, dynamic>.from(metadata['preview'] as Map)
         : null;
     final tool = metadata['tool'] as String?;
-    final filePath = metadata['filePath'] as String?;
+    final filePath =
+        metadata['path'] as String? ?? metadata['filePath'] as String?;
     return Card(
       margin: const EdgeInsets.fromLTRB(0, 0, 0, 10),
       child: Padding(

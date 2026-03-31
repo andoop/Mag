@@ -5,6 +5,7 @@ import 'dart:math' as math;
 
 import 'agents.dart';
 import 'database.dart';
+import 'debug_trace.dart';
 import 'models.dart';
 import 'prompt_system.dart';
 import 'tool_runtime.dart';
@@ -811,8 +812,22 @@ class SessionEngine {
     if (_busy[session.id] == true) {
       throw Exception('Session is already running');
     }
+    final promptStartedAt = DateTime.now().millisecondsSinceEpoch;
     _debugLog('prompt',
         'start session=${session.id} agent=${agent ?? session.agent}');
+    // #region agent log
+    debugTrace(
+      runId: 'prompt-pre',
+      hypothesisId: 'H3',
+      location: 'session_engine.dart:804',
+      message: 'prompt started',
+      data: {
+        'sessionId': session.id,
+        'agent': agent ?? session.agent,
+        'textLength': text.length,
+      },
+    );
+    // #endregion
     // Create cancel token (like opencode's AbortController per session)
     final cancelToken = CancelToken();
     _cancelTokens[session.id] = cancelToken;
@@ -827,8 +842,26 @@ class SessionEngine {
         await database.getSetting('model_config') ??
             ModelConfig.defaults().toJson(),
       );
+      final cacheLoadStartedAt = DateTime.now().millisecondsSinceEpoch;
       final cachedMessages = await database.listMessages(session.id);
       final cachedParts = await database.listPartsForSession(session.id);
+      // #region agent log
+      debugTrace(
+        runId: 'prompt-pre',
+        hypothesisId: 'H3',
+        location: 'session_engine.dart:830',
+        message: 'prompt caches loaded',
+        data: {
+          'sessionId': session.id,
+          'messages': cachedMessages.length,
+          'parts': cachedParts.length,
+          'elapsedMs':
+              DateTime.now().millisecondsSinceEpoch - cacheLoadStartedAt,
+          'sincePromptStartMs':
+              DateTime.now().millisecondsSinceEpoch - promptStartedAt,
+        },
+      );
+      // #endregion
       final toolPartByCallId = <String, MessagePart>{};
       void upsertCachedMessage(MessageInfo message) {
         final index =
@@ -909,6 +942,7 @@ class SessionEngine {
       var currentAgent = userAgent;
       var lastFinishReason = 'stop';
       var lastUsage = const ModelUsage();
+      var loggedFirstDelta = false;
       for (var step = 1; step <= definition.steps; step++) {
         cancelToken.throwIfCancelled();
         events.emit(ServerEvent(
@@ -916,6 +950,8 @@ class SessionEngine {
           properties: {'sessionID': session.id, 'status': 'busy'},
           directory: workspace.treeUri,
         ));
+        final buildConversationStartedAt =
+            DateTime.now().millisecondsSinceEpoch;
         final conversation = await _buildConversation(
           workspace: workspace,
           messages: cachedMessages,
@@ -926,6 +962,23 @@ class SessionEngine {
           model: modelConfig.model,
           summaryMessageId: activeSession.summaryMessageId,
         );
+        // #region agent log
+        debugTrace(
+          runId: 'prompt-step',
+          hypothesisId: 'H3',
+          location: 'session_engine.dart:919',
+          message: 'conversation built',
+          data: {
+            'sessionId': session.id,
+            'step': step,
+            'messages': cachedMessages.length,
+            'parts': cachedParts.length,
+            'conversationItems': conversation.length,
+            'elapsedMs': DateTime.now().millisecondsSinceEpoch -
+                buildConversationStartedAt,
+          },
+        );
+        // #endregion
         final toolModels = [
           ...toolRegistry.availableForAgent(agentDefinition(currentAgent)),
           if (userMessage.format?.type == OutputFormatType.jsonSchema)
@@ -958,7 +1011,7 @@ class SessionEngine {
             type: PartType.text,
             createdAt: streamingTextPart?.createdAt ??
                 DateTime.now().millisecondsSinceEpoch,
-            data: {'text': streamedText},
+            data: _assistantTextPartData(streamedText),
           );
           await saveTrackedPart(streamingTextPart!);
         }
@@ -995,6 +1048,24 @@ class SessionEngine {
               format: userMessage.format,
               cancelToken: cancelToken,
               onTextDelta: (delta) async {
+                if (!loggedFirstDelta) {
+                  loggedFirstDelta = true;
+                  // #region agent log
+                  debugTrace(
+                    runId: 'prompt-stream',
+                    hypothesisId: 'H3',
+                    location: 'session_engine.dart:996',
+                    message: 'first model delta received',
+                    data: {
+                      'sessionId': session.id,
+                      'step': step,
+                      'sincePromptStartMs':
+                          DateTime.now().millisecondsSinceEpoch -
+                              promptStartedAt,
+                    },
+                  );
+                  // #endregion
+                }
                 streamingTextPart ??= MessagePart(
                   id: newId('part'),
                   sessionId: session.id,
@@ -1082,7 +1153,7 @@ class SessionEngine {
               messageId: assistant.id,
               type: PartType.text,
               createdAt: DateTime.now().millisecondsSinceEpoch,
-              data: {'text': response.text},
+              data: _assistantTextPartData(response.text),
             ),
           );
         }
@@ -1424,7 +1495,7 @@ class SessionEngine {
       if (isSummarySeed) {
         final summaryText = messageParts
             .where((item) => item.type == PartType.text)
-            .map((item) => item.data['text'] as String? ?? '')
+            .map(_partRawText)
             .join('\n');
         if (summaryText.trim().isNotEmpty) {
           conversation.add({
@@ -1449,7 +1520,7 @@ class SessionEngine {
       }
       final textParts = messageParts
           .where((item) => item.type == PartType.text)
-          .map((item) => item.data['text'] as String? ?? '')
+          .map(_partRawText)
           .join('\n');
       final toolParts =
           messageParts.where((item) => item.type == PartType.tool).toList();
@@ -1487,6 +1558,36 @@ class SessionEngine {
     return conversation;
   }
 
+  String _partRawText(MessagePart part) =>
+      (part.data['rawText'] ?? part.data['text']) as String? ?? '';
+
+  JsonMap _assistantTextPartData(String rawText) {
+    final displayText = _sanitizeAssistantToolPayloads(rawText);
+    if (displayText == rawText) {
+      return {'text': rawText};
+    }
+    return {
+      'text': displayText,
+      'rawText': rawText,
+    };
+  }
+
+  String _sanitizeAssistantToolPayloads(String rawText) {
+    if (!rawText.contains('<write_content')) {
+      return rawText;
+    }
+    return rawText.replaceAllMapped(
+      RegExp(
+        r"""<write_content\s+id=(?:"([^"]+)"|'([^']+)')\s*>[\s\S]*?</write_content>""",
+        multiLine: true,
+      ),
+      (match) {
+        final id = match.group(1) ?? match.group(2) ?? 'content';
+        return '[write_content:$id omitted]';
+      },
+    );
+  }
+
   Future<ToolExecutionResult> _executeTool({
     required WorkspaceInfo workspace,
     required SessionInfo session,
@@ -1499,6 +1600,7 @@ class SessionEngine {
   }) async {
     cancelToken?.throwIfCancelled();
     final tool = toolRegistry[call.name] ?? toolRegistry['invalid']!;
+    final argumentError = _validateToolArguments(tool, call);
     final ctx = ToolRuntimeContext(
       workspace: workspace,
       session: session,
@@ -1579,6 +1681,9 @@ class SessionEngine {
         toolPartCache: toolPartCache,
         onPartSaved: onPartSaved,
       );
+      if (argumentError != null) {
+        throw Exception(argumentError);
+      }
       final result = await tool.execute(call.arguments, ctx);
       _invalidatePromptContextForToolResult(
         workspace: workspace,
@@ -1599,6 +1704,8 @@ class SessionEngine {
         onPartSaved: onPartSaved,
       );
       return result;
+    } on CancelledException {
+      rethrow;
     } catch (error) {
       _debugLog('tool', 'error ${call.name}: $error');
       await _updateToolState(
@@ -1610,8 +1717,45 @@ class SessionEngine {
         toolPartCache: toolPartCache,
         onPartSaved: onPartSaved,
       );
-      rethrow;
+      return ToolExecutionResult(
+        title: call.name,
+        output: error.toString(),
+        displayOutput: '${call.name} failed',
+        metadata: {
+          'failed': true,
+          'error': error.toString(),
+        },
+      );
     }
+  }
+
+  String? _validateToolArguments(ToolDefinition tool, ToolCall call) {
+    final args = call.arguments;
+    if (args.containsKey('raw')) {
+      final raw = (args['raw'] as String? ?? '').trim();
+      final suffix = raw.isEmpty ? '' : ' Received: $raw';
+      return 'Malformed tool arguments for `${call.name}`. Expected a valid JSON object matching the tool schema.$suffix';
+    }
+    if (tool.id == 'write') {
+      final hasInlineContent = args.containsKey('content');
+      final contentRef = (args['contentRef'] as String? ?? '').trim();
+      if (!hasInlineContent && contentRef.isEmpty) {
+        return 'Missing write payload. Provide `content` for short text or `contentRef` for a `<write_content id="...">` block.';
+      }
+    }
+    final required =
+        ((tool.parameters['required'] as List?) ?? const <dynamic>[])
+            .whereType<String>();
+    for (final key in required) {
+      final value = args[key];
+      if (value == null) {
+        return 'Missing required `$key` for `${call.name}`.';
+      }
+      if (value is String && value.trim().isEmpty) {
+        return 'Required `$key` for `${call.name}` cannot be empty.';
+      }
+    }
+    return null;
   }
 
   Future<void> _updateToolState({
