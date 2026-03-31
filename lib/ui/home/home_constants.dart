@@ -1,0 +1,164 @@
+part of '../home_page.dart';
+
+typedef PromptReferenceAction = Future<void> Function(String);
+
+const Color _kPageBackground = Color(0xFFF5F5F4);
+const Color _kPanelBackground = Colors.white;
+const Color _kMutedPanel = Color(0xFFFAFAF9);
+const Color _kBorderColor = Color(0x14000000);
+const Color _kSoftBorderColor = Color(0x0F000000);
+const Color _kAgentBubble = Colors.white;
+const Color _kUserBubble = Color(0xFFF0FDF4);
+
+BoxDecoration _panelDecoration({
+  Color background = _kPanelBackground,
+  double radius = 18,
+  bool elevated = true,
+}) {
+  return BoxDecoration(
+    color: background,
+    borderRadius: BorderRadius.circular(radius),
+    border: const Border.fromBorderSide(BorderSide(color: _kBorderColor)),
+    boxShadow: elevated
+        ? [
+            BoxShadow(
+              color: Colors.black.withOpacity(0.02),
+              blurRadius: 10,
+              offset: const Offset(0, 1),
+            ),
+          ]
+        : null,
+  );
+}
+
+ButtonStyle _compactActionButtonStyle(BuildContext context) {
+  return OutlinedButton.styleFrom(
+    fixedSize: const Size.fromHeight(30),
+    minimumSize: Size.zero,
+    tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+    visualDensity: VisualDensity.compact,
+    padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 0),
+    textStyle: Theme.of(context).textTheme.labelSmall?.copyWith(
+          fontWeight: FontWeight.w600,
+          fontSize: 11.5,
+        ),
+    side: const BorderSide(color: _kBorderColor),
+    shape: const StadiumBorder(),
+    foregroundColor: Colors.black87,
+    backgroundColor: Colors.white.withOpacity(0.78),
+  );
+}
+
+ButtonStyle _compactFilledActionButtonStyle(BuildContext context) {
+  return FilledButton.styleFrom(
+    fixedSize: const Size.fromHeight(30),
+    minimumSize: Size.zero,
+    tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+    visualDensity: VisualDensity.compact,
+    padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 0),
+    textStyle: Theme.of(context).textTheme.labelSmall?.copyWith(
+          fontWeight: FontWeight.w600,
+          fontSize: 11.5,
+        ),
+    shape: const StadiumBorder(),
+  );
+}
+
+class _CompactActionButton extends StatelessWidget {
+  const _CompactActionButton({
+    required this.label,
+    required this.onPressed,
+    this.filled = false,
+    this.icon,
+  });
+
+  final String label;
+  final VoidCallback? onPressed;
+  final bool filled;
+  final IconData? icon;
+
+  @override
+  Widget build(BuildContext context) {
+    final child = Row(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        if (icon != null) ...[
+          Icon(icon, size: 14),
+          const SizedBox(width: 5),
+        ],
+        Text(label),
+      ],
+    );
+    if (filled) {
+      return FilledButton(
+        onPressed: onPressed,
+        style: _compactFilledActionButtonStyle(context),
+        child: child,
+      );
+    }
+    return OutlinedButton(
+      onPressed: onPressed,
+      style: _compactActionButtonStyle(context),
+      child: child,
+    );
+  }
+}
+
+class _CompactIconButton extends StatelessWidget {
+  const _CompactIconButton({
+    required this.icon,
+    required this.onPressed,
+    this.tooltip,
+  });
+
+  final IconData icon;
+  final VoidCallback? onPressed;
+  final String? tooltip;
+
+  @override
+  Widget build(BuildContext context) {
+    return IconButton(
+      tooltip: tooltip,
+      onPressed: onPressed,
+      constraints: const BoxConstraints(minWidth: 32, minHeight: 32),
+      padding: const EdgeInsets.all(6),
+      visualDensity: VisualDensity.compact,
+      splashRadius: 18,
+      iconSize: 17,
+      style: IconButton.styleFrom(
+        tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+        backgroundColor: Colors.white.withOpacity(0.78),
+        side: const BorderSide(color: _kBorderColor),
+      ),
+      icon: Icon(icon),
+    );
+  }
+}
+
+String _toolStatusLabel(BuildContext context, String status) {
+  switch (status) {
+    case 'running':
+      return l(context, '运行中', 'Running');
+    case 'pending':
+      return l(context, '等待中', 'Pending');
+    case 'completed':
+      return l(context, '已完成', 'Completed');
+    case 'error':
+      return l(context, '错误', 'Error');
+    default:
+      return status;
+  }
+}
+
+double _contextUsageRatio(SessionInfo? session, String model) {
+  if (session == null) return 0;
+  final window = inferContextWindow(model);
+  if (window <= 0) return 0;
+  return (session.totalTokens / window).clamp(0, 1);
+}
+
+String _contextUsageLabel(SessionInfo? session, String model) {
+  if (session == null) return '--';
+  final window = inferContextWindow(model);
+  return '${formatTokenCount(session.totalTokens)} / ${formatTokenCount(window)}';
+}
