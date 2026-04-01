@@ -5,6 +5,7 @@ import 'database.dart';
 import 'json_coerce.dart';
 import 'models.dart';
 import 'tools/builtin_tool_descriptions.dart';
+import 'tools/fileref_tool_spec.dart';
 import 'tools/question_tool_spec.dart';
 import 'tools/todo_tool_spec.dart';
 import 'workspace_bridge.dart';
@@ -392,6 +393,14 @@ class ToolRegistry {
           'additionalProperties': false,
         },
         execute: _skillTool,
+      ),
+    );
+    register(
+      ToolDefinition(
+        id: 'fileref',
+        description: kFilerefToolDescription.trim(),
+        parameters: filerefToolParametersSchema(),
+        execute: _filerefTool,
       ),
     );
     register(
@@ -1522,6 +1531,58 @@ Future<ToolExecutionResult> _browserTool(
   );
 }
 
+Future<ToolExecutionResult> _filerefTool(
+    JsonMap args, ToolRuntimeContext ctx) async {
+  final raw = (args['refs'] as List?) ?? const [];
+  final out = <JsonMap>[];
+  final warnings = <String>[];
+  for (final e in raw.whereType<Map>()) {
+    final m = Map<String, dynamic>.from(e);
+    final path = _cleanPath(jsonStringCoerce(m['path'], ''));
+    var kind = jsonStringCoerce(m['kind'], 'modified').trim().toLowerCase();
+    if (path.isEmpty) {
+      warnings.add('Skipped empty path');
+      continue;
+    }
+    if (!_isSafeWorkspaceRelativePath(path)) {
+      warnings.add('Rejected unsafe path: $path');
+      continue;
+    }
+    if (kind != 'created' && kind != 'modified') {
+      kind = 'modified';
+    }
+    final entry = await ctx.bridge.stat(
+      treeUri: ctx.workspace.treeUri,
+      relativePath: path,
+    );
+    if (entry == null) {
+      warnings.add('Not found in workspace: $path');
+    }
+    out.add({
+      'path': path,
+      'kind': kind,
+      'exists': entry != null,
+    });
+  }
+  if (out.isEmpty) {
+    return ToolExecutionResult(
+      title: 'fileref',
+      output:
+          'No valid refs. Provide refs: [{path, kind}] with workspace-relative paths (no ..).',
+      metadata: {'refs': <JsonMap>[]},
+    );
+  }
+  final pretty = const JsonEncoder.withIndent('  ').convert(out);
+  final warnBlock =
+      warnings.isEmpty ? '' : '\n\nWarnings:\n${warnings.join('\n')}';
+  return ToolExecutionResult(
+    title: '${out.length} file ref${out.length == 1 ? '' : 's'}',
+    output:
+        'Registered file references for the conversation UI.$warnBlock\n\n$pretty',
+    metadata: {'refs': out},
+  );
+}
+
 Future<ToolExecutionResult> _skillTool(
     JsonMap args, ToolRuntimeContext ctx) async {
   final name = (args['name'] as String? ?? '').trim();
@@ -1597,6 +1658,14 @@ String _cleanPath(String input) {
   final value = input.trim().replaceAll('\\', '/');
   if (value.startsWith('/')) return value.substring(1);
   return value;
+}
+
+bool _isSafeWorkspaceRelativePath(String path) {
+  if (path.startsWith('/') || path.contains('..')) return false;
+  for (final seg in path.split('/')) {
+    if (seg == '..') return false;
+  }
+  return true;
 }
 
 bool _looksBinaryEntry(WorkspaceEntry entry) {

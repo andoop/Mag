@@ -1,22 +1,112 @@
 part of '../home_page.dart';
 
-class _StreamingMarkdownText extends StatelessWidget {
-  const _StreamingMarkdownText({required this.text});
+/// OpenCode `TextPartDisplay` 底部：`IconButton` + `text-part-meta`（Agent · 模型 · 耗时）。
+class _AssistantTextFooter extends StatefulWidget {
+  const _AssistantTextFooter({
+    required this.plainText,
+    this.metaLine,
+  });
 
-  final String text;
+  final String plainText;
+  final String? metaLine;
+
+  @override
+  State<_AssistantTextFooter> createState() => _AssistantTextFooterState();
+}
+
+class _AssistantTextFooterState extends State<_AssistantTextFooter> {
+  bool _copied = false;
 
   @override
   Widget build(BuildContext context) {
-    final normalized = _normalizeStreamingMarkdown(text);
-    return MarkdownBody(
-      data: normalized,
-      selectable: true,
-      softLineBreak: true,
-      shrinkWrap: true,
-      builders: {
-        'pre': _MarkdownCodeBlockBuilder(),
-      },
-      styleSheet: MarkdownStyleSheet.fromTheme(Theme.of(context)).copyWith(
+    final meta = widget.metaLine?.trim();
+    final hasMeta = meta != null && meta.isNotEmpty;
+    return Padding(
+      padding: const EdgeInsets.only(top: 8),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          IconButton(
+            visualDensity: VisualDensity.compact,
+            padding: EdgeInsets.zero,
+            constraints: const BoxConstraints(minWidth: 36, minHeight: 36),
+            tooltip: _copied
+                ? l(context, '已复制', 'Copied')
+                : l(context, '复制回复', 'Copy response'),
+            icon: Icon(
+              _copied ? Icons.check : Icons.copy_outlined,
+              size: 20,
+              color: _copied ? kOcGreen : kOcMuted,
+            ),
+            onPressed: () async {
+              await Clipboard.setData(ClipboardData(text: widget.plainText));
+              if (!mounted) return;
+              setState(() => _copied = true);
+              Future<void>.delayed(const Duration(seconds: 2), () {
+                if (mounted) setState(() => _copied = false);
+              });
+              _showInfo(
+                context,
+                l(context, '回复已复制', 'Response copied'),
+              );
+            },
+          ),
+          if (hasMeta)
+            Expanded(
+              child: Padding(
+                padding: const EdgeInsets.only(top: 10, left: 2),
+                child: Text(
+                  meta,
+                  style: Theme.of(context).textTheme.labelSmall?.copyWith(
+                        color: kOcMuted,
+                        height: 1.35,
+                        fontSize: 12,
+                      ),
+                ),
+              ),
+            ),
+        ],
+      ),
+    );
+  }
+}
+
+class _StreamingMarkdownText extends StatelessWidget {
+  const _StreamingMarkdownText({
+    required this.text,
+    this.workspace,
+    this.controller,
+    this.onInsertPromptReference,
+    this.onSendPromptReference,
+    this.footerMeta,
+    this.showResponseCopy = false,
+  });
+
+  final String text;
+  final WorkspaceInfo? workspace;
+  final AppController? controller;
+  final ValueChanged<String>? onInsertPromptReference;
+  final PromptReferenceAction? onSendPromptReference;
+  final String? footerMeta;
+  final bool showResponseCopy;
+
+  @override
+  Widget build(BuildContext context) {
+    final withLinks = _injectFileRefWikiLinks(text);
+    final normalized = _normalizeStreamingMarkdown(withLinks);
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        MarkdownBody(
+          data: normalized,
+          selectable: true,
+          softLineBreak: true,
+          shrinkWrap: true,
+          builders: {
+            'pre': _MarkdownCodeBlockBuilder(),
+          },
+          styleSheet: MarkdownStyleSheet.fromTheme(Theme.of(context)).copyWith(
         blockSpacing: 10,
         p: const TextStyle(fontSize: 15, height: 1.5, color: Colors.black87),
         a: TextStyle(
@@ -84,12 +174,36 @@ class _StreamingMarkdownText extends StatelessWidget {
       ),
       onTapLink: (_, href, __) {
         if (href == null || href.isEmpty) return;
+        if (href.startsWith('fileref:')) {
+          final enc = href.substring('fileref:'.length);
+          final path = Uri.decodeComponent(enc);
+          final ws = workspace;
+          final ctrl = controller;
+          if (ws != null && ctrl != null && path.isNotEmpty) {
+            _openFilePreview(
+              context,
+              controller: ctrl,
+              workspace: ws,
+              path: path,
+              onInsertPromptReference: onInsertPromptReference,
+              onSendPromptReference: onSendPromptReference,
+            );
+          }
+          return;
+        }
         _showInfo(
           context,
           l(context, '链接暂未接入外部打开: $href',
               'External link opening is not wired yet: $href'),
         );
       },
+        ),
+        if (showResponseCopy)
+          _AssistantTextFooter(
+            plainText: text,
+            metaLine: footerMeta,
+          ),
+      ],
     );
   }
 }
@@ -220,6 +334,28 @@ String _normalizeMarkdownLanguage(String language) {
   }
 }
 
+/// `[[file:lib/foo.dart]]` → markdown link，点击打开工作区文件（与系统提示中的约定一致）。
+String _injectFileRefWikiLinks(String input) {
+  return input.replaceAllMapped(
+    RegExp(r'\[\[file:([^\]]+)\]\]'),
+    (m) {
+      final p = m.group(1)!.trim();
+      if (p.isEmpty) return m.group(0)!;
+      return '[$p](fileref:${Uri.encodeComponent(p)})';
+    },
+  );
+}
+
+bool _pathLooksMarkdownFile(String path) {
+  final lower = path.toLowerCase();
+  return lower.endsWith('.md') || lower.endsWith('.markdown');
+}
+
+bool _pathLooksHtmlFile(String path) {
+  final lower = path.toLowerCase();
+  return lower.endsWith('.html') || lower.endsWith('.htm');
+}
+
 String _normalizeStreamingMarkdown(String input) {
   var text = input;
   final trimmedRight = text.trimRight();
@@ -296,20 +432,397 @@ String _closeMarkdownLink(String text) {
   return lines.join('\n');
 }
 
+/// OpenRouter 等会下发加密的 `[REDACTED]` 推理片段；与 OpenCode TUI 一致去掉后再展示。
+String _sanitizeReasoningText(String raw) {
+  return raw.replaceAll('[REDACTED]', '').trim();
+}
+
+int _bundleCompletionMs(SessionMessageBundle b) {
+  var maxMs = b.message.createdAt;
+  for (final p in b.parts) {
+    if (p.createdAt > maxMs) maxMs = p.createdAt;
+  }
+  return maxMs;
+}
+
+/// 与 OpenCode `SessionTurn.turnDurationMs` 一致：从本轮用户消息到各 assistant 完成时刻的最大值。
+int? _turnDurationMsForAssistantBundle(AppState state, int bundleIdx) {
+  if (bundleIdx < 0 || bundleIdx >= state.messages.length) return null;
+  final target = state.messages[bundleIdx];
+  if (target.message.role != SessionRole.assistant) return null;
+
+  var userIdx = -1;
+  for (var i = bundleIdx; i >= 0; i--) {
+    if (state.messages[i].message.role == SessionRole.user) {
+      userIdx = i;
+      break;
+    }
+  }
+  if (userIdx < 0) return null;
+
+  if (state.isBusy &&
+      state.messages.isNotEmpty &&
+      state.messages.last.message.role == SessionRole.assistant) {
+    var lastTurnUser = -1;
+    for (var i = state.messages.length - 1; i >= 0; i--) {
+      if (state.messages[i].message.role == SessionRole.user) {
+        lastTurnUser = i;
+        break;
+      }
+    }
+    if (bundleIdx > lastTurnUser) return null;
+  }
+
+  final startMs = state.messages[userIdx].message.createdAt;
+  var endMs = target.message.createdAt;
+  for (var j = userIdx + 1; j < state.messages.length; j++) {
+    if (state.messages[j].message.role == SessionRole.user) break;
+    if (state.messages[j].message.role == SessionRole.assistant) {
+      final c = _bundleCompletionMs(state.messages[j]);
+      if (c > endMs) endMs = c;
+    }
+  }
+  final ms = endMs - startMs;
+  return ms >= 0 ? ms : null;
+}
+
+String? _formatTurnDurationLabel(BuildContext context, int ms) {
+  if (ms < 0) return null;
+  final totalSec = (ms / 1000).round();
+  if (totalSec < 60) {
+    return l(context, '$totalSec 秒', '${totalSec}s');
+  }
+  final m = totalSec ~/ 60;
+  final s = totalSec % 60;
+  return l(context, '$m 分 $s 秒', '${m}m ${s}s');
+}
+
+/// OpenCode `TextPartDisplay` 的 `meta()`：`Agent · model · duration · interrupted`。
+String? _assistantReplyFooterMeta(
+  BuildContext context,
+  MessageInfo message,
+  int? turnDurationMs,
+) {
+  if (message.role != SessionRole.assistant) return null;
+  final agent = message.agent.trim();
+  final agentLabel = agent.isEmpty
+      ? ''
+      : '${agent[0].toUpperCase()}${agent.substring(1)}';
+  final model = (message.model ?? '').trim();
+  final durLabel = turnDurationMs != null
+      ? _formatTurnDurationLabel(context, turnDurationMs)
+      : null;
+  final interruptedLabel =
+      (message.error != null && message.error!.trim().isNotEmpty)
+          ? l(context, '已中断', 'Interrupted')
+          : '';
+  final parts = <String>[
+    if (agentLabel.isNotEmpty) agentLabel,
+    if (model.isNotEmpty) model,
+    if (durLabel != null && durLabel.isNotEmpty) durLabel,
+    if (interruptedLabel.isNotEmpty) interruptedLabel,
+  ];
+  if (parts.isEmpty) return null;
+  return parts.join(' \u00B7 ');
+}
+
+/// 桌面弱色 Markdown + 分享页式「思考」标题与 `ResultsButton` 折叠详情；`TEXT_RENDER_THROTTLE_MS = 100`。
+class _ReasoningPartTile extends StatefulWidget {
+  const _ReasoningPartTile({
+    required this.text,
+    required this.streaming,
+    this.workspace,
+    this.controller,
+    this.onInsertPromptReference,
+    this.onSendPromptReference,
+  });
+
+  final String text;
+  final bool streaming;
+  final WorkspaceInfo? workspace;
+  final AppController? controller;
+  final ValueChanged<String>? onInsertPromptReference;
+  final PromptReferenceAction? onSendPromptReference;
+
+  @override
+  State<_ReasoningPartTile> createState() => _ReasoningPartTileState();
+}
+
+class _ReasoningPartTileState extends State<_ReasoningPartTile> {
+  static const int _throttleMs = 100;
+
+  String _displayed = '';
+  Timer? _pending;
+  int _lastFlush = 0;
+  /// 对齐 OpenCode 分享页 `ResultsButton`：完成后默认折叠。
+  bool _detailsOpen = false;
+
+  @override
+  void initState() {
+    super.initState();
+    // 与 OpenCode `createThrottledValue` 一致：`last` 初值为 0，首帧可立即显示。
+    _lastFlush = 0;
+    _displayed = _sanitizeReasoningText(widget.text);
+    if (widget.streaming) {
+      _detailsOpen = true;
+    }
+  }
+
+  @override
+  void dispose() {
+    _pending?.cancel();
+    super.dispose();
+  }
+
+  void _flushThrottled() {
+    final sanitized = _sanitizeReasoningText(widget.text);
+    final now = DateTime.now().millisecondsSinceEpoch;
+    final remaining = _throttleMs - (now - _lastFlush);
+    if (remaining <= 0) {
+      _pending?.cancel();
+      _pending = null;
+      _lastFlush = now;
+      if (_displayed != sanitized) setState(() => _displayed = sanitized);
+      return;
+    }
+    _pending?.cancel();
+    _pending = Timer(Duration(milliseconds: remaining), () {
+      if (!mounted) return;
+      _pending = null;
+      _lastFlush = DateTime.now().millisecondsSinceEpoch;
+      final s = _sanitizeReasoningText(widget.text);
+      if (_displayed != s) setState(() => _displayed = s);
+    });
+  }
+
+  @override
+  void didUpdateWidget(covariant _ReasoningPartTile oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (!oldWidget.streaming && widget.streaming) {
+      _detailsOpen = true;
+    }
+    if (oldWidget.streaming && !widget.streaming) {
+      _detailsOpen = false;
+      _pending?.cancel();
+      _pending = null;
+      _lastFlush = DateTime.now().millisecondsSinceEpoch;
+      final s = _sanitizeReasoningText(widget.text);
+      if (_displayed != s) setState(() => _displayed = s);
+    } else if (oldWidget.text != widget.text) {
+      if (widget.streaming) {
+        _flushThrottled();
+      } else {
+        _pending?.cancel();
+        _pending = null;
+        _lastFlush = DateTime.now().millisecondsSinceEpoch;
+        final s = _sanitizeReasoningText(widget.text);
+        if (_displayed != s) setState(() => _displayed = s);
+      }
+    }
+  }
+
+  Widget _reasoningMarkdown(BuildContext context, String normalized) {
+    const weak = kOcMuted;
+    return MarkdownBody(
+      data: normalized,
+      selectable: true,
+      softLineBreak: true,
+      shrinkWrap: true,
+      builders: {
+        'pre': _MarkdownCodeBlockBuilder(),
+      },
+      styleSheet: MarkdownStyleSheet.fromTheme(Theme.of(context)).copyWith(
+        blockSpacing: 10,
+        p: const TextStyle(
+          fontSize: 15,
+          height: 1.5,
+          color: weak,
+          fontStyle: FontStyle.normal,
+        ),
+        a: TextStyle(
+          fontSize: 15,
+          height: 1.5,
+          color: kOcAccent.withOpacity(0.85),
+          decoration: TextDecoration.none,
+          fontWeight: FontWeight.w500,
+        ),
+        strong: const TextStyle(
+          fontWeight: FontWeight.w700,
+          color: weak,
+        ),
+        em: const TextStyle(
+          fontStyle: FontStyle.italic,
+          color: weak,
+        ),
+        code: TextStyle(
+          fontFamily: 'monospace',
+          fontSize: 13,
+          height: 1.45,
+          color: weak.withOpacity(0.92),
+          backgroundColor: const Color(0xFFF4F4F5),
+        ),
+        codeblockDecoration: BoxDecoration(
+          color: const Color(0xFFF4F4F5),
+          borderRadius: BorderRadius.circular(10),
+          border: const Border.fromBorderSide(BorderSide(color: _kBorderColor)),
+        ),
+        codeblockPadding: const EdgeInsets.all(12),
+        blockquoteDecoration: BoxDecoration(
+          color: const Color(0xFFF4F4F5),
+          borderRadius: BorderRadius.circular(10),
+          border: const Border(
+            left: BorderSide(color: kOcBorder, width: 3),
+          ),
+        ),
+        blockquotePadding:
+            const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+        listIndent: 22,
+        listBullet: const TextStyle(fontSize: 14, height: 1.45, color: weak),
+        h1: const TextStyle(
+          fontSize: 21,
+          height: 1.28,
+          fontWeight: FontWeight.w700,
+          color: weak,
+        ),
+        h2: const TextStyle(
+          fontSize: 18,
+          height: 1.3,
+          fontWeight: FontWeight.w700,
+          color: weak,
+        ),
+        h3: const TextStyle(
+          fontSize: 16,
+          height: 1.32,
+          fontWeight: FontWeight.w700,
+          color: weak,
+        ),
+        horizontalRuleDecoration: BoxDecoration(
+          border: Border(
+            top: BorderSide(color: Colors.black.withOpacity(0.08)),
+          ),
+        ),
+      ),
+      onTapLink: (_, href, __) {
+        if (href == null || href.isEmpty) return;
+        if (href.startsWith('fileref:')) {
+          final enc = href.substring('fileref:'.length);
+          final path = Uri.decodeComponent(enc);
+          final ws = widget.workspace;
+          final ctrl = widget.controller;
+          if (ws != null && ctrl != null && path.isNotEmpty) {
+            _openFilePreview(
+              context,
+              controller: ctrl,
+              workspace: ws,
+              path: path,
+              onInsertPromptReference: widget.onInsertPromptReference,
+              onSendPromptReference: widget.onSendPromptReference,
+            );
+          }
+          return;
+        }
+        _showInfo(
+          context,
+          l(context, '链接暂未接入外部打开: $href',
+              'External link opening is not wired yet: $href'),
+        );
+      },
+    );
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    if (_displayed.isEmpty) {
+      return const SizedBox.shrink();
+    }
+    final withLinks = _injectFileRefWikiLinks(_displayed);
+    final normalized = widget.streaming
+        ? _normalizeStreamingMarkdown(withLinks)
+        : withLinks;
+
+    return SizedBox(
+      width: double.infinity,
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(
+            l(context, '思考', 'Thinking'),
+            style: const TextStyle(
+              fontWeight: FontWeight.w700,
+              fontSize: 13,
+              height: 1.3,
+              color: Colors.black87,
+            ),
+          ),
+          if (widget.streaming) ...[
+            const SizedBox(height: 8),
+            Padding(
+              padding: const EdgeInsets.only(top: 16),
+              child: _reasoningMarkdown(context, normalized),
+            ),
+          ] else ...[
+            const SizedBox(height: 4),
+            InkWell(
+              onTap: () => setState(() => _detailsOpen = !_detailsOpen),
+              borderRadius: BorderRadius.circular(8),
+              child: Padding(
+                padding: const EdgeInsets.symmetric(vertical: 4),
+                child: Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Text(
+                      _detailsOpen
+                          ? l(context, '隐藏详情', 'Hide details')
+                          : l(context, '显示详情', 'Show details'),
+                      style: Theme.of(context).textTheme.labelMedium?.copyWith(
+                            color: kOcAccent,
+                            fontWeight: FontWeight.w600,
+                          ),
+                    ),
+                    const SizedBox(width: 2),
+                    Icon(
+                      _detailsOpen ? Icons.expand_less : Icons.chevron_right,
+                      size: 18,
+                      color: kOcAccent,
+                    ),
+                  ],
+                ),
+              ),
+            ),
+            if (_detailsOpen)
+              Padding(
+                padding: const EdgeInsets.only(top: 16),
+                child: _reasoningMarkdown(context, normalized),
+              ),
+          ],
+        ],
+      ),
+    );
+  }
+}
+
 class _PartTile extends StatelessWidget {
   const _PartTile({
     required this.part,
+    required this.message,
     required this.controller,
     required this.workspace,
     required this.serverUri,
+    this.streamAssistantContent = false,
+    this.turnDurationMs,
+    this.showAssistantTextMeta = false,
     required this.onInsertPromptReference,
     required this.onSendPromptReference,
   });
 
   final MessagePart part;
+  final MessageInfo message;
   final AppController controller;
   final WorkspaceInfo? workspace;
   final Uri? serverUri;
+  final bool streamAssistantContent;
+  final int? turnDurationMs;
+  final bool showAssistantTextMeta;
   final ValueChanged<String> onInsertPromptReference;
   final PromptReferenceAction onSendPromptReference;
 
@@ -317,28 +830,17 @@ class _PartTile extends StatelessWidget {
   Widget build(BuildContext context) {
     switch (part.type) {
       case PartType.stepStart:
-        return _StatusPartTile(
-          label: l(context, '思考中', 'Thinking'),
-          detail:
-              l(context, 'Agent 正在规划下一步。', 'Agent is planning the next step.'),
-          color: const Color(0xFFFFFBEB),
-        );
+        // OpenCode 桌面时间线无独立 step_start 卡片；忙状态由底部指示与推理/正文体现。
+        return const SizedBox.shrink();
       case PartType.reasoning:
         final text = part.data['text'] as String? ?? '';
-        return Container(
-          width: double.infinity,
-          padding: const EdgeInsets.all(12),
-          decoration: _panelDecoration(
-              background: const Color(0xFFFFFBEB), radius: 14, elevated: false),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Text(l(context, '推理', 'Reasoning'),
-                  style: const TextStyle(fontWeight: FontWeight.bold)),
-              const SizedBox(height: 8),
-              SelectableText(text, style: const TextStyle(height: 1.45)),
-            ],
-          ),
+        return _ReasoningPartTile(
+          text: text,
+          streaming: streamAssistantContent,
+          workspace: workspace,
+          controller: controller,
+          onInsertPromptReference: onInsertPromptReference,
+          onSendPromptReference: onSendPromptReference,
         );
       case PartType.stepFinish:
         final tokenMap =
@@ -380,7 +882,24 @@ class _PartTile extends StatelessWidget {
         final text = part.data['text'] as String? ?? '';
         final isStructured = (part.data['structured'] as bool?) ?? false;
         if (!isStructured) {
-          return _StreamingMarkdownText(text: text);
+          final footerMeta = showAssistantTextMeta &&
+                  message.role == SessionRole.assistant
+              ? _assistantReplyFooterMeta(
+                  context,
+                  message,
+                  turnDurationMs,
+                )
+              : null;
+          return _StreamingMarkdownText(
+            text: text,
+            workspace: workspace,
+            controller: controller,
+            onInsertPromptReference: onInsertPromptReference,
+            onSendPromptReference: onSendPromptReference,
+            footerMeta: footerMeta,
+            showResponseCopy: showAssistantTextMeta &&
+                message.role == SessionRole.assistant,
+          );
         }
         return Container(
           width: double.infinity,
@@ -413,6 +932,35 @@ class _PartTile extends StatelessWidget {
           return _TodoWriteToolPart(
             toolStatus: toolStatus,
             todos: _resolveTodoWriteTodos(toolState),
+          );
+        }
+        if (toolName == 'fileref') {
+          final metadata =
+              Map<String, dynamic>.from(toolState['metadata'] as Map? ?? const {});
+          final input = Map<String, dynamic>.from(toolState['input'] as Map? ?? const {});
+          List<Map<String, dynamic>> refs;
+          final metaRefs = metadata['refs'];
+          if (metaRefs is List) {
+            refs = metaRefs
+                .whereType<Map>()
+                .map((e) => Map<String, dynamic>.from(e))
+                .toList();
+          } else {
+            final ir = input['refs'];
+            refs = ir is List
+                ? ir
+                    .whereType<Map>()
+                    .map((e) => Map<String, dynamic>.from(e))
+                    .toList()
+                : <Map<String, dynamic>>[];
+          }
+          return _FileRefToolPart(
+            toolStatus: toolStatus,
+            refs: refs,
+            controller: controller,
+            workspace: workspace,
+            onInsertPromptReference: onInsertPromptReference,
+            onSendPromptReference: onSendPromptReference,
           );
         }
         if (toolName == 'question' && toolStatus != 'error') {
@@ -516,6 +1064,158 @@ List<List<String>> _resolveQuestionToolAnswers(
     }
   }
   return out;
+}
+
+/// `fileref` 工具：可点击路径，打开预览（.md / .html 支持排版视图）。
+class _FileRefToolPart extends StatelessWidget {
+  const _FileRefToolPart({
+    required this.toolStatus,
+    required this.refs,
+    required this.controller,
+    required this.workspace,
+    required this.onInsertPromptReference,
+    required this.onSendPromptReference,
+  });
+
+  final String toolStatus;
+  final List<Map<String, dynamic>> refs;
+  final AppController controller;
+  final WorkspaceInfo? workspace;
+  final ValueChanged<String> onInsertPromptReference;
+  final PromptReferenceAction onSendPromptReference;
+
+  @override
+  Widget build(BuildContext context) {
+    final isRunning = toolStatus == 'running' || toolStatus == 'pending';
+    final isError = toolStatus == 'error';
+    final ws = workspace;
+
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.fromLTRB(9, 8, 9, 8),
+      decoration: BoxDecoration(
+        color: isError
+            ? const Color(0xFFFFFBFB)
+            : isRunning
+                ? const Color(0xFFFFFCF2)
+                : const Color(0xFFFAFAF9),
+        borderRadius: BorderRadius.circular(10),
+        border: Border.all(color: _kSoftBorderColor),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              if (isRunning)
+                const Padding(
+                  padding: EdgeInsets.only(right: 8),
+                  child: SizedBox(
+                    width: 12,
+                    height: 12,
+                    child: CircularProgressIndicator(strokeWidth: 1.5),
+                  ),
+                ),
+              if (isError)
+                Padding(
+                  padding: const EdgeInsets.only(right: 8),
+                  child: Icon(Icons.error_outline,
+                      size: 14, color: Colors.red.shade700),
+                ),
+              Expanded(
+                child: Text(
+                  l(context, '文件引用', 'File references'),
+                  style: const TextStyle(
+                    fontWeight: FontWeight.w600,
+                    fontSize: 11.5,
+                    color: Colors.black87,
+                  ),
+                ),
+              ),
+            ],
+          ),
+          if (refs.isNotEmpty) ...[
+            const SizedBox(height: 8),
+            Wrap(
+              spacing: 6,
+              runSpacing: 6,
+              children: refs.map((r) {
+                final path = r['path'] as String? ?? '';
+                final kind = (r['kind'] as String?) ?? 'modified';
+                final exists = r['exists'] as bool? ?? true;
+                final label = kind == 'created'
+                    ? l(context, '新建', 'new')
+                    : l(context, '修改', 'mod');
+                return Material(
+                  color: Colors.transparent,
+                  child: InkWell(
+                    onTap: ws != null && path.isNotEmpty
+                        ? () => _openFilePreview(
+                              context,
+                              controller: controller,
+                              workspace: ws,
+                              path: path,
+                              onInsertPromptReference: onInsertPromptReference,
+                              onSendPromptReference: onSendPromptReference,
+                            )
+                        : null,
+                    borderRadius: BorderRadius.circular(8),
+                    child: Container(
+                      padding: const EdgeInsets.symmetric(
+                          horizontal: 10, vertical: 6),
+                      decoration: BoxDecoration(
+                        color: exists
+                            ? kOcSelectedFill
+                            : Colors.orange.shade50,
+                        borderRadius: BorderRadius.circular(8),
+                        border: Border.all(
+                          color: exists
+                              ? kOcAccent.withOpacity(0.35)
+                              : Colors.orange.shade200,
+                        ),
+                      ),
+                      child: Row(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          Icon(
+                            Icons.insert_drive_file_outlined,
+                            size: 14,
+                            color: exists ? kOcAccent : Colors.orange.shade800,
+                          ),
+                          const SizedBox(width: 6),
+                          Flexible(
+                            child: Text(
+                              path,
+                              maxLines: 2,
+                              overflow: TextOverflow.ellipsis,
+                              style: const TextStyle(
+                                fontSize: 12,
+                                height: 1.25,
+                                color: kOcText,
+                              ),
+                            ),
+                          ),
+                          const SizedBox(width: 6),
+                          Text(
+                            label,
+                            style: TextStyle(
+                              fontSize: 10,
+                              fontWeight: FontWeight.w600,
+                              color: kOcMuted.withOpacity(0.9),
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                  ),
+                );
+              }).toList(),
+            ),
+          ],
+        ],
+      ),
+    );
+  }
 }
 
 /// OpenCode 风格：用结构化 todos 展示只读勾选清单，而非原始 JSON output。
@@ -1773,7 +2473,7 @@ class _WebAttachmentTile extends StatelessWidget {
               if (url.isNotEmpty)
                 _CompactActionButton(
                   label: l(context, '预览', 'Preview'),
-                  onPressed: () => _openWebPreviewSheet(
+                  onPressed: () => _openWebPreview(
                     context,
                     title: title,
                     subtitle: url,
@@ -1864,7 +2564,7 @@ class _BrowserAttachmentTile extends StatelessWidget {
             children: [
               _CompactActionButton(
                 label: l(context, '打开网页', 'Open page'),
-                onPressed: () => _openWebPreviewSheet(
+                onPressed: () => _openWebPreview(
                   context,
                   title: title,
                   subtitle: path,
@@ -1907,18 +2607,15 @@ Uri _workspacePreviewUrl({
   );
 }
 
-Future<void> _openWebPreviewSheet(
+Future<void> _openWebPreview(
   BuildContext context, {
   required String title,
   required String subtitle,
   required String url,
 }) {
-  return showModalBottomSheet<void>(
-    context: context,
-    isScrollControlled: true,
-    builder: (_) => FractionallySizedBox(
-      heightFactor: 0.94,
-      child: _WebPreviewSheet(
+  return Navigator.of(context).push<void>(
+    MaterialPageRoute<void>(
+      builder: (ctx) => _WebPreviewSheet(
         title: title,
         subtitle: subtitle,
         url: url,
@@ -1949,64 +2646,45 @@ class _WebPreviewSheetState extends State<_WebPreviewSheet> {
 
   @override
   Widget build(BuildContext context) {
-    return SafeArea(
-      child: Padding(
-        padding: const EdgeInsets.all(12),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Container(
-              width: double.infinity,
-              padding: const EdgeInsets.fromLTRB(14, 12, 8, 12),
-              decoration: _panelDecoration(
-                  background: _kPanelBackground, radius: 16, elevated: false),
-              child: Row(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Expanded(
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        Text(
-                          widget.title,
-                          style: const TextStyle(
-                              fontWeight: FontWeight.bold, fontSize: 15),
-                          maxLines: 1,
-                          overflow: TextOverflow.ellipsis,
-                        ),
-                        const SizedBox(height: 4),
-                        Text(
-                          widget.subtitle,
-                          style: Theme.of(context)
-                              .textTheme
-                              .bodySmall
-                              ?.copyWith(color: Colors.black54),
-                          maxLines: 2,
-                          overflow: TextOverflow.ellipsis,
-                        ),
-                      ],
-                    ),
-                  ),
-                  const SizedBox(width: 8),
-                  _CompactIconButton(
-                    tooltip: l(context, '复制链接', 'Copy URL'),
-                    onPressed: () => _copyText(
-                      context,
-                      widget.url,
-                      l(context, '链接已复制', 'URL copied'),
-                    ),
-                    icon: Icons.copy_all_outlined,
-                  ),
-                  const SizedBox(width: 6),
-                  _CompactIconButton(
-                    onPressed: () => Navigator.of(context).pop(),
-                    icon: Icons.close,
-                  ),
-                ],
-              ),
+    return Scaffold(
+      appBar: AppBar(
+        leading: const BackButton(),
+        title: Text(
+          widget.title,
+          maxLines: 2,
+          overflow: TextOverflow.ellipsis,
+          style: const TextStyle(fontSize: 15, fontWeight: FontWeight.w600),
+        ),
+        actions: [
+          IconButton(
+            tooltip: l(context, '复制链接', 'Copy URL'),
+            onPressed: () => _copyText(
+              context,
+              widget.url,
+              l(context, '链接已复制', 'URL copied'),
             ),
-            const SizedBox(height: 8),
-            Expanded(
+            icon: const Icon(Icons.copy_all_outlined),
+          ),
+        ],
+      ),
+      body: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          Padding(
+            padding: const EdgeInsets.fromLTRB(16, 8, 16, 8),
+            child: Text(
+              widget.subtitle,
+              style: Theme.of(context)
+                  .textTheme
+                  .bodySmall
+                  ?.copyWith(color: Colors.black54),
+              maxLines: 3,
+              overflow: TextOverflow.ellipsis,
+            ),
+          ),
+          Expanded(
+            child: Padding(
+              padding: const EdgeInsets.fromLTRB(12, 0, 12, 12),
               child: ClipRRect(
                 borderRadius: BorderRadius.circular(16),
                 child: Container(
@@ -2016,8 +2694,8 @@ class _WebPreviewSheetState extends State<_WebPreviewSheet> {
                 ),
               ),
             ),
-          ],
-        ),
+          ),
+        ],
       ),
     );
   }
@@ -2289,6 +2967,7 @@ class _PdfPreviewSheetState extends State<_PdfPreviewSheet> {
   }
 }
 
+/// 全屏路由打开预览，避免 bottom sheet 抢走手势（游戏/HTML 滚动等）。
 Future<void> _openFilePreview(
   BuildContext context, {
   required AppController controller,
@@ -2298,12 +2977,9 @@ Future<void> _openFilePreview(
   ValueChanged<String>? onInsertPromptReference,
   PromptReferenceAction? onSendPromptReference,
 }) {
-  return showModalBottomSheet<void>(
-    context: context,
-    isScrollControlled: true,
-    builder: (_) => FractionallySizedBox(
-      heightFactor: 0.92,
-      child: _FilePreviewSheet(
+  return Navigator.of(context).push<void>(
+    MaterialPageRoute<void>(
+      builder: (ctx) => _FilePreviewSheet(
         controller: controller,
         workspace: workspace,
         path: path,
@@ -2342,6 +3018,7 @@ class _FilePreviewSheetState extends State<_FilePreviewSheet> {
   static const double _previewLineHeight = 1.35;
   late final Future<_LoadedFilePreview> _future = _load();
   int? _currentStart;
+  bool _sourceMode = false;
 
   Future<_LoadedFilePreview> _load() async {
     final content = await widget.controller.loadWorkspaceText(
@@ -2361,51 +3038,24 @@ class _FilePreviewSheetState extends State<_FilePreviewSheet> {
 
   @override
   Widget build(BuildContext context) {
-    return SafeArea(
-      child: Padding(
-        padding: const EdgeInsets.all(12),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Container(
-              width: double.infinity,
-              padding: const EdgeInsets.fromLTRB(14, 12, 8, 12),
-              decoration: _panelDecoration(
-                  background: _kPanelBackground, radius: 16, elevated: false),
-              child: Row(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Expanded(
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        Text(
-                          widget.path,
-                          style: const TextStyle(fontWeight: FontWeight.bold),
-                          maxLines: 1,
-                          overflow: TextOverflow.ellipsis,
-                        ),
-                        const SizedBox(height: 4),
-                        Text(
-                          l(context, '文件预览', 'File preview'),
-                          style: Theme.of(context)
-                              .textTheme
-                              .bodySmall
-                              ?.copyWith(color: Colors.black54),
-                        ),
-                      ],
-                    ),
-                  ),
-                  _CompactIconButton(
-                    onPressed: () => Navigator.of(context).pop(),
-                    icon: Icons.close,
-                  ),
-                ],
-              ),
-            ),
-            const SizedBox(height: 8),
-            Expanded(
-              child: FutureBuilder<_LoadedFilePreview>(
+    return Scaffold(
+      appBar: AppBar(
+        title: Text(
+          widget.path,
+          maxLines: 2,
+          overflow: TextOverflow.ellipsis,
+          style: const TextStyle(fontSize: 15, fontWeight: FontWeight.w600),
+        ),
+        leading: const BackButton(),
+      ),
+      body: SafeArea(
+        child: Padding(
+          padding: const EdgeInsets.fromLTRB(12, 0, 12, 12),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Expanded(
+                child: FutureBuilder<_LoadedFilePreview>(
                 future: _future,
                 builder: (context, snapshot) {
                   if (snapshot.connectionState != ConnectionState.done) {
@@ -2417,6 +3067,9 @@ class _FilePreviewSheetState extends State<_FilePreviewSheet> {
                             'Failed to load file preview')));
                   }
                   final loaded = snapshot.data!;
+                  final fullText = loaded.lines.join('\n');
+                  final isMdPath = _pathLooksMarkdownFile(widget.path);
+                  final isHtmlPath = _pathLooksHtmlFile(widget.path);
                   final currentStart = _currentStart ?? loaded.initialStartLine;
                   final currentEnd = _pageEnd(currentStart, loaded.totalLines);
                   final visibleLines =
@@ -2431,7 +3084,7 @@ class _FilePreviewSheetState extends State<_FilePreviewSheet> {
                               loaded.focusLine! <= currentEnd)
                           ? loaded.focusLine! - currentStart
                           : null;
-                  return Column(
+                  final sourceColumn = Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
                       Row(
@@ -2663,13 +3316,206 @@ class _FilePreviewSheetState extends State<_FilePreviewSheet> {
                       ),
                     ],
                   );
+                  return Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      if (isMdPath || isHtmlPath)
+                        Padding(
+                          padding: const EdgeInsets.only(bottom: 6),
+                          child: Row(
+                            children: [
+                              Text(
+                                l(context, '查看方式', 'View as'),
+                                style: Theme.of(context)
+                                    .textTheme
+                                    .bodySmall
+                                    ?.copyWith(color: Colors.black54),
+                              ),
+                              TextButton(
+                                onPressed: () =>
+                                    setState(() => _sourceMode = false),
+                                style: TextButton.styleFrom(
+                                  foregroundColor: !_sourceMode
+                                      ? kOcAccent
+                                      : kOcMuted,
+                                  minimumSize: Size.zero,
+                                  padding: const EdgeInsets.symmetric(
+                                      horizontal: 8, vertical: 4),
+                                  tapTargetSize:
+                                      MaterialTapTargetSize.shrinkWrap,
+                                ),
+                                child: Text(
+                                    l(context, '排版', 'Formatted')),
+                              ),
+                              TextButton(
+                                onPressed: () =>
+                                    setState(() => _sourceMode = true),
+                                style: TextButton.styleFrom(
+                                  foregroundColor: _sourceMode
+                                      ? kOcAccent
+                                      : kOcMuted,
+                                  minimumSize: Size.zero,
+                                  padding: const EdgeInsets.symmetric(
+                                      horizontal: 8, vertical: 4),
+                                  tapTargetSize:
+                                      MaterialTapTargetSize.shrinkWrap,
+                                ),
+                                child: Text(l(context, '源码', 'Source')),
+                              ),
+                            ],
+                          ),
+                        ),
+                      Expanded(
+                        child: (isMdPath || isHtmlPath) && !_sourceMode
+                            ? ClipRRect(
+                                borderRadius: BorderRadius.circular(14),
+                                child: Container(
+                                  width: double.infinity,
+                                  decoration: _panelDecoration(
+                                    background: Colors.white,
+                                    radius: 14,
+                                    elevated: false,
+                                  ),
+                                  child: isMdPath
+                                      ? SingleChildScrollView(
+                                          padding:
+                                              const EdgeInsets.all(14),
+                                          child: _FilePreviewMarkdown(
+                                            text: fullText,
+                                            workspace: widget.workspace,
+                                            controller: widget.controller,
+                                            onInsertPromptReference: widget
+                                                .onInsertPromptReference,
+                                            onSendPromptReference: widget
+                                                .onSendPromptReference,
+                                          ),
+                                        )
+                                      : _WorkspaceHtmlPreview(
+                                          html: fullText),
+                                ),
+                              )
+                            : sourceColumn,
+                      ),
+                    ],
+                  );
                 },
               ),
             ),
           ],
         ),
       ),
+    ),
     );
+  }
+}
+
+class _FilePreviewMarkdown extends StatelessWidget {
+  const _FilePreviewMarkdown({
+    required this.text,
+    required this.workspace,
+    required this.controller,
+    this.onInsertPromptReference,
+    this.onSendPromptReference,
+  });
+
+  final String text;
+  final WorkspaceInfo workspace;
+  final AppController controller;
+  final ValueChanged<String>? onInsertPromptReference;
+  final PromptReferenceAction? onSendPromptReference;
+
+  @override
+  Widget build(BuildContext context) {
+    return MarkdownBody(
+      data: text,
+      selectable: true,
+      softLineBreak: true,
+      shrinkWrap: true,
+      onTapLink: (linkText, href, title) {
+        if (href != null && href.startsWith('fileref:')) {
+          final enc = href.substring('fileref:'.length);
+          final path = Uri.decodeComponent(enc);
+          if (path.isNotEmpty) {
+            _openFilePreview(
+              context,
+              controller: controller,
+              workspace: workspace,
+              path: path,
+              onInsertPromptReference: onInsertPromptReference,
+              onSendPromptReference: onSendPromptReference,
+            );
+          }
+        }
+      },
+      builders: {
+        'pre': _MarkdownCodeBlockBuilder(),
+      },
+      styleSheet: MarkdownStyleSheet.fromTheme(Theme.of(context)).copyWith(
+        blockSpacing: 10,
+        p: const TextStyle(fontSize: 15, height: 1.5, color: Colors.black87),
+        a: TextStyle(
+          fontSize: 15,
+          height: 1.5,
+          color: Colors.blue.shade700,
+          decoration: TextDecoration.none,
+          fontWeight: FontWeight.w500,
+        ),
+        strong: const TextStyle(
+          fontWeight: FontWeight.w700,
+          color: Colors.black87,
+        ),
+        em: const TextStyle(
+          fontStyle: FontStyle.italic,
+          color: Colors.black87,
+        ),
+        code: TextStyle(
+          fontFamily: 'monospace',
+          fontSize: 13,
+          height: 1.45,
+          color: Colors.red.shade900,
+          backgroundColor: const Color(0xFFF8FAFC),
+        ),
+        codeblockDecoration: BoxDecoration(
+          color: const Color(0xFFF8FAFC),
+          borderRadius: BorderRadius.circular(10),
+          border: const Border.fromBorderSide(BorderSide(color: _kBorderColor)),
+        ),
+        codeblockPadding: const EdgeInsets.all(12),
+        blockquoteDecoration: BoxDecoration(
+          color: const Color(0xFFF8FAFC),
+          borderRadius: BorderRadius.circular(10),
+          border: Border(
+            left: BorderSide(color: Colors.blueGrey.shade200, width: 3),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _WorkspaceHtmlPreview extends StatefulWidget {
+  const _WorkspaceHtmlPreview({required this.html});
+
+  final String html;
+
+  @override
+  State<_WorkspaceHtmlPreview> createState() => _WorkspaceHtmlPreviewState();
+}
+
+class _WorkspaceHtmlPreviewState extends State<_WorkspaceHtmlPreview> {
+  late final WebViewController _controller;
+
+  @override
+  void initState() {
+    super.initState();
+    _controller = WebViewController()
+      ..setJavaScriptMode(JavaScriptMode.unrestricted)
+      ..loadHtmlString(widget.html, baseUrl: 'about:blank');
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return WebViewWidget(controller: _controller);
   }
 }
 

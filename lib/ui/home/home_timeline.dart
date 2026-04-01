@@ -82,7 +82,16 @@ extension _HomePageTimeline on _HomePageState {
       }
       final messageEnd = cursor + renderedMessages.length;
       if (index < messageEnd) {
-        return _buildMessage(renderedMessages[index - cursor]);
+        final msgIndex = index - cursor;
+        final bundle = renderedMessages[msgIndex];
+        final isLast = msgIndex == renderedMessages.length - 1;
+        return _buildMessage(
+          state,
+          bundle,
+          isStreamingAssistantMessage: state.isBusy &&
+              isLast &&
+              bundle.message.role == SessionRole.assistant,
+        );
       }
       cursor = messageEnd;
     }
@@ -100,7 +109,37 @@ extension _HomePageTimeline on _HomePageState {
     return const SizedBox.shrink();
   }
 
-  Widget _buildMessage(SessionMessageBundle bundle) {
+  Widget _buildMessage(
+    AppState state,
+    SessionMessageBundle bundle, {
+    required bool isStreamingAssistantMessage,
+  }) {
+    bool isFilerefPart(MessagePart p) {
+      if (p.type != PartType.tool) return false;
+      return (p.data['tool'] as String?) == 'fileref';
+    }
+
+    final primaryParts =
+        bundle.parts.where((p) => !isFilerefPart(p)).toList();
+    final footerParts = bundle.parts.where(isFilerefPart).toList();
+
+    final globalIdx =
+        state.messages.indexWhere((b) => b.message.id == bundle.message.id);
+    final turnDurationMs = bundle.message.role == SessionRole.assistant &&
+            globalIdx >= 0
+        ? _turnDurationMsForAssistantBundle(state, globalIdx)
+        : null;
+
+    MessagePart? lastPlainTextPart;
+    for (var i = primaryParts.length - 1; i >= 0; i--) {
+      final p = primaryParts[i];
+      if (p.type == PartType.text &&
+          !((p.data['structured'] as bool?) ?? false)) {
+        lastPlainTextPart = p;
+        break;
+      }
+    }
+
     final isUser = bundle.message.role == SessionRole.user;
     final label = isUser ? l(context, '你', 'You') : bundle.message.agent;
     final bubbleColor = isUser ? _kUserBubble : _kAgentBubble;
@@ -148,16 +187,49 @@ extension _HomePageTimeline on _HomePageState {
                     style: const TextStyle(fontSize: 15, height: 1.45),
                   ),
                 ],
-                for (final part in bundle.parts) ...[
+                for (final part in primaryParts) ...[
                   const SizedBox(height: 10),
                   _PartTile(
                     part: part,
+                    message: bundle.message,
                     controller: widget.controller,
                     workspace: widget.controller.state.workspace,
                     serverUri: widget.controller.state.serverUri,
+                    streamAssistantContent: isStreamingAssistantMessage,
+                    turnDurationMs: turnDurationMs,
+                    showAssistantTextMeta: !isUser &&
+                        lastPlainTextPart != null &&
+                        identical(part, lastPlainTextPart),
                     onInsertPromptReference: _appendPromptReference,
                     onSendPromptReference: _sendPromptReference,
                   ),
+                ],
+                if (footerParts.isNotEmpty) ...[
+                  const SizedBox(height: 10),
+                  const Divider(height: 1, thickness: 1, color: _kSoftBorderColor),
+                  const SizedBox(height: 8),
+                  Text(
+                    l(context, '文件引用', 'File references'),
+                    style: Theme.of(context).textTheme.labelSmall?.copyWith(
+                          color: Colors.black45,
+                          fontWeight: FontWeight.w600,
+                        ),
+                  ),
+                  for (final part in footerParts) ...[
+                    const SizedBox(height: 10),
+                    _PartTile(
+                      part: part,
+                      message: bundle.message,
+                      controller: widget.controller,
+                      workspace: widget.controller.state.workspace,
+                      serverUri: widget.controller.state.serverUri,
+                      streamAssistantContent: isStreamingAssistantMessage,
+                      turnDurationMs: turnDurationMs,
+                      showAssistantTextMeta: false,
+                      onInsertPromptReference: _appendPromptReference,
+                      onSendPromptReference: _sendPromptReference,
+                    ),
+                  ],
                 ],
               ],
             ),

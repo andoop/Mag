@@ -129,6 +129,10 @@ class PromptAssembler {
       'Prefer `edit` or `apply_patch` for modifying existing files.',
       'For large writes or code with many quotes/braces, do not inline the full file body in tool JSON.',
       'Instead, put the body in assistant text using `<write_content id="name">...</write_content>` and call `write` with `path` plus `contentRef: "name"`.',
+      '',
+      '# File references (mandatory)',
+      'Whenever you successfully create or modify workspace files with `write`, `edit`, `apply_patch`, `delete`, `rename`, `move`, or `copy`, you MUST call the `fileref` tool in the same turn with every affected path (`kind: "created"` or `"modified"`).',
+      'You may also write clickable links in prose as `[[file:path/relative/to/workspace]]` (one path per token).',
     ].join('\n');
   }
 
