@@ -1,5 +1,7 @@
 # Mobile Agent 内置 AI 工具说明
 
+> 文档索引见 [docs/README.md](README.md)。架构背景见 [architecture.md](architecture.md)。
+
 本文档描述 `lib/core/tool_runtime.dart` 中 `ToolRegistry.builtins()` 注册的工具，以及 `lib/core/agents.dart` 中各 Agent 的可见工具与权限差异。
 
 ---

@@ -1,40 +1,42 @@
 # Mag
 
-**Mag** (package: `mobile_agent`) is a Flutter-based **mobile AI coding agent**. It brings a full agent loop—sessions, tools, workspace integration, and streaming LLM calls—to Android devices, with a local HTTP bridge for tooling and events.
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
+[![Flutter](https://img.shields.io/badge/Flutter-Dart-02569B?logo=flutter)](https://flutter.dev)
+
+**Mag** (Flutter package: `mobile_agent`) is an **open-source mobile AI coding agent**. It runs a full agent loop on your device: multi-turn **sessions**, **tool execution** with permissions, **workspace**-aware file operations, and **streaming** LLM calls. A small **loopback HTTP server** exposes events and APIs for debugging and integration.
+
+[Features](#features) · [Documentation](#documentation) · [Quick start](#quick-start) · [Security](#security--privacy) · [Contributing](#contributing) · [中文](#中文)
 
 ---
 
-## English
+## Features
 
-### Overview
+| Area | What you get |
+|------|----------------|
+| **Sessions** | Create/switch sessions, OpenCode-style default titles, optional **auto-title** after the first user message, **rename** and **delete** (with cascade cleanup). |
+| **Project flow** | **Project home** with recent workspaces; enter a folder as workspace; **blank landing** until first message or explicit new session. |
+| **Tools** | Read/write/edit files, glob/grep, patches, browser/fetch hooks, todos, questions, and more — see [docs/ai-tools.md](docs/ai-tools.md). |
+| **Workspace UI** | **File browser** from the chat app bar: folders, PDF, images, **Markdown/HTML** (rendered vs **source**), syntax-highlighted text. |
+| **Local server** | HTTP + SSE-style events (`session.updated`, `message.*`, permissions, …). |
+| **Persistence** | SQLite for sessions, messages, parts, todos, etc. |
+| **i18n** | UI strings wired for Chinese / English via `l(context, …)`. |
 
-Mag is designed for developers who want an **on-device experience** similar to modern coding agents: multi-turn sessions, tool execution with permissions, workspace awareness, and support for **OpenAI-compatible** and **aggregated** model providers (including optional public-token flows where supported).
+## Documentation
 
-### Features
+| Doc | Description |
+|-----|-------------|
+| [docs/README.md](docs/README.md) | Documentation index |
+| [docs/user-guide.md](docs/user-guide.md) | How to use the app (projects, sessions, files) |
+| [docs/architecture.md](docs/architecture.md) | Layers, engine, server, bridge |
+| [docs/development.md](docs/development.md) | Setup, analyze, tests, native bridge |
+| [docs/ai-tools.md](docs/ai-tools.md) | Built-in tools and agent permissions |
+| [CONTRIBUTING.md](CONTRIBUTING.md) | Pull requests and style |
+| [CODE_OF_CONDUCT.md](CODE_OF_CONDUCT.md) | Community expectations |
+| [SECURITY.md](SECURITY.md) | How to report vulnerabilities |
 
-- **Session engine** — Streaming completions, cancellation, retries, and continuation summaries.
-- **Tool runtime** — Structured tool calls, patches, and observable execution aligned with agent-style semantics.
-- **Local server** — Loopback HTTP server with SSE-style event streams for integration and debugging.
-- **Workspace bridge** — Connects the agent to project/workspace context on device.
-- **Persistence** — SQLite-backed storage for sessions and related state.
-- **Internationalization** — UI strings prepared for localization (`i18n`).
+## Quick start
 
-### Architecture (high level)
-
-| Layer | Role |
-|--------|------|
-| `lib/ui/` | Flutter UI (home, timeline, model/provider selection). |
-| `lib/core/` | Session engine, prompts, tools, local server, workspace bridge, database models. |
-| `lib/store/` | App state and orchestration. |
-| `lib/sdk/` | Client utilities for the local server protocol. |
-
-### Requirements
-
-- **Flutter** SDK compatible with `sdk: '>=2.19.6 <3.0.0'` (see `pubspec.yaml`).
-- **Android** — Primary target; network permission enabled for LLM APIs.
-- Your own **API keys** where required by the provider you choose.
-
-### Getting started
+**Requirements:** Flutter/Dart per `pubspec.yaml`, **Android** as the primary target, and your own **API keys** where the provider requires them.
 
 ```bash
 git clone https://github.com/andoop/Mag.git
@@ -43,18 +45,33 @@ flutter pub get
 flutter run
 ```
 
-Configure model provider and API keys inside the app as documented in the UI.
+Configure the model provider and keys in **Settings** inside the app.
 
-### Security & privacy
+**Developers:** run `dart analyze lib/` before submitting changes (see [CONTRIBUTING.md](CONTRIBUTING.md)).
 
-- **Do not commit** keystores, `key.properties`, or API keys. This repository’s `.gitignore` excludes common Android signing artifacts.
-- You are responsible for how API keys and workspace data are stored and transmitted.
+## Repository layout
 
-### Contributing
+| Path | Role |
+|------|------|
+| `lib/app/` | Application entry (`MaterialApp`) |
+| `lib/ui/` | Screens: `AppRoot`, project home, `HomePage` (+ parts: timeline, composer, file browser, …) |
+| `lib/store/` | `AppController`, state, recent workspaces |
+| `lib/core/` | Session engine, SQLite, local server, tools, models, workspace bridge |
+| `lib/sdk/` | HTTP client for the loopback server |
+| `android/` | Android app + **MethodChannel** workspace implementation |
+| `docs/` | Extended documentation |
 
-Issues and pull requests are welcome. Please keep changes focused, run `dart analyze`, and match existing code style.
+## Security & privacy
 
-### License
+- **Do not commit** keystores, `key.properties`, API keys, or secrets. `.gitignore` covers common Android signing artifacts.
+- You control how keys and workspace data are stored and transmitted to third-party LLM APIs.
+- See [SECURITY.md](SECURITY.md) for vulnerability reporting.
+
+## Contributing
+
+Issues and pull requests are welcome. Read [CONTRIBUTING.md](CONTRIBUTING.md) first: focused changes, `dart analyze`, and consistent style.
+
+## License
 
 This project is licensed under the **MIT License** — see [LICENSE](LICENSE).
 
@@ -62,33 +79,20 @@ This project is licensed under the **MIT License** — see [LICENSE](LICENSE).
 
 ## 中文
 
-### 项目简介
+**Mag**（包名 `mobile_agent`）是一款**开源**的 Flutter **移动端 AI 编程助手**：多轮会话、带权限的工具执行、工作区文件联动、流式模型请求，以及本机 **HTTP + 事件流** 便于调试与扩展。
 
-**Mag**（工程包名 `mobile_agent`）是一款基于 **Flutter** 的**移动端 AI 编程代理**应用。它在 Android 上提供完整的智能体闭环：多轮会话、工具调用、工作区联动，以及面向 LLM 的流式请求；并通过本机 **HTTP 服务** 提供事件与集成能力。
+### 文档索引
 
-### 功能亮点
-
-- **会话引擎** — 流式输出、取消与重试、续聊摘要等能力。
-- **工具运行时** — 结构化工具调用与可观测执行流程。
-- **本地服务** — 回环地址上的 HTTP 服务，支持类 SSE 的全局/会话事件。
-- **工作区桥接** — 将代理与设备上的工程/工作区上下文关联。
-- **持久化** — 使用 SQLite 存储会话及相关数据。
-- **国际化** — UI 文案通过 `i18n` 组织，便于扩展语言。
-
-### 架构概览
-
-| 层级 | 说明 |
+| 文档 | 说明 |
 |------|------|
-| `lib/ui/` | Flutter 界面（主页、时间线、模型与 Provider 选择等）。 |
-| `lib/core/` | 会话引擎、提示词、工具、本地服务、工作区桥接与数据模型。 |
-| `lib/store/` | 应用状态与业务流程编排。 |
-| `lib/sdk/` | 本地服务协议的客户端封装。 |
-
-### 环境要求
-
-- 与 `pubspec.yaml` 中声明一致的 **Flutter / Dart** 版本。
-- 以 **Android** 为主要运行平台；应用已声明网络权限以访问模型 API。
-- 根据所选服务商配置 **API Key**（若该服务商需要）。
+| [docs/README.md](docs/README.md) | 文档总目录 |
+| [docs/user-guide.md](docs/user-guide.md) | 使用说明（项目、会话、文件浏览器等） |
+| [docs/architecture.md](docs/architecture.md) | 架构与模块说明 |
+| [docs/development.md](docs/development.md) | 开发环境与分析/测试 |
+| [docs/ai-tools.md](docs/ai-tools.md) | 内置 AI 工具与权限 |
+| [CONTRIBUTING.md](CONTRIBUTING.md) | 贡献指南 |
+| [CODE_OF_CONDUCT.md](CODE_OF_CONDUCT.md) | 社区行为准则 |
+| [SECURITY.md](SECURITY.md) | 安全问题反馈方式 |
 
 ### 快速开始
 
@@ -99,23 +103,18 @@ flutter pub get
 flutter run
 ```
 
-在应用内完成模型 Provider 与密钥等配置。
+在应用内 **设置** 中配置模型服务商与 API Key。参与开发前请阅读 [CONTRIBUTING.md](CONTRIBUTING.md)，并运行 **`dart analyze lib/`**。
 
 ### 安全与隐私
 
-- **切勿**将签名文件、`key.properties`、API 密钥等提交到仓库；本仓库已用 `.gitignore` 忽略常见 Android 签名相关文件。
-- 请自行评估 API 密钥与工作区数据的存储与传输方式。
-
-### 参与贡献
-
-欢迎提交 Issue 与 Pull Request。建议改动保持单一职责，提交前执行 `dart analyze`，并遵循现有代码风格。
+勿将签名文件、密钥提交到仓库；第三方 API 与工作区数据的传输与保存由使用者自行负责。安全漏洞请按 [SECURITY.md](SECURITY.md) **私下**报告，勿发公开 Issue。
 
 ### 许可证
 
-本项目采用 **MIT 许可证**，详见 [LICENSE](LICENSE)。
+**MIT License**，见 [LICENSE](LICENSE)。
 
 ---
 
 <p align="center">
-  <sub>Mag — build your mobile coding agent workflow.</sub>
+  <sub>Mag — mobile AI coding agent, open source.</sub>
 </p>
