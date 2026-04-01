@@ -409,6 +409,12 @@ class _PartTile extends StatelessWidget {
         final toolName = part.data['tool'] as String? ?? '';
         final toolTitle = toolState['title'] as String?;
         final toolStatus = toolState['status'] as String? ?? 'pending';
+        if (toolName == 'todowrite') {
+          return _TodoWriteToolPart(
+            toolStatus: toolStatus,
+            todos: _resolveTodoWriteTodos(toolState),
+          );
+        }
         final displayOutput = (toolState['displayOutput'] as String?) ??
             (toolState['output'] as String?);
         final truncatedOutput = displayOutput != null &&
@@ -430,6 +436,161 @@ class _PartTile extends StatelessWidget {
       default:
         return Text('${part.type.name}: ${part.data}');
     }
+  }
+}
+
+/// OpenCode 与 `message-part.tsx` 一致：`metadata.todos` 优先，否则回退 `state.input.todos`。
+List<Map<String, dynamic>> _resolveTodoWriteTodos(
+    Map<String, dynamic> toolState) {
+  final metadata = toolState['metadata'] as Map?;
+  final metaTodos = metadata?['todos'];
+  if (metaTodos is List) {
+    return metaTodos
+        .whereType<Map>()
+        .map((e) => Map<String, dynamic>.from(e))
+        .toList();
+  }
+  final input = toolState['input'] as Map?;
+  final inputTodos = input?['todos'];
+  if (inputTodos is List) {
+    return inputTodos
+        .whereType<Map>()
+        .map((e) => Map<String, dynamic>.from(e))
+        .toList();
+  }
+  return [];
+}
+
+/// OpenCode 风格：用结构化 todos 展示只读勾选清单，而非原始 JSON output。
+class _TodoWriteToolPart extends StatelessWidget {
+  const _TodoWriteToolPart({
+    required this.toolStatus,
+    required this.todos,
+  });
+
+  final String toolStatus;
+  final List<Map<String, dynamic>> todos;
+
+  @override
+  Widget build(BuildContext context) {
+    final isRunning = toolStatus == 'running' || toolStatus == 'pending';
+    final isError = toolStatus == 'error';
+    final completed = todos
+        .where((t) => (t['status'] as String?) == 'completed')
+        .length;
+    final total = todos.length;
+    final ratioSubtitle = total > 0 ? '$completed/$total' : '';
+
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.fromLTRB(9, 8, 9, 8),
+      decoration: BoxDecoration(
+        color: isError
+            ? const Color(0xFFFFFBFB)
+            : isRunning
+                ? const Color(0xFFFFFCF2)
+                : const Color(0xFFFAFAF9),
+        borderRadius: BorderRadius.circular(10),
+        border: Border.all(color: _kSoftBorderColor),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              if (isRunning)
+                const Padding(
+                  padding: EdgeInsets.only(right: 8),
+                  child: SizedBox(
+                    width: 12,
+                    height: 12,
+                    child: CircularProgressIndicator(strokeWidth: 1.5),
+                  ),
+                ),
+              if (isError)
+                Padding(
+                  padding: const EdgeInsets.only(right: 8),
+                  child: Icon(Icons.error_outline,
+                      size: 14, color: Colors.red.shade700),
+                ),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      l(context, '任务', 'Todos'),
+                      style: const TextStyle(
+                        fontWeight: FontWeight.w600,
+                        fontSize: 11.5,
+                        color: Colors.black87,
+                      ),
+                      overflow: TextOverflow.ellipsis,
+                    ),
+                    if (ratioSubtitle.isNotEmpty ||
+                        (isRunning && total == 0)) ...[
+                      const SizedBox(height: 2),
+                      Text(
+                        isRunning && total == 0
+                            ? l(context, '正在更新任务…', 'Updating todos…')
+                            : ratioSubtitle,
+                        style: Theme.of(context)
+                            .textTheme
+                            .labelSmall
+                            ?.copyWith(color: Colors.black45, height: 1.2),
+                      ),
+                    ],
+                  ],
+                ),
+              ),
+            ],
+          ),
+          if (todos.isNotEmpty) ...[
+            const SizedBox(height: 8),
+            ...todos.map((t) => _todoWriteRow(context, t)),
+          ],
+        ],
+      ),
+    );
+  }
+
+  Widget _todoWriteRow(BuildContext context, Map<String, dynamic> t) {
+    final status = t['status'] as String? ?? 'pending';
+    final done = status == 'completed';
+    final content = t['content'] as String? ?? '';
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 4),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          SizedBox(
+            width: 28,
+            height: 28,
+            child: Checkbox(
+              value: done,
+              onChanged: null,
+              materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
+              visualDensity: VisualDensity.compact,
+            ),
+          ),
+          Expanded(
+            child: Padding(
+              padding: const EdgeInsets.only(top: 2),
+              child: Text(
+                content,
+                style: TextStyle(
+                  fontSize: 13,
+                  height: 1.35,
+                  color: done ? Colors.black38 : Colors.black87,
+                  decoration:
+                      done ? TextDecoration.lineThrough : TextDecoration.none,
+                ),
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
   }
 }
 

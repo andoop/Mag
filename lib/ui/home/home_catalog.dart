@@ -669,7 +669,7 @@ bool _isModelVisible(ModelConfig config, _ModelChoice item) {
   return visibility == ModelVisibility.show;
 }
 
-/// OpenCode 风格：列表中与 `Tag` 一致的「免费」判定（含 Mag Zen 与 `:free` 路由等）。
+/// 列表中与标签一致的「免费」判定（含 Mag Zen 与 `:free` 路由等）。
 bool _modelChoiceIsFree(_ModelChoice item) {
   if (item.free || item.unpaid) return true;
   if (item.providerId == 'mag') return isMagZenFreeModelId(item.id);

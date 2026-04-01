@@ -1,5 +1,7 @@
 import 'dart:convert';
 
+import 'json_coerce.dart';
+
 typedef JsonMap = Map<String, dynamic>;
 
 String newId([String prefix = 'id']) {
@@ -446,8 +448,8 @@ class QuestionOption {
       };
 
   factory QuestionOption.fromJson(JsonMap json) => QuestionOption(
-        label: json['label'] as String,
-        description: json['description'] as String,
+        label: jsonStringCoerce(json['label'], ''),
+        description: jsonStringCoerce(json['description'], ''),
       );
 }
 
@@ -475,11 +477,13 @@ class QuestionInfo {
       };
 
   factory QuestionInfo.fromJson(JsonMap json) => QuestionInfo(
-        question: json['question'] as String,
-        header: json['header'] as String,
-        options: (json['options'] as List)
-            .map((item) =>
-                QuestionOption.fromJson(Map<String, dynamic>.from(item as Map)))
+        question: jsonStringCoerce(json['question'], ''),
+        header: jsonStringCoerce(json['header'], ''),
+        options: ((json['options'] as List?) ?? const [])
+            .whereType<Map>()
+            .map((item) => QuestionOption.fromJson(
+                  Map<String, dynamic>.from(item),
+                ))
             .toList(),
         multiple: (json['multiple'] as bool?) ?? false,
         custom: (json['custom'] as bool?) ?? true,
@@ -509,16 +513,22 @@ class QuestionRequest {
         'callId': callId,
       };
 
-  factory QuestionRequest.fromJson(JsonMap json) => QuestionRequest(
-        id: json['id'] as String,
-        sessionId: json['sessionId'] as String,
-        questions: (json['questions'] as List)
-            .map((item) =>
-                QuestionInfo.fromJson(Map<String, dynamic>.from(item as Map)))
+  factory QuestionRequest.fromJson(JsonMap json) {
+    final idRaw = jsonStringCoerce(json['id'], '');
+    final sessionRaw = jsonStringCoerce(json['sessionId'], '');
+    return QuestionRequest(
+        id: idRaw.isEmpty ? newId('question') : idRaw,
+        sessionId: sessionRaw,
+        questions: ((json['questions'] as List?) ?? const [])
+            .whereType<Map>()
+            .map((item) => QuestionInfo.fromJson(
+                  Map<String, dynamic>.from(item),
+                ))
             .toList(),
         messageId: json['messageId'] as String?,
         callId: json['callId'] as String?,
       );
+  }
 }
 
 class TodoItem {
@@ -528,6 +538,7 @@ class TodoItem {
     required this.content,
     required this.status,
     this.priority = 'medium',
+    this.position = 0,
   });
 
   final String id;
@@ -536,21 +547,29 @@ class TodoItem {
   final String status;
   final String priority;
 
+  /// 会话内顺序，与 OpenCode `TodoTable.position` 一致。
+  final int position;
+
   JsonMap toJson() => {
         'id': id,
         'sessionId': sessionId,
         'content': content,
         'status': status,
         'priority': priority,
+        'position': position,
       };
 
-  factory TodoItem.fromJson(JsonMap json) => TodoItem(
-        id: json['id'] as String,
-        sessionId: json['sessionId'] as String,
-        content: json['content'] as String,
-        status: json['status'] as String,
-        priority: (json['priority'] as String?) ?? 'medium',
+  factory TodoItem.fromJson(JsonMap json) {
+    final idRaw = jsonStringCoerce(json['id'], '');
+    return TodoItem(
+        id: idRaw.isEmpty ? newId('todo') : idRaw,
+        sessionId: jsonStringCoerce(json['sessionId'], ''),
+        content: jsonStringCoerce(json['content'], ''),
+        status: jsonStringCoerce(json['status'], 'pending'),
+        priority: jsonStringCoerce(json['priority'], 'medium'),
+        position: (json['position'] as num?)?.toInt() ?? 0,
       );
+  }
 }
 
 class ToolCall {

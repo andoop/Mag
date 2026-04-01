@@ -23,7 +23,7 @@ const Color _kSoftBorderColor = Color(0x0F000000);
 const Color _kAgentBubble = Colors.white;
 const Color _kUserBubble = Color(0xFFF0FDF4);
 
-/// OpenCode `Tag` 风格：小胶囊、浅底细边框（用于 Free / Latest）。
+/// 小标签样式：浅底细边框（用于 Free / Latest）。
 class OcModelTag extends StatelessWidget {
   const OcModelTag({
     super.key,

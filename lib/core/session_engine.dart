@@ -1892,6 +1892,7 @@ class SessionEngine {
         );
       },
       saveTodos: (items) async {
+        await database.deleteTodosForSession(session.id);
         for (final item in items) {
           await database.saveTodo(item);
         }

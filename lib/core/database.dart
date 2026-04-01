@@ -373,12 +373,20 @@ class AppDatabase {
     );
   }
 
+  /// 与 OpenCode `Todo.update` 一致：写入前先清空本会话全部待办，再插入新列表。
+  Future<void> deleteTodosForSession(String sessionId) async {
+    final db = await database;
+    await db.delete('todos', where: 'session_id = ?', whereArgs: [sessionId]);
+  }
+
   Future<List<TodoItem>> listTodos(String sessionId) async {
     final db = await database;
     final rows = await db.query('todos', where: 'session_id = ?', whereArgs: [sessionId]);
-    return rows
+    final list = rows
         .map((row) => TodoItem.fromJson(jsonDecode(row['data'] as String) as JsonMap))
         .toList();
+    list.sort((a, b) => a.position.compareTo(b.position));
+    return list;
   }
 
   Future<void> putSetting(String key, JsonMap value) async {

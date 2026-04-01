@@ -2,7 +2,11 @@ import 'dart:convert';
 import 'dart:io';
 
 import 'database.dart';
+import 'json_coerce.dart';
 import 'models.dart';
+import 'tools/builtin_tool_descriptions.dart';
+import 'tools/question_tool_spec.dart';
+import 'tools/todo_tool_spec.dart';
 import 'workspace_bridge.dart';
 
 typedef AskPermission = Future<void> Function(PermissionRequest request);
@@ -109,13 +113,26 @@ class ToolRegistry {
       ToolDefinition(
         id: 'read',
         description:
-            'Read a file or list a directory in the workspace. Use `path`; omit it to read the workspace root.',
+            '${kReadToolDescription.trim()}$kMobileReadPathSuffix',
         parameters: {
           'type': 'object',
           'properties': {
-            'path': {'type': 'string'},
-            'offset': {'type': 'integer'},
-            'limit': {'type': 'integer'},
+            'path': {
+              'type': 'string',
+              'description': 'Workspace-relative path to the file or directory',
+            },
+            'filePath': {
+              'type': 'string',
+              'description': 'Alias for path (accepted for compatibility)',
+            },
+            'offset': {
+              'type': 'integer',
+              'description': 'Line number to start from (1-indexed)',
+            },
+            'limit': {
+              'type': 'integer',
+              'description': 'Maximum number of lines to read',
+            },
           },
           'additionalProperties': false,
         },
@@ -125,8 +142,7 @@ class ToolRegistry {
     register(
       ToolDefinition(
         id: 'write',
-        description:
-            'Write a file in the workspace. Always provide `path`. For short content, provide `content`. For large or code-heavy content, put it in assistant text inside `<write_content id="...">...</write_content>` and provide `contentRef`.',
+        description: kWriteToolDescription.trim(),
         parameters: {
           'type': 'object',
           'properties': {
@@ -162,7 +178,7 @@ class ToolRegistry {
     register(
       ToolDefinition(
         id: 'apply_patch',
-        description: 'Apply an Mag style patch to one or more files.',
+        description: kApplyPatchToolDescription.trim(),
         parameters: {
           'type': 'object',
           'properties': {
@@ -311,56 +327,31 @@ class ToolRegistry {
     register(
       ToolDefinition(
         id: 'todowrite',
-        description: 'Persist todos for the current session.',
-        parameters: {
-          'type': 'object',
-          'properties': {
-            'todos': {
-              'type': 'array',
-              'items': {
-                'type': 'object',
-                'properties': {
-                  'id': {'type': 'string'},
-                  'content': {'type': 'string'},
-                  'status': {'type': 'string'},
-                  'priority': {'type': 'string'},
-                },
-                'required': ['content', 'status'],
-              },
-            },
-          },
-          'required': ['todos'],
-          'additionalProperties': false,
-        },
+        description: kTodoWriteToolDescription.trim(),
+        parameters: todoWriteToolParametersSchema(),
         execute: _todoTool,
       ),
     );
     register(
       ToolDefinition(
         id: 'question',
-        description: 'Ask the user a structured question.',
-        parameters: {
-          'type': 'object',
-          'properties': {
-            'questions': {
-              'type': 'array',
-              'items': {'type': 'object'},
-            },
-          },
-          'required': ['questions'],
-          'additionalProperties': false,
-        },
+        description: kQuestionToolDescription.trim(),
+        parameters: questionToolParametersSchema(),
         execute: _questionTool,
       ),
     );
     register(
       ToolDefinition(
         id: 'webfetch',
-        description: 'Fetch text content from an HTTP URL.',
+        description:
+            '${kWebfetchToolDescription.trim()}$kMobileWebFetchSuffix',
         parameters: {
           'type': 'object',
           'properties': {
-            'url': {'type': 'string'},
+            'url': {
+              'type': 'string',
+              'description': 'The URL to fetch content from',
+            },
           },
           'required': ['url'],
           'additionalProperties': false,
@@ -462,8 +453,10 @@ class ToolRegistry {
   ToolDefinition? operator [](String id) => _definitions[id];
 }
 
-String _toolFilePathArg(JsonMap args) =>
-    _cleanPath((args['filePath'] ?? args['path']) as String? ?? '');
+String _toolFilePathArg(JsonMap args) {
+  final raw = args['filePath'] ?? args['path'];
+  return _cleanPath(jsonStringCoerce(raw, ''));
+}
 
 String _normalizeWriteContent(Object? value) {
   if (value == null) {
@@ -1362,34 +1355,69 @@ Future<ToolExecutionResult> _copyTool(
 Future<ToolExecutionResult> _todoTool(
     JsonMap args, ToolRuntimeContext ctx) async {
   final raw = (args['todos'] as List?) ?? const [];
-  final items = raw
+  final items = <TodoItem>[];
+  var index = 0;
+  for (final entry in raw.whereType<Map>()) {
+    final m = Map<String, dynamic>.from(entry);
+    final content = jsonStringCoerce(m['content'], '').trim();
+    final status = jsonStringCoerce(m['status'], '').trim();
+    if (content.isEmpty || status.isEmpty) {
+      continue;
+    }
+    final idRaw = jsonStringCoerce(m['id'], '').trim();
+    final priorityRaw = jsonStringCoerce(m['priority'], 'medium').trim();
+    items.add(
+      TodoItem(
+        id: idRaw.isEmpty ? newId('todo') : idRaw,
+        sessionId: ctx.session.id,
+        content: content,
+        status: status,
+        priority: priorityRaw.isEmpty ? 'medium' : priorityRaw,
+        position: index,
+      ),
+    );
+    index++;
+  }
+  await ctx.saveTodos(items);
+  final openCodeShape = items
       .map(
-        (item) => TodoItem(
-          id: (item as Map)['id'] as String? ?? newId('todo'),
-          sessionId: ctx.session.id,
-          content: item['content'] as String,
-          status: item['status'] as String,
-          priority: item['priority'] as String? ?? 'medium',
-        ),
+        (e) => <String, dynamic>{
+          'content': e.content,
+          'status': e.status,
+          'priority': e.priority,
+        },
       )
       .toList();
-  await ctx.saveTodos(items);
+  final remaining = items.where((t) => t.status != 'completed').length;
   return ToolExecutionResult(
-    title: 'TodoWrite',
-    output: jsonEncode(items.map((item) => item.toJson()).toList()),
+    title: '$remaining todos',
+    output: const JsonEncoder.withIndent('  ').convert(openCodeShape),
+    metadata: {
+      'todos': openCodeShape,
+    },
   );
 }
 
 Future<ToolExecutionResult> _questionTool(
     JsonMap args, ToolRuntimeContext ctx) async {
   final rawQuestions = (args['questions'] as List?) ?? const [];
+  final parsed = rawQuestions
+      .whereType<Map>()
+      .map((item) =>
+          QuestionInfo.fromJson(Map<String, dynamic>.from(item)))
+      .toList();
+  if (parsed.isEmpty) {
+    return ToolExecutionResult(
+      title: 'Question',
+      output:
+          'Invalid arguments: questions must be a non-empty array of objects with question, header, and options.',
+      metadata: const {},
+    );
+  }
   final request = QuestionRequest(
     id: newId('question'),
     sessionId: ctx.session.id,
-    questions: rawQuestions
-        .map((item) =>
-            QuestionInfo.fromJson(Map<String, dynamic>.from(item as Map)))
-        .toList(),
+    questions: parsed,
     messageId: ctx.message.id,
     callId: newId('call'),
   );

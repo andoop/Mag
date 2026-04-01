@@ -1,5 +1,6 @@
 import 'debug_trace.dart';
 import 'models.dart';
+import 'tools/question_tool_spec.dart';
 import 'workspace_bridge.dart';
 
 class PromptContext {
@@ -124,6 +125,7 @@ class PromptAssembler {
       'Current step: ${context.currentStep}/${context.maxSteps}.',
       'Do not assume shell, PTY, or desktop-only capabilities exist.',
       'Prefer available tools and stay within the workspace boundary.',
+      kToolCallingRulesPrompt.trim(),
       'Prefer `edit` or `apply_patch` for modifying existing files.',
       'For large writes or code with many quotes/braces, do not inline the full file body in tool JSON.',
       'Instead, put the body in assistant text using `<write_content id="name">...</write_content>` and call `write` with `path` plus `contentRef: "name"`.',

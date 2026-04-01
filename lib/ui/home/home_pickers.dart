@@ -2,7 +2,7 @@ part of '../home_page.dart';
 
 // ignore_for_file: invalid_use_of_protected_member
 
-/// OpenCode 式紧凑底部面板：矮把手 + 不占满屏。
+/// 紧凑底部面板：矮把手 + 不占满屏。
 Widget _compactPickerHandle() {
   return Padding(
     padding: const EdgeInsets.only(top: 4, bottom: 2),
@@ -1542,7 +1542,7 @@ extension _HomePagePickers on _HomePageState {
     );
   }
 
-  /// OpenCode 风格：选择要连接的 provider，而不是直接切当前 provider。
+  /// 选择要连接的 provider，而不是直接切当前 provider。
   Future<void> _openProviderPicker(BuildContext context) async {
     var query = '';
     await showModalBottomSheet<void>(
@@ -1731,7 +1731,7 @@ extension _HomePagePickers on _HomePageState {
     );
   }
 
-  /// OpenCode `/models` 风格：分组模型列表，右上保留 `+` 与管理入口。
+  /// 分组模型列表，右上保留 `+` 与管理入口。
   Future<void> _openModelPicker(BuildContext context) async {
     var query = '';
     await showModalBottomSheet<void>(
