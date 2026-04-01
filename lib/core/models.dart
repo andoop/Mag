@@ -93,6 +93,50 @@ class ProjectInfo {
       );
 }
 
+/// 与 OpenCode `packages/opencode/src/session/index.ts` 的默认标题及 `isDefaultTitle` 对齐。
+class SessionTitlePolicy {
+  SessionTitlePolicy._();
+
+  static const parentPrefix = 'New session - ';
+  static const childPrefix = 'Child session - ';
+
+  /// ECMAScript `toISOString()` 风格：`2026-04-01T12:34:56.789Z`
+  static String _utcIsoMs() {
+    final u = DateTime.now().toUtc();
+    return '${u.year.toString().padLeft(4, '0')}-'
+        '${u.month.toString().padLeft(2, '0')}-'
+        '${u.day.toString().padLeft(2, '0')}T'
+        '${u.hour.toString().padLeft(2, '0')}:'
+        '${u.minute.toString().padLeft(2, '0')}:'
+        '${u.second.toString().padLeft(2, '0')}.'
+        '${u.millisecond.toString().padLeft(3, '0')}Z';
+  }
+
+  static String defaultTitle({bool isChild = false}) {
+    return '${isChild ? childPrefix : parentPrefix}${_utcIsoMs()}';
+  }
+
+  static final _parentRe = RegExp(
+    r'^New session - \d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$',
+  );
+  static final _childRe = RegExp(
+    r'^Child session - \d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$',
+  );
+
+  static bool matchesDefaultPattern(String title) {
+    final t = title.trim();
+    return _parentRe.hasMatch(t) || _childRe.hasMatch(t);
+  }
+
+  /// 子会话（如 subtask）不跑标题模型，与 OpenCode `parentID` 分支一致。
+  static bool shouldAutoGenerateFromModel(String title) {
+    final t = title.trim();
+    if (t == 'New session' || t.isEmpty) return true;
+    if (_childRe.hasMatch(t)) return false;
+    return _parentRe.hasMatch(t);
+  }
+}
+
 class SessionInfo {
   SessionInfo({
     required this.id,

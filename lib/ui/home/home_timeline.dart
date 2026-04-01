@@ -243,60 +243,33 @@ extension _HomePageTimeline on _HomePageState {
 class _SessionAppBarTitle extends StatelessWidget {
   const _SessionAppBarTitle({
     required this.title,
-    required this.subtitle,
     required this.running,
-    this.showFreeTag = false,
   });
 
   final String title;
-  final String subtitle;
   final bool running;
-  final bool showFreeTag;
 
   @override
   Widget build(BuildContext context) {
     return Row(
       children: [
         SizedBox(
-          width: 20,
+          width: 18,
           child: running
               ? const SizedBox(
-                  width: 16,
-                  height: 16,
+                  width: 14,
+                  height: 14,
                   child: CircularProgressIndicator(strokeWidth: 2),
                 )
               : null,
         ),
-        const SizedBox(width: 8),
+        const SizedBox(width: 4),
         Expanded(
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Text(
-                title,
-                overflow: TextOverflow.ellipsis,
-                style:
-                    const TextStyle(fontSize: 16, fontWeight: FontWeight.w600),
-              ),
-              Wrap(
-                spacing: 6,
-                runSpacing: 4,
-                crossAxisAlignment: WrapCrossAlignment.center,
-                children: [
-                  Text(
-                    subtitle,
-                    style: Theme.of(context)
-                        .textTheme
-                        .labelMedium
-                        ?.copyWith(color: Colors.black54),
-                  ),
-                  if (showFreeTag)
-                    OcModelTag(
-                      label: l(context, '免费', 'Free'),
-                    ),
-                ],
-              ),
-            ],
+          child: Text(
+            title,
+            maxLines: 2,
+            overflow: TextOverflow.ellipsis,
+            style: const TextStyle(fontSize: 15, fontWeight: FontWeight.w600),
           ),
         ),
       ],

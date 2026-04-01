@@ -1,0 +1,389 @@
+part of '../home_page.dart';
+
+extension _HomePageLanding on _HomePageState {
+  Widget _buildNewSessionLanding(BuildContext context, AppState state) {
+    final ws = state.workspace!;
+    return ColoredBox(
+      color: _kPageBackground,
+      child: ListView(
+        physics: const AlwaysScrollableScrollPhysics(
+          parent: BouncingScrollPhysics(),
+        ),
+        padding: const EdgeInsets.fromLTRB(28, 32, 28, 24),
+        children: [
+          const SizedBox(height: 8),
+          Center(
+            child: Icon(
+              Icons.blur_circular_rounded,
+              size: 44,
+              color: kOcMuted.withOpacity(0.35),
+            ),
+          ),
+          const SizedBox(height: 22),
+          Text(
+            l(context, '新建会话', 'New session'),
+            textAlign: TextAlign.center,
+            style: const TextStyle(
+              fontSize: 20,
+              fontWeight: FontWeight.w600,
+              color: kOcText,
+              letterSpacing: -0.3,
+            ),
+          ),
+          const SizedBox(height: 22),
+          Text(
+            ws.name,
+            textAlign: TextAlign.center,
+            style: const TextStyle(
+              fontSize: 12.5,
+              fontWeight: FontWeight.w500,
+              height: 1.35,
+              color: kOcMuted,
+            ),
+          ),
+          const SizedBox(height: 12),
+          Row(
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: [
+              Icon(
+                Icons.call_split_rounded,
+                size: 15,
+                color: kOcMuted.withOpacity(0.9),
+              ),
+              const SizedBox(width: 6),
+              Text(
+                l(context, '主工作区', 'main'),
+                style: const TextStyle(
+                  fontSize: 12.5,
+                  fontWeight: FontWeight.w500,
+                  color: kOcMuted,
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 14),
+          Text(
+            '${l(context, '加入于', 'Added')} · ${_formatLandingDate(ws.createdAt)}',
+            textAlign: TextAlign.center,
+            style: const TextStyle(
+              fontSize: 12.5,
+              color: kOcMuted,
+            ),
+          ),
+          const SizedBox(height: 40),
+          Text(
+            l(
+              context,
+              '在下方输入第一条消息以开始；将自动创建会话。',
+              'Type your first message below to start — a session will be created.',
+            ),
+            textAlign: TextAlign.center,
+            style: TextStyle(
+              fontSize: 12.5,
+              height: 1.4,
+              color: kOcMuted.withOpacity(0.95),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  String _formatLandingDate(int ms) {
+    final dt = DateTime.fromMillisecondsSinceEpoch(ms);
+    return '${dt.year}-${dt.month.toString().padLeft(2, '0')}-${dt.day.toString().padLeft(2, '0')}';
+  }
+
+  /// 左侧滑出：会话列表 + 新建 + 压缩/记忆（原「更多」里依赖会话的项）。
+  Widget _buildSessionDrawer(BuildContext context, AppState state) {
+    final ws = state.workspace!;
+    return Drawer(
+      backgroundColor: kOcSurface,
+      child: SafeArea(
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            Padding(
+              padding: const EdgeInsets.fromLTRB(12, 4, 4, 8),
+              child: Row(
+                children: [
+                  Expanded(
+                    child: Padding(
+                      padding: const EdgeInsets.only(left: 8),
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text(
+                            l(context, '会话记录', 'Sessions'),
+                            style: const TextStyle(
+                              fontSize: 13,
+                              fontWeight: FontWeight.w600,
+                              color: kOcMuted,
+                            ),
+                          ),
+                          const SizedBox(height: 4),
+                          Text(
+                            ws.name,
+                            maxLines: 2,
+                            overflow: TextOverflow.ellipsis,
+                            style: const TextStyle(
+                              fontSize: 15,
+                              fontWeight: FontWeight.w700,
+                              color: kOcText,
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                  ),
+                  IconButton(
+                    icon: const Icon(Icons.close_rounded),
+                    color: kOcMuted,
+                    onPressed: () => Navigator.pop(context),
+                  ),
+                ],
+              ),
+            ),
+            const Divider(height: 1, color: kOcBorder),
+            ListTile(
+              leading: const Icon(Icons.edit_note_outlined, color: kOcAccent),
+              title: Text(l(context, '新建空白页', 'New chat (blank)')),
+              subtitle: Text(
+                l(context, '仅输入区，首条消息再建会话', 'Composer only; first send creates session'),
+                style: const TextStyle(fontSize: 11),
+              ),
+              onTap: () {
+                Navigator.pop(context);
+                widget.controller.enterNewSessionLanding();
+              },
+            ),
+            ListTile(
+              leading:
+                  const Icon(Icons.add_comment_outlined, color: kOcAccentMuted),
+              title: Text(l(context, '新建会话', 'New session')),
+              subtitle: Text(
+                l(context, '立即创建新对话', 'Create a new thread now'),
+                style: const TextStyle(fontSize: 11),
+              ),
+              onTap: () {
+                Navigator.pop(context);
+                widget.controller.createSession(
+                  agent: _selectedAgent ?? state.session?.agent ?? 'build',
+                );
+              },
+            ),
+            const Divider(height: 1, color: kOcBorder),
+            Expanded(
+              child: state.sessions.isEmpty
+                  ? Center(
+                      child: Padding(
+                        padding: const EdgeInsets.all(24),
+                        child: Text(
+                          l(context, '暂无历史会话', 'No sessions yet'),
+                          textAlign: TextAlign.center,
+                          style: const TextStyle(color: kOcMuted, fontSize: 13),
+                        ),
+                      ),
+                    )
+                  : ListView.builder(
+                      padding: const EdgeInsets.only(bottom: 8),
+                      itemCount: state.sessions.length,
+                      itemBuilder: (context, i) {
+                        final s = state.sessions[i];
+                        final selected = s.id == state.session?.id;
+                        final menuLocked =
+                            state.isBusy && selected;
+                        return ListTile(
+                          leading: Icon(
+                            Icons.chat_bubble_outline_rounded,
+                            color: selected ? kOcAccent : kOcMuted,
+                          ),
+                          selected: selected,
+                          selectedTileColor: kOcSelectedFill.withOpacity(0.5),
+                          title: Text(
+                            s.title.isNotEmpty
+                                ? s.title
+                                : l(context, '未命名', 'Untitled'),
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                          ),
+                          subtitle: Text(
+                            selected
+                                ? '${l(context, '当前', 'Current')} · ${s.agent}'
+                                : s.agent,
+                            style: selected
+                                ? TextStyle(
+                                    fontSize: 11,
+                                    color: kOcAccent.withOpacity(0.95),
+                                    fontWeight: FontWeight.w600,
+                                  )
+                                : const TextStyle(
+                                    fontSize: 11,
+                                    color: kOcMuted,
+                                  ),
+                          ),
+                          trailing: Row(
+                            mainAxisSize: MainAxisSize.min,
+                            children: [
+                              if (selected)
+                                const Padding(
+                                  padding: EdgeInsets.only(right: 2),
+                                  child: Icon(
+                                    Icons.check_circle_rounded,
+                                    size: 18,
+                                    color: kOcAccent,
+                                  ),
+                                ),
+                              PopupMenuButton<String>(
+                                icon: const Icon(
+                                  Icons.more_vert_rounded,
+                                  color: kOcMuted,
+                                  size: 20,
+                                ),
+                                padding: const EdgeInsets.all(0),
+                                constraints: const BoxConstraints(
+                                  minWidth: 36,
+                                  minHeight: 36,
+                                ),
+                                enabled: !menuLocked,
+                                tooltip: l(context, '会话操作', 'Session actions'),
+                                onSelected: (value) {
+                                  if (value == 'rename') {
+                                    _promptRenameSession(context, state, s);
+                                  } else if (value == 'delete') {
+                                    _confirmDeleteSession(context, state, s);
+                                  }
+                                },
+                                itemBuilder: (ctx) => [
+                                  PopupMenuItem(
+                                    value: 'rename',
+                                    child: Text(l(context, '重命名', 'Rename')),
+                                  ),
+                                  PopupMenuItem(
+                                    value: 'delete',
+                                    child: Text(
+                                      l(context, '删除', 'Delete'),
+                                      style: const TextStyle(
+                                          color: Colors.redAccent),
+                                    ),
+                                  ),
+                                ],
+                              ),
+                            ],
+                          ),
+                          onTap: () {
+                            Navigator.pop(context);
+                            widget.controller.switchSession(s);
+                          },
+                        );
+                      },
+                    ),
+            ),
+            if (state.session != null) ...[
+              const Divider(height: 1, color: kOcBorder),
+              ListTile(
+                leading: const Icon(Icons.compress_outlined, color: kOcOrange),
+                title: Text(l(context, '压缩当前会话', 'Compact session')),
+                enabled: !state.isBusy,
+                onTap: state.isBusy
+                    ? null
+                    : () {
+                        Navigator.pop(context);
+                        widget.controller.compactSession();
+                      },
+              ),
+              ListTile(
+                leading: const Icon(Icons.note_alt_outlined, color: kOcGreen),
+                title: Text(l(
+                  context,
+                  '初始化/更新项目记忆',
+                  'Initialize / update project memory',
+                )),
+                enabled: !state.isBusy,
+                onTap: state.isBusy
+                    ? null
+                    : () {
+                        Navigator.pop(context);
+                        widget.controller.initializeProjectMemory();
+                      },
+              ),
+            ],
+          ],
+        ),
+      ),
+    );
+  }
+
+  Future<void> _promptRenameSession(
+    BuildContext context,
+    AppState state,
+    SessionInfo s,
+  ) async {
+    if (state.isBusy && s.id == state.session?.id) return;
+    final controller = TextEditingController(text: s.title);
+    final newTitle = await showDialog<String>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: Text(l(context, '重命名会话', 'Rename session')),
+        content: TextField(
+          controller: controller,
+          autofocus: true,
+          maxLength: 256,
+          decoration: InputDecoration(
+            hintText: l(context, '标题', 'Title'),
+          ),
+          onSubmitted: (v) => Navigator.pop(ctx, v.trim()),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx),
+            child: Text(l(context, '取消', 'Cancel')),
+          ),
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, controller.text.trim()),
+            child: Text(l(context, '保存', 'Save')),
+          ),
+        ],
+      ),
+    );
+    if (newTitle == null || newTitle.isEmpty) return;
+    await widget.controller.renameSession(s, newTitle);
+  }
+
+  Future<void> _confirmDeleteSession(
+    BuildContext context,
+    AppState state,
+    SessionInfo s,
+  ) async {
+    if (state.isBusy && s.id == state.session?.id) return;
+    final ok = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: Text(l(context, '删除会话', 'Delete session')),
+        content: Text(
+          l(
+            context,
+            '将永久删除该会话及其消息，不可恢复。',
+            'This permanently deletes the session and its messages.',
+          ),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, false),
+            child: Text(l(context, '取消', 'Cancel')),
+          ),
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, true),
+            child: Text(
+              l(context, '删除', 'Delete'),
+              style: const TextStyle(color: Colors.redAccent),
+            ),
+          ),
+        ],
+      ),
+    );
+    if (ok != true) return;
+    if (context.mounted) Navigator.pop(context);
+    await widget.controller.removeSession(s);
+  }
+}

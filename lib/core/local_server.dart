@@ -384,6 +384,47 @@ class LocalServer {
         await _json(request.response, {'ok': true});
         return;
       }
+      if (segments.length == 2 &&
+          segments.first == 'session' &&
+          request.method == 'PATCH') {
+        final sessionId = segments[1];
+        final session = await database.getSession(sessionId);
+        if (session == null) {
+          request.response.statusCode = 404;
+          await request.response.close();
+          return;
+        }
+        final body = await _readJson(request);
+        final title = body['title'] as String?;
+        if (title == null) {
+          request.response.statusCode = 400;
+          await _json(request.response, {'error': 'title required'});
+          return;
+        }
+        try {
+          final updated = await engine.setSessionTitle(sessionId, title);
+          await _json(request.response, updated.toJson());
+        } on ArgumentError catch (e) {
+          request.response.statusCode = 400;
+          await _json(request.response, {'error': e.message});
+        }
+        return;
+      }
+      if (segments.length == 2 &&
+          segments.first == 'session' &&
+          request.method == 'DELETE') {
+        final sessionId = segments[1];
+        final session = await database.getSession(sessionId);
+        if (session == null) {
+          request.response.statusCode = 404;
+          await request.response.close();
+          return;
+        }
+        await engine.removeSession(sessionId);
+        request.response.statusCode = 204;
+        await request.response.close();
+        return;
+      }
       if (segments.length == 3 &&
           segments.first == 'permission' &&
           request.method == 'POST') {

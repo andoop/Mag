@@ -207,6 +207,19 @@ class AppDatabase {
     return SessionInfo.fromJson(jsonDecode(rows.first['data'] as String) as JsonMap);
   }
 
+  /// 与 OpenCode `Session.remove` 一致：删除会话及其消息、分片、待办与待处理问答/权限。
+  Future<void> deleteSessionCascade(String sessionId) async {
+    final db = await database;
+    await db.transaction((txn) async {
+      await txn.delete('parts', where: 'session_id = ?', whereArgs: [sessionId]);
+      await txn.delete('messages', where: 'session_id = ?', whereArgs: [sessionId]);
+      await txn.delete('permission_requests', where: 'session_id = ?', whereArgs: [sessionId]);
+      await txn.delete('question_requests', where: 'session_id = ?', whereArgs: [sessionId]);
+      await txn.delete('todos', where: 'session_id = ?', whereArgs: [sessionId]);
+      await txn.delete('sessions', where: 'id = ?', whereArgs: [sessionId]);
+    });
+  }
+
   Future<void> saveMessage(MessageInfo message) async {
     final db = await database;
     await db.insert(

@@ -2,7 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_localizations/flutter_localizations.dart';
 
 import '../store/app_controller.dart';
-import '../ui/home_page.dart';
+import '../ui/app_root.dart';
 import '../ui/i18n.dart';
 
 class MobileAgentApp extends StatefulWidget {
@@ -70,7 +70,7 @@ class _MobileAgentAppState extends State<MobileAgentApp> {
           ),
         ),
       ),
-      home: HomePage(controller: _controller),
+      home: AppRoot(controller: _controller),
     );
   }
 }

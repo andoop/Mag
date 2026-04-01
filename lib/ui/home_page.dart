@@ -26,6 +26,7 @@ part 'home/home_shell.dart';
 part 'home/home_pickers.dart';
 part 'home/home_parts.dart';
 part 'home/home_panels.dart';
+part 'home/home_landing.dart';
 
 class HomePage extends StatefulWidget {
   const HomePage({super.key, required this.controller});
@@ -37,6 +38,8 @@ class HomePage extends StatefulWidget {
 }
 
 class _HomePageState extends State<HomePage> {
+  final GlobalKey<ScaffoldState> _scaffoldKey = GlobalKey<ScaffoldState>();
+
   final TextEditingController _promptController = TextEditingController();
   final TextEditingController _schemaController = TextEditingController(
     text: const JsonEncoder.withIndent('  ')
@@ -462,39 +465,37 @@ class _HomePageState extends State<HomePage> {
         _modelChoiceIsLatest(currentModelChoice);
     final renderedMessages = _renderedTimelineMessages(state);
     return Scaffold(
+      key: _scaffoldKey,
+      drawer: _buildSessionDrawer(context, state),
       appBar: AppBar(
-        titleSpacing: 8,
+        leadingWidth: 40,
+        leading: IconButton(
+          tooltip: l(context, '项目', 'Projects'),
+          padding: EdgeInsets.zero,
+          constraints: const BoxConstraints(minWidth: 40, minHeight: 40),
+          onPressed: () => widget.controller.leaveProject(),
+          icon: const Icon(Icons.arrow_back_rounded, size: 22),
+        ),
+        titleSpacing: 4,
         title: _SessionAppBarTitle(
           title: state.session?.title.isNotEmpty == true
               ? state.session!.title
-              : (state.workspace?.name ?? l(context, '移动代理', 'Mobile Agent')),
-          subtitle:
-              '${currentModelChoice?.name ?? modelConfig.model} · ${_providerLabel(modelConfig.provider, config: modelConfig, state: state)}',
-          showFreeTag: showModelFreeTag,
+              : (state.session == null
+                  ? l(context, '新建会话', 'New session')
+                  : (state.workspace?.name ??
+                      l(context, '移动代理', 'Mobile Agent'))),
           running: state.isBusy,
         ),
         actions: [
           IconButton(
-            tooltip: l(context, '模型', 'Model'),
-            onPressed: () => _openModelChooser(context),
-            icon: const Icon(Icons.auto_awesome_outlined),
+            tooltip: l(context, '设置', 'Settings'),
+            onPressed: () => _openSettings(context, state.modelConfig),
+            icon: const Icon(Icons.settings_outlined),
           ),
           IconButton(
-            tooltip: l(context, '工作区', 'Workspace'),
-            onPressed: widget.controller.pickWorkspace,
-            icon: const Icon(Icons.folder_open),
-          ),
-          IconButton(
-            tooltip: l(context, '新建会话', 'New Session'),
-            onPressed: () => widget.controller.createSession(
-              agent: _selectedAgent ?? state.session?.agent ?? 'build',
-            ),
-            icon: const Icon(Icons.add_comment),
-          ),
-          IconButton(
-            tooltip: l(context, '更多', 'More'),
-            onPressed: () => _openMoreMenu(context),
-            icon: const Icon(Icons.more_horiz),
+            tooltip: l(context, '会话记录', 'Sessions'),
+            onPressed: () => _scaffoldKey.currentState?.openDrawer(),
+            icon: const Icon(Icons.chat_bubble_outline_rounded),
           ),
         ],
       ),
@@ -514,43 +515,53 @@ class _HomePageState extends State<HomePage> {
                       ),
                       actions: [
                         TextButton(
-                          onPressed: () => widget.controller.refreshSession(),
+                          onPressed: () {
+                            if (state.session != null) {
+                              widget.controller.refreshSession();
+                            } else {
+                              widget.controller.enterNewSessionLanding();
+                            }
+                          },
                           child: Text(l(context, '刷新', 'Refresh')),
                         )
                       ],
                     ),
                   Expanded(
-                    child: NotificationListener<ScrollNotification>(
-                      onNotification: _handleTimelineNotification,
-                      child: ListView.builder(
-                        key: ValueKey<String>(
-                            'timeline-${state.session?.id ?? 'none'}'),
-                        controller: _timelineController,
-                        keyboardDismissBehavior:
-                            ScrollViewKeyboardDismissBehavior.onDrag,
-                        physics: const BouncingScrollPhysics(
-                            parent: AlwaysScrollableScrollPhysics()),
-                        padding: EdgeInsets.fromLTRB(
-                            12, isKeyboardOpen ? 8 : 12, 12, 16),
-                        itemCount: _timelineItemCount(state, renderedMessages),
-                        itemBuilder: (context, index) => _buildTimelineItem(
-                          context,
-                          state: state,
-                          modelConfig: modelConfig,
-                          currentModelChoice: currentModelChoice,
-                          showModelFreeTag: showModelFreeTag,
-                          showModelLatestTag: showModelLatestTag,
-                          isKeyboardOpen: isKeyboardOpen,
-                          renderedMessages: renderedMessages,
-                          index: index,
-                        ),
-                      ),
-                    ),
+                    child: state.session == null
+                        ? _buildNewSessionLanding(context, state)
+                        : NotificationListener<ScrollNotification>(
+                            onNotification: _handleTimelineNotification,
+                            child: ListView.builder(
+                              key: ValueKey<String>(
+                                  'timeline-${state.session?.id ?? 'none'}'),
+                              controller: _timelineController,
+                              keyboardDismissBehavior:
+                                  ScrollViewKeyboardDismissBehavior.onDrag,
+                              physics: const BouncingScrollPhysics(
+                                  parent: AlwaysScrollableScrollPhysics()),
+                              padding: EdgeInsets.fromLTRB(
+                                  12, isKeyboardOpen ? 8 : 12, 12, 16),
+                              itemCount:
+                                  _timelineItemCount(state, renderedMessages),
+                              itemBuilder: (context, index) =>
+                                  _buildTimelineItem(
+                                context,
+                                state: state,
+                                modelConfig: modelConfig,
+                                currentModelChoice: currentModelChoice,
+                                showModelFreeTag: showModelFreeTag,
+                                showModelLatestTag: showModelLatestTag,
+                                isKeyboardOpen: isKeyboardOpen,
+                                renderedMessages: renderedMessages,
+                                index: index,
+                              ),
+                            ),
+                          ),
                   ),
                   _buildComposerDock(context, state, isKeyboardOpen),
                 ],
               ),
-              if (!_stickToBottom)
+              if (state.session != null && !_stickToBottom)
                 Positioned(
                   right: 16,
                   bottom: isKeyboardOpen ? 104 : 132,

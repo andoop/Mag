@@ -13,6 +13,7 @@ import '../core/session_engine.dart';
 import '../core/tool_runtime.dart';
 import '../core/workspace_bridge.dart';
 import '../sdk/local_server_client.dart';
+import 'project_recents_store.dart';
 
 const bool _kDebugEngine = false;
 
@@ -62,8 +63,8 @@ class AppState {
 
   AppState copyWith({
     Uri? serverUri,
-    WorkspaceInfo? workspace,
-    SessionInfo? session,
+    Object? workspace = _noChange,
+    Object? session = _noChange,
     List<AgentDefinition>? agents,
     List<SessionInfo>? sessions,
     List<SessionMessageBundle>? messages,
@@ -79,8 +80,12 @@ class AppState {
   }) {
     return AppState(
       serverUri: serverUri ?? this.serverUri,
-      workspace: workspace ?? this.workspace,
-      session: session ?? this.session,
+      workspace: identical(workspace, _noChange)
+          ? this.workspace
+          : workspace as WorkspaceInfo?,
+      session: identical(session, _noChange)
+          ? this.session
+          : session as SessionInfo?,
       agents: agents ?? this.agents,
       sessions: sessions ?? this.sessions,
       messages: messages ?? this.messages,
@@ -134,11 +139,17 @@ class AppController extends ChangeNotifier {
 
   AppState state = const AppState();
 
-  Future<void> initialize() async {
+  /// 与首屏 [ProjectHomePage] 等并发时，必须先等本地服务与 [_client] 就绪，否则会请求失败并被当成「无项目」。
+  Future<void>? _initializeFuture;
+
+  Future<void> initialize() {
+    return _initializeFuture ??= _runInitialize();
+  }
+
+  Future<void> _runInitialize() async {
     final serverUri = await _server.start();
     _client = LocalServerClient(serverUri);
     _connectEventStream();
-    final workspaces = await _client!.listWorkspaces();
     final agents = await _client!.listAgents();
     final modelConfig = await _client!.loadModelConfig();
     final providerList = await _client!.listProviders();
@@ -153,9 +164,6 @@ class AppController extends ChangeNotifier {
       recentModelKeys: recentModelKeys,
     );
     notifyListeners();
-    if (workspaces.isNotEmpty) {
-      await selectWorkspace(workspaces.first);
-    }
   }
 
   void _connectEventStream() {
@@ -180,15 +188,181 @@ class AppController extends ChangeNotifier {
     await _server.stop();
   }
 
-  Future<void> pickWorkspace() async {
+  /// 从系统选择器打开文件夹并进入工作区（新建会话落地页，对齐 OpenCode）。
+  Future<void> pickAndOpenProject() async {
     try {
-      final workspace = await _workspaceBridge.pickWorkspace();
-      if (workspace == null) return;
-      await _client!.saveWorkspace(workspace);
-      await selectWorkspace(workspace);
+      await initialize();
+      final picked = await _workspaceBridge.pickWorkspace();
+      if (picked == null) return;
+      await enterWorkspace(picked, openSession: null);
     } catch (error) {
       _setError(error);
     }
+  }
+
+  /// 返回项目首页（最近项目 / 打开项目）。
+  Future<void> leaveProject() async {
+    _cancelPendingPartDeltas();
+    _clearWorkspacePreviewCaches();
+    state = state.copyWith(
+      workspace: null,
+      session: null,
+      sessions: const [],
+      messages: const [],
+      permissions: const [],
+      questions: const [],
+      todos: const [],
+      isBusy: false,
+      error: null,
+    );
+    notifyListeners();
+  }
+
+  /// 与 [enterWorkspace] 相同路径：解析 treeUri、写入最近、进入落地页。
+  Future<void> openSavedProject(WorkspaceInfo workspace) async {
+    await enterWorkspace(workspace, openSession: null);
+  }
+
+  /// 打开已有工作区。`openSession == null` 时对齐 OpenCode `/session` 无 id：仅展示新建会话页与输入框。
+  Future<void> enterWorkspace(
+    WorkspaceInfo picked, {
+    SessionInfo? openSession,
+  }) async {
+    final startedAt = DateTime.now().millisecondsSinceEpoch;
+    try {
+      await initialize();
+      _cancelPendingPartDeltas();
+      _clearWorkspacePreviewCaches();
+      final resolved = await _resolveWorkspace(picked);
+      await ProjectRecentsStore.touch(resolved.treeUri, resolved.name);
+      final sessions = await _client!.listSessions(resolved.id);
+      if (openSession != null) {
+        SessionInfo? resolvedSession;
+        for (final s in sessions) {
+          if (s.id == openSession.id) {
+            resolvedSession = s;
+            break;
+          }
+        }
+        if (resolvedSession == null) {
+          state = state.copyWith(
+            workspace: resolved,
+            sessions: sessions,
+            session: null,
+            messages: const [],
+            permissions: const [],
+            questions: const [],
+            todos: const [],
+            error: null,
+          );
+          notifyListeners();
+        } else {
+          state = state.copyWith(
+            workspace: resolved,
+            sessions: sessions,
+            session: resolvedSession,
+            error: null,
+          );
+          notifyListeners();
+          await refreshSession();
+        }
+      } else {
+        state = state.copyWith(
+          workspace: resolved,
+          sessions: sessions,
+          session: null,
+          messages: const [],
+          permissions: const [],
+          questions: const [],
+          todos: const [],
+          error: null,
+        );
+        notifyListeners();
+      }
+      debugTrace(
+        runId: 'workspace-enter',
+        hypothesisId: 'H2',
+        location: 'app_controller.dart:enterWorkspace',
+        message: 'enterWorkspace completed',
+        data: {
+          'workspaceId': resolved.id,
+          'sessionId': openSession?.id,
+          'sessions': sessions.length,
+          'elapsedMs': DateTime.now().millisecondsSinceEpoch - startedAt,
+        },
+      );
+    } catch (error) {
+      _setError(error);
+    }
+  }
+
+  Future<void> enterNewSessionLanding() async {
+    final workspace = state.workspace;
+    if (workspace == null) return;
+    try {
+      _cancelPendingPartDeltas();
+      _clearWorkspacePreviewCaches();
+      final sessions = await _client!.listSessions(workspace.id);
+      state = state.copyWith(
+        session: null,
+        sessions: sessions,
+        messages: const [],
+        permissions: const [],
+        questions: const [],
+        todos: const [],
+        error: null,
+      );
+      notifyListeners();
+    } catch (error) {
+      _setError(error);
+    }
+  }
+
+  Future<WorkspaceInfo> _resolveWorkspace(WorkspaceInfo picked) async {
+    final all = await _client!.listWorkspaces();
+    for (final w in all) {
+      if (_treeUriEquivalent(w.treeUri, picked.treeUri)) {
+        return w;
+      }
+    }
+    await _client!.saveWorkspace(picked);
+    return picked;
+  }
+
+  bool _treeUriEquivalent(String a, String b) {
+    if (a == b) return true;
+    try {
+      final ua = Uri.parse(a);
+      final ub = Uri.parse(b);
+      if (ua.scheme == 'file' && ub.scheme == 'file') {
+        var pa = ua.path;
+        var pb = ub.path;
+        if (pa.endsWith('/')) pa = pa.substring(0, pa.length - 1);
+        if (pb.endsWith('/')) pb = pb.substring(0, pb.length - 1);
+        return pa == pb;
+      }
+    } catch (_) {}
+    return false;
+  }
+
+  /// 供项目首页：已保存的工作区按最近打开时间排序，最多 [limit] 条。
+  Future<List<WorkspaceInfo>> workspacesForHome({int limit = 5}) async {
+    try {
+      await initialize();
+    } catch (_) {
+      return const [];
+    }
+    final c = _client;
+    if (c == null) return const [];
+    final all = await c.listWorkspaces();
+    if (all.isEmpty) return const [];
+    final recent = await ProjectRecentsStore.lastOpenedMap();
+    int rank(WorkspaceInfo w) {
+      return recent[w.treeUri] ?? w.createdAt;
+    }
+
+    final sorted = [...all]..sort((a, b) => rank(b).compareTo(rank(a)));
+    return sorted.take(limit).toList();
   }
 
   void _cancelPendingPartDeltas() {
@@ -197,42 +371,9 @@ class AppController extends ChangeNotifier {
     _pendingPartDeltas.clear();
   }
 
+  @Deprecated('Use enterWorkspace or pickAndOpenProject')
   Future<void> selectWorkspace(WorkspaceInfo workspace) async {
-    final startedAt = DateTime.now().millisecondsSinceEpoch;
-    try {
-      _cancelPendingPartDeltas();
-      _clearWorkspacePreviewCaches();
-      var sessions = await _client!.listSessions(workspace.id);
-      final session = sessions.isNotEmpty
-          ? sessions.first
-          : await _client!.createSession(workspace);
-      if (sessions.isEmpty) {
-        sessions = await _client!.listSessions(workspace.id);
-      }
-      state = state.copyWith(
-          workspace: workspace,
-          session: session,
-          sessions: sessions,
-          error: null);
-      notifyListeners();
-      await refreshSession();
-      // #region agent log
-      debugTrace(
-        runId: 'workspace-select',
-        hypothesisId: 'H2',
-        location: 'app_controller.dart:180',
-        message: 'selectWorkspace completed',
-        data: {
-          'workspaceId': workspace.id,
-          'sessionId': session.id,
-          'sessions': sessions.length,
-          'elapsedMs': DateTime.now().millisecondsSinceEpoch - startedAt,
-        },
-      );
-      // #endregion
-    } catch (error) {
-      _setError(error);
-    }
+    await enterWorkspace(workspace, openSession: null);
   }
 
   Future<void> createSession({String agent = 'build'}) async {
@@ -252,6 +393,28 @@ class AppController extends ChangeNotifier {
           questions: const []);
       notifyListeners();
       await refreshSession();
+    } catch (error) {
+      _setError(error);
+    }
+  }
+
+  /// OpenCode `Session.setTitle`：重命名后由 `session.updated` 同步列表与顶栏。
+  Future<void> renameSession(SessionInfo session, String newTitle) async {
+    if (state.workspace == null) return;
+    try {
+      await initialize();
+      await _client!.updateSessionTitle(session.id, newTitle);
+    } catch (error) {
+      _setError(error);
+    }
+  }
+
+  /// OpenCode `Session.remove`：删除后由 `session.deleted` 更新列表；若删的是当前会话则回到空白落地页。
+  Future<void> removeSession(SessionInfo session) async {
+    if (state.workspace == null) return;
+    try {
+      await initialize();
+      await _client!.deleteSession(session.id);
     } catch (error) {
       _setError(error);
     }
@@ -300,8 +463,15 @@ class AppController extends ChangeNotifier {
   Future<void> sendPrompt(String text,
       {String? agent, MessageFormat? format}) async {
     if (text.trim().isEmpty) return;
-    final session = state.session;
-    if (session == null) return;
+    final workspace = state.workspace;
+    if (workspace == null) return;
+    var session = state.session;
+    if (session == null) {
+      final useAgent = agent ?? 'build';
+      await createSession(agent: useAgent);
+      session = state.session;
+      if (session == null) return;
+    }
     final modelConfig = state.modelConfig ?? ModelConfig.defaults();
     _debugLog('sendPrompt',
         'provider=${modelConfig.provider} model=${modelConfig.model}');
@@ -733,6 +903,26 @@ class AppController extends ChangeNotifier {
         state = state.copyWith(
           sessions: _upsertSession(state.sessions, session),
           session: state.session?.id == session.id ? session : state.session,
+        );
+        notifyListeners();
+        return;
+      case 'session.deleted':
+        final deleted =
+            SessionInfo.fromJson(Map<String, dynamic>.from(event.properties));
+        if (state.workspace?.id != deleted.workspaceId) return;
+        final removedId = deleted.id;
+        final sessions =
+            state.sessions.where((s) => s.id != removedId).toList();
+        final wasCurrent = state.session?.id == removedId;
+        state = state.copyWith(
+          sessions: sessions,
+          session: wasCurrent ? null : state.session,
+          messages: wasCurrent ? const [] : state.messages,
+          todos: wasCurrent ? const [] : state.todos,
+          permissions: wasCurrent ? const [] : state.permissions,
+          questions: wasCurrent ? const [] : state.questions,
+          isBusy: wasCurrent ? false : state.isBusy,
+          error: wasCurrent ? null : state.error,
         );
         notifyListeners();
         return;

@@ -911,6 +911,7 @@ class SessionEngine {
   Future<SessionInfo> createSession({
     required WorkspaceInfo workspace,
     String agent = 'build',
+    bool isChildSession = false,
   }) async {
     final project = await ensureProject(workspace);
     final now = DateTime.now().millisecondsSinceEpoch;
@@ -918,7 +919,7 @@ class SessionEngine {
       id: newId('session'),
       projectId: project.id,
       workspaceId: workspace.id,
-      title: 'New session',
+      title: SessionTitlePolicy.defaultTitle(isChild: isChildSession),
       agent: agent,
       createdAt: now,
       updatedAt: now,
@@ -958,6 +959,48 @@ class SessionEngine {
       type: 'session.status',
       properties: {'sessionID': sessionId, 'status': 'idle'},
       directory: directory,
+    ));
+  }
+
+  Future<WorkspaceInfo> _workspaceForSession(SessionInfo session) async {
+    final all = await database.listWorkspaces();
+    return all.firstWhere((w) => w.id == session.workspaceId);
+  }
+
+  /// OpenCode `Session.setTitle`：用户重命名；会发出 `session.updated`。
+  Future<SessionInfo> setSessionTitle(String sessionId, String title) async {
+    final session = await database.getSession(sessionId);
+    if (session == null) {
+      throw StateError('Session not found: $sessionId');
+    }
+    final trimmed = title.trim();
+    if (trimmed.isEmpty) {
+      throw ArgumentError('title must not be empty');
+    }
+    const maxLen = 256;
+    final nextTitle =
+        trimmed.length > maxLen ? trimmed.substring(0, maxLen) : trimmed;
+    final workspace = await _workspaceForSession(session);
+    final next = session.copyWith(
+      title: nextTitle,
+      updatedAt: DateTime.now().millisecondsSinceEpoch,
+    );
+    await _saveSession(workspace: workspace, session: next);
+    return next;
+  }
+
+  /// OpenCode `Session.remove`：取消进行中的任务后级联删除数据并发出 `session.deleted`。
+  Future<void> removeSession(String sessionId) async {
+    final session = await database.getSession(sessionId);
+    if (session == null) return;
+    final workspace = await _workspaceForSession(session);
+    final snapshot = session;
+    await cancel(sessionId, directory: workspace.treeUri);
+    await database.deleteSessionCascade(sessionId);
+    events.emit(ServerEvent(
+      type: 'session.deleted',
+      properties: snapshot.toJson(),
+      directory: workspace.treeUri,
     ));
   }
 
@@ -1153,6 +1196,17 @@ class SessionEngine {
         format: format,
       );
       await saveTrackedMessage(userMessage);
+      final userMsgCount =
+          cachedMessages.where((m) => m.role == SessionRole.user).length;
+      if (userMsgCount == 1) {
+        unawaited(
+          _ensureSessionTitleFromFirstUserMessage(
+            workspace: workspace,
+            sessionId: session.id,
+            firstUserText: text,
+          ),
+        );
+      }
       final assistant = MessageInfo(
         id: newId('message'),
         sessionId: session.id,
@@ -1869,6 +1923,7 @@ class SessionEngine {
         final subSession = await createSession(
           workspace: workspace,
           agent: subagentType,
+          isChildSession: true,
         );
         await this.prompt(
           workspace: workspace,
@@ -2066,6 +2121,96 @@ class SessionEngine {
       properties: session.toJson(),
       directory: workspace.treeUri,
     ));
+  }
+
+  /// OpenCode `ensureTitle`：仅主会话、且标题仍为默认 `New session - ISO` 时，在首条用户消息后请求模型生成短标题。
+  Future<void> _ensureSessionTitleFromFirstUserMessage({
+    required WorkspaceInfo workspace,
+    required String sessionId,
+    required String firstUserText,
+  }) async {
+    try {
+      final current = await database.getSession(sessionId);
+      if (current == null) return;
+      if (!SessionTitlePolicy.shouldAutoGenerateFromModel(current.title)) {
+        return;
+      }
+      final trimmedPrompt = firstUserText.trim();
+      if (trimmedPrompt.isEmpty) return;
+
+      final modelConfig = ModelConfig.fromJson(
+        await database.getSetting('model_config') ??
+            ModelConfig.defaults().toJson(),
+      );
+      final mag = modelConfig.isMagProvider;
+      final hasKey = modelConfig.apiKey.trim().isNotEmpty;
+      final freeMag = mag && modelConfig.isMagZenFreeModel;
+      final needsKey = mag ? (!freeMag && !hasKey) : !hasKey;
+      if (needsKey) return;
+
+      final messages = <Map<String, dynamic>>[
+        {
+          'role': 'user',
+          'content': 'Generate a title for this conversation:\n',
+        },
+        {
+          'role': 'user',
+          'content': trimmedPrompt,
+        },
+      ];
+      final response = await modelGateway.complete(
+        config: modelConfig,
+        messages: messages,
+        tools: const [],
+        format: null,
+        cancelToken: null,
+      );
+      final cleaned = _cleanGeneratedSessionTitle(response.text);
+      if (cleaned.isEmpty) return;
+      final title = cleaned.length > 100
+          ? '${cleaned.substring(0, 97)}...'
+          : cleaned;
+
+      final again = await database.getSession(sessionId);
+      if (again == null) return;
+      if (!SessionTitlePolicy.shouldAutoGenerateFromModel(again.title)) return;
+
+      await _saveSession(
+        workspace: workspace,
+        session: again.copyWith(
+          title: title,
+          updatedAt: DateTime.now().millisecondsSinceEpoch,
+        ),
+      );
+    } catch (_) {
+      // OpenCode：失败仅记日志，不打断主流程
+    }
+  }
+
+  String _cleanGeneratedSessionTitle(String text) {
+    var t = text.trim();
+    t = t.replaceAll(
+      RegExp(r'`<think>[\s\S]*?`</think>', multiLine: true),
+      '',
+    );
+    t = t.replaceAll(
+      RegExp(
+        r'`<redacted_thinking>[\s\S]*?`</redacted_thinking>',
+        multiLine: true,
+      ),
+      '',
+    );
+    for (final raw in t.split('\n')) {
+      var line = raw.trim();
+      if (line.isEmpty) continue;
+      if (line.length >= 2 &&
+          ((line.startsWith('"') && line.endsWith('"')) ||
+              (line.startsWith("'") && line.endsWith("'")))) {
+        line = line.substring(1, line.length - 1).trim();
+      }
+      if (line.isNotEmpty) return line;
+    }
+    return '';
   }
 
   Future<void> _saveMessage({

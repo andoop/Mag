@@ -170,6 +170,15 @@ class LocalServerClient {
     return SessionInfo.fromJson(Map<String, dynamic>.from(data as Map));
   }
 
+  Future<SessionInfo> updateSessionTitle(String sessionId, String title) async {
+    final data = await _patch('/session/$sessionId', {'title': title});
+    return SessionInfo.fromJson(Map<String, dynamic>.from(data as Map));
+  }
+
+  Future<void> deleteSession(String sessionId) async {
+    await _delete('/session/$sessionId');
+  }
+
   Stream<ServerEvent> globalEvents({String? directory}) async* {
     final uri = baseUri.replace(
       path: '/global/event',
@@ -207,6 +216,24 @@ class LocalServerClient {
     _throwIfHttpError(response.statusCode, text, path);
     if (text.isEmpty) return null;
     return jsonDecode(text);
+  }
+
+  Future<dynamic> _patch(String path, JsonMap body) async {
+    final request = await _client.patchUrl(baseUri.resolve(path));
+    request.headers.contentType = ContentType.json;
+    request.write(jsonEncode(body));
+    final response = await request.close();
+    final text = await response.transform(utf8.decoder).join();
+    _throwIfHttpError(response.statusCode, text, path);
+    if (text.isEmpty) return null;
+    return jsonDecode(text);
+  }
+
+  Future<void> _delete(String path) async {
+    final request = await _client.deleteUrl(baseUri.resolve(path));
+    final response = await request.close();
+    final text = await response.transform(utf8.decoder).join();
+    _throwIfHttpError(response.statusCode, text, path);
   }
 
   void _throwIfHttpError(int status, String body, String path) {
