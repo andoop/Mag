@@ -415,6 +415,34 @@ class _PartTile extends StatelessWidget {
             todos: _resolveTodoWriteTodos(toolState),
           );
         }
+        if (toolName == 'question' && toolStatus != 'error') {
+          final questions = _resolveQuestionToolQuestions(toolState);
+          if (questions.isEmpty) {
+            final displayOutput = (toolState['displayOutput'] as String?) ??
+                (toolState['output'] as String?);
+            final truncatedOutput = displayOutput != null &&
+                    displayOutput.length > 800
+                ? '${displayOutput.substring(0, 800)}\n... (${displayOutput.length} chars total)'
+                : displayOutput;
+            return _ToolPartTile(
+              toolName: toolName,
+              toolTitle: toolTitle,
+              status: toolStatus,
+              output: truncatedOutput,
+              attachments: attachments,
+              controller: controller,
+              workspace: workspace,
+              serverUri: serverUri,
+              onInsertPromptReference: onInsertPromptReference,
+              onSendPromptReference: onSendPromptReference,
+            );
+          }
+          return _QuestionToolPart(
+            toolStatus: toolStatus,
+            questions: questions,
+            answers: _resolveQuestionToolAnswers(toolState),
+          );
+        }
         final displayOutput = (toolState['displayOutput'] as String?) ??
             (toolState['output'] as String?);
         final truncatedOutput = displayOutput != null &&
@@ -459,6 +487,35 @@ List<Map<String, dynamic>> _resolveTodoWriteTodos(
         .toList();
   }
   return [];
+}
+
+/// OpenCode `message-part.tsx`：`input.questions` 始终作为题干来源。
+List<Map<String, dynamic>> _resolveQuestionToolQuestions(
+    Map<String, dynamic> toolState) {
+  final input = toolState['input'] as Map?;
+  final raw = input?['questions'];
+  if (raw is! List) return [];
+  return raw
+      .whereType<Map>()
+      .map((e) => Map<String, dynamic>.from(e))
+      .toList();
+}
+
+/// `metadata.answers`：与题目顺序对应的标签数组列表。
+List<List<String>> _resolveQuestionToolAnswers(
+    Map<String, dynamic> toolState) {
+  final metadata = toolState['metadata'] as Map?;
+  final raw = metadata?['answers'];
+  if (raw is! List) return [];
+  final out = <List<String>>[];
+  for (final e in raw) {
+    if (e is List) {
+      out.add(e.map((x) => x.toString()).toList());
+    } else {
+      out.add([]);
+    }
+  }
+  return out;
 }
 
 /// OpenCode 风格：用结构化 todos 展示只读勾选清单，而非原始 JSON output。
@@ -588,6 +645,171 @@ class _TodoWriteToolPart extends StatelessWidget {
               ),
             ),
           ),
+        ],
+      ),
+    );
+  }
+}
+
+/// OpenCode `message-part.tsx` question 注册：`ui.tool.questions` + 副标题；有 answers 时展示 Q/A。
+class _QuestionToolPart extends StatefulWidget {
+  const _QuestionToolPart({
+    required this.toolStatus,
+    required this.questions,
+    required this.answers,
+  });
+
+  final String toolStatus;
+  final List<Map<String, dynamic>> questions;
+  final List<List<String>> answers;
+
+  @override
+  State<_QuestionToolPart> createState() => _QuestionToolPartState();
+}
+
+class _QuestionToolPartState extends State<_QuestionToolPart> {
+  bool? _expanded;
+
+  bool _completed() => widget.answers.isNotEmpty;
+
+  bool _defaultExpanded() {
+    final isRunning =
+        widget.toolStatus == 'running' || widget.toolStatus == 'pending';
+    if (isRunning) return false;
+    return _completed();
+  }
+
+  String _subtitle(BuildContext context) {
+    final count = widget.questions.length;
+    if (count == 0) return '';
+    if (_completed()) {
+      return l(context, '$count 已回答', '$count answered');
+    }
+    if (count == 1) {
+      return l(context, '1 道题', '1 question');
+    }
+    return l(context, '$count 道题', '$count questions');
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final isRunning =
+        widget.toolStatus == 'running' || widget.toolStatus == 'pending';
+    final expanded = _expanded ?? _defaultExpanded();
+    final completed = _completed();
+    final noneLabel = l(context, '（无答案）', '(no answer)');
+
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.fromLTRB(9, 8, 9, 8),
+      decoration: BoxDecoration(
+        color: isRunning
+            ? const Color(0xFFFFFCF2)
+            : const Color(0xFFFAFAF9),
+        borderRadius: BorderRadius.circular(10),
+        border: Border.all(color: _kSoftBorderColor),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          InkWell(
+            onTap: () => setState(() => _expanded = !expanded),
+            child: Row(
+              children: [
+                if (isRunning)
+                  const Padding(
+                    padding: EdgeInsets.only(right: 8),
+                    child: SizedBox(
+                      width: 12,
+                      height: 12,
+                      child: CircularProgressIndicator(strokeWidth: 1.5),
+                    ),
+                  ),
+                const Icon(Icons.chat_bubble_outline_rounded,
+                    size: 16, color: Colors.black45),
+                const SizedBox(width: 6),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        l(context, '问题', 'Questions'),
+                        style: const TextStyle(
+                          fontWeight: FontWeight.w600,
+                          fontSize: 11.5,
+                          color: Colors.black87,
+                        ),
+                        overflow: TextOverflow.ellipsis,
+                      ),
+                      if (_subtitle(context).isNotEmpty) ...[
+                        const SizedBox(height: 2),
+                        Text(
+                          _subtitle(context),
+                          style: Theme.of(context)
+                              .textTheme
+                              .labelSmall
+                              ?.copyWith(color: Colors.black45, height: 1.2),
+                        ),
+                      ],
+                    ],
+                  ),
+                ),
+                Icon(
+                  expanded ? Icons.expand_less : Icons.expand_more,
+                  size: 16,
+                  color: Colors.black45,
+                ),
+              ],
+            ),
+          ),
+          if (expanded) ...[
+            if (completed) ...[
+              const SizedBox(height: 8),
+              ...List.generate(widget.questions.length, (i) {
+                final q = widget.questions[i];
+                final text = q['question'] as String? ?? '';
+                final ans = i < widget.answers.length
+                    ? widget.answers[i]
+                    : <String>[];
+                final line = ans.isEmpty ? noneLabel : ans.join(', ');
+                return Padding(
+                  padding: const EdgeInsets.only(bottom: 10),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        text,
+                        style: const TextStyle(
+                          fontSize: 13,
+                          height: 1.35,
+                          fontWeight: FontWeight.w600,
+                          color: Colors.black87,
+                        ),
+                      ),
+                      const SizedBox(height: 4),
+                      Text(
+                        line,
+                        style: const TextStyle(
+                          fontSize: 12.5,
+                          height: 1.35,
+                          color: Colors.black54,
+                        ),
+                      ),
+                    ],
+                  ),
+                );
+              }),
+            ] else if (isRunning) ...[
+              const SizedBox(height: 8),
+              Text(
+                l(context, '等待你在面板中作答…', 'Waiting for your answers…'),
+                style: Theme.of(context)
+                    .textTheme
+                    .labelSmall
+                    ?.copyWith(color: Colors.black45, height: 1.2),
+              ),
+            ],
+          ],
         ],
       ),
     );

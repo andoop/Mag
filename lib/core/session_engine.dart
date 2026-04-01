@@ -1843,6 +1843,7 @@ class SessionEngine {
       agentDefinition: agentDefinition(agent),
       bridge: workspaceBridge,
       database: database,
+      callId: call.id,
       askPermission: (request) => permissionCenter.ask(
         workspace: workspace,
         request: request,

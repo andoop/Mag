@@ -170,69 +170,356 @@ class _QuestionPanel extends StatefulWidget {
 class _QuestionPanelState extends State<_QuestionPanel> {
   final Map<int, Set<String>> _selected = {};
   final Map<int, TextEditingController> _customControllers = {};
+  PageController? _pageController;
+  int _pageIndex = 0;
+
+  PageController get _pc {
+    _pageController ??= PageController();
+    return _pageController!;
+  }
 
   @override
   void dispose() {
+    _pageController?.dispose();
     for (final controller in _customControllers.values) {
       controller.dispose();
     }
     super.dispose();
   }
 
+  bool _useWizard(QuestionRequest r) =>
+      r.questions.length > 1 || r.questions.any((q) => q.multiple);
+
+  bool _immediateSingle(QuestionRequest r) =>
+      r.questions.length == 1 && !r.questions[0].multiple;
+
+  List<List<String>> _collectAnswers(QuestionRequest request) {
+    final answers = <List<String>>[];
+    for (var i = 0; i < request.questions.length; i++) {
+      final info = request.questions[i];
+      final sel = _selected[i] ?? <String>{};
+      final current = List<String>.from(sel);
+      final custom = _customControllers[i]?.text.trim() ?? '';
+      if (info.custom && custom.isNotEmpty) current.add(custom);
+      answers.add(current);
+    }
+    return answers;
+  }
+
+  Future<void> _submit(QuestionRequest request) async {
+    await widget.controller.replyQuestion(request.id, _collectAnswers(request));
+  }
+
+  Future<void> _dismiss(QuestionRequest request) async {
+    await widget.controller.replyQuestion(request.id, const []);
+  }
+
+  Future<void> _wizardNext() async {
+    await _pc.nextPage(
+      duration: const Duration(milliseconds: 240),
+      curve: Curves.easeOutCubic,
+    );
+  }
+
+  Future<void> _wizardPrev() async {
+    if (_pageIndex > 0) {
+      await _pc.previousPage(
+        duration: const Duration(milliseconds: 240),
+        curve: Curves.easeOutCubic,
+      );
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     final request = widget.state.questions.first;
-    return Card(
-      margin: const EdgeInsets.fromLTRB(0, 0, 0, 10),
-      child: Padding(
-        padding: const EdgeInsets.all(14),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Text(l(context, '问题', 'Question'),
-                style:
-                    const TextStyle(fontWeight: FontWeight.bold, fontSize: 14)),
-            const SizedBox(height: 8),
-            for (var i = 0; i < request.questions.length; i++) ...[
-              _QuestionForm(
-                info: request.questions[i],
-                selected: _selected.putIfAbsent(i, () => <String>{}),
-                customController: _customControllers.putIfAbsent(
-                    i, () => TextEditingController()),
-                onChanged: () => setState(() {}),
-              ),
-              const SizedBox(height: 12),
-            ],
-            Row(
+    final n = request.questions.length;
+    final wizard = _useWizard(request);
+    final immediate = _immediateSingle(request);
+    final pageCount = wizard ? n + 1 : 1;
+    final pageViewHeight =
+        (MediaQuery.of(context).size.height * 0.40).clamp(240.0, 420.0);
+
+    String subtitleText() {
+      if (wizard) {
+        return l(
+          context,
+          '逐题作答，最后一页核对后再提交。',
+          'Answer step by step, then review and submit on the last page.',
+        );
+      }
+      if (immediate) {
+        if (request.questions[0].custom) {
+          return l(
+            context,
+            '点选一项将立即提交；仅填自定义答案时请点「提交」。',
+            'Tap an option to submit now, or fill custom and tap Submit.',
+          );
+        }
+        return l(
+          context,
+          '点选一项即可提交。',
+          'Tap an option to submit.',
+        );
+      }
+      return l(
+        context,
+        '请选择题目标选项或填写自定义答案，完成后点「提交」。',
+        'Choose options or enter a custom answer, then tap Submit.',
+      );
+    }
+
+    Widget header() {
+      return Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Container(
+            padding: const EdgeInsets.all(8),
+            decoration: BoxDecoration(
+              color: kOcSelectedFill,
+              borderRadius: BorderRadius.circular(10),
+            ),
+            child: const Icon(Icons.help_outline_rounded,
+                size: 22, color: kOcAccent),
+          ),
+          const SizedBox(width: 10),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                OutlinedButton(
-                  onPressed: () =>
-                      widget.controller.replyQuestion(request.id, const []),
-                  child: Text(l(context, '忽略', 'Dismiss')),
+                Text(
+                  l(context, '需要你的选择', 'Your input needed'),
+                  style: const TextStyle(
+                    fontWeight: FontWeight.w700,
+                    fontSize: 15,
+                    height: 1.25,
+                    color: kOcText,
+                  ),
                 ),
-                const SizedBox(width: 8),
-                FilledButton(
-                  onPressed: () async {
-                    final answers = <List<String>>[];
-                    for (var i = 0; i < request.questions.length; i++) {
-                      final info = request.questions[i];
-                      final selected = _selected[i] ?? <String>{};
-                      final current = selected.toList();
-                      final custom = _customControllers[i]?.text.trim() ?? '';
-                      if (info.custom && custom.isNotEmpty) {
-                        current.add(custom);
-                      }
-                      answers.add(current);
-                    }
-                    await widget.controller.replyQuestion(request.id, answers);
-                  },
-                  child: Text(l(context, '提交', 'Submit')),
+                if (wizard) ...[
+                  const SizedBox(height: 4),
+                  Text(
+                    l(
+                      context,
+                      '第 ${_pageIndex + 1} 步，共 $pageCount 步',
+                      'Step ${_pageIndex + 1} of $pageCount',
+                    ),
+                    style: const TextStyle(
+                      fontSize: 12,
+                      fontWeight: FontWeight.w600,
+                      color: kOcAccent,
+                    ),
+                  ),
+                ],
+                const SizedBox(height: 4),
+                Text(
+                  subtitleText(),
+                  style: const TextStyle(
+                    fontSize: 12,
+                    height: 1.35,
+                    color: kOcMuted,
+                  ),
                 ),
               ],
             ),
+          ),
+          TextButton(
+            onPressed: () => _dismiss(request),
+            style: TextButton.styleFrom(
+              foregroundColor: kOcMuted,
+              padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+              minimumSize: Size.zero,
+              tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+            ),
+            child: Text(l(context, '忽略', 'Dismiss')),
+          ),
+        ],
+      );
+    }
+
+    Widget reviewPage() {
+      final none = l(context, '（未选择）', '(not answered)');
+      return SingleChildScrollView(
+        physics: const BouncingScrollPhysics(),
+        padding: const EdgeInsets.only(bottom: 8),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(
+              l(context, '核对答案', 'Review'),
+              style: const TextStyle(
+                fontWeight: FontWeight.w700,
+                fontSize: 15,
+                color: kOcText,
+              ),
+            ),
+            const SizedBox(height: 12),
+            for (var i = 0; i < n; i++) ...[
+              if (i > 0) const SizedBox(height: 12),
+              Text(
+                request.questions[i].question,
+                style: const TextStyle(
+                  fontWeight: FontWeight.w600,
+                  fontSize: 13.5,
+                  height: 1.35,
+                  color: kOcText,
+                ),
+              ),
+              const SizedBox(height: 4),
+              Text(
+                () {
+                  final parts = _collectAnswers(request)[i];
+                  if (parts.isEmpty) return none;
+                  return parts.join(', ');
+                }(),
+                style: const TextStyle(
+                  fontSize: 13,
+                  height: 1.4,
+                  color: kOcMuted,
+                ),
+              ),
+            ],
+          ],
+        ),
+      );
+    }
+
+    final themeWrap = Theme(
+      data: Theme.of(context).copyWith(
+        radioTheme: RadioThemeData(
+          fillColor: MaterialStateProperty.resolveWith((states) =>
+              states.contains(MaterialState.selected)
+                  ? kOcAccent
+                  : kOcMuted),
+        ),
+        checkboxTheme: CheckboxThemeData(
+          fillColor: MaterialStateProperty.resolveWith((states) =>
+              states.contains(MaterialState.selected) ? kOcAccent : null),
+          checkColor: MaterialStateProperty.all(Colors.white),
+          side: const BorderSide(color: kOcBorder, width: 1.2),
+        ),
+      ),
+      child: Padding(
+        padding: const EdgeInsets.fromLTRB(14, 12, 14, 12),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            header(),
+            const SizedBox(height: 12),
+            if (wizard) ...[
+              SizedBox(
+                height: pageViewHeight,
+                child: ClipRRect(
+                  borderRadius: BorderRadius.circular(10),
+                  child: PageView.builder(
+                    controller: _pc,
+                    onPageChanged: (i) => setState(() => _pageIndex = i),
+                    itemCount: pageCount,
+                    itemBuilder: (context, pageIndex) {
+                      if (pageIndex < n) {
+                        final info = request.questions[pageIndex];
+                        return SingleChildScrollView(
+                          physics: const BouncingScrollPhysics(),
+                          padding: const EdgeInsets.only(right: 4, bottom: 8),
+                          child: _QuestionForm(
+                            info: info,
+                            selected:
+                                _selected.putIfAbsent(pageIndex, () => <String>{}),
+                            customController: _customControllers.putIfAbsent(
+                                pageIndex, () => TextEditingController()),
+                            onChanged: () => setState(() {}),
+                            onAfterSingleChoice: !info.multiple
+                                ? _wizardNext
+                                : null,
+                          ),
+                        );
+                      }
+                      return reviewPage();
+                    },
+                  ),
+                ),
+              ),
+              const SizedBox(height: 12),
+              Row(
+                children: [
+                  if (_pageIndex > 0)
+                    Expanded(
+                      child: OutlinedButton(
+                        onPressed: () => _wizardPrev(),
+                        style: OutlinedButton.styleFrom(
+                          foregroundColor: kOcText,
+                          side: const BorderSide(color: kOcBorder),
+                          padding: const EdgeInsets.symmetric(vertical: 12),
+                        ),
+                        child: Text(l(context, '上一步', 'Back')),
+                      ),
+                    ),
+                  if (_pageIndex > 0) const SizedBox(width: 10),
+                  Expanded(
+                    flex: _pageIndex > 0 ? 2 : 1,
+                    child: FilledButton(
+                      onPressed: () async {
+                        if (_pageIndex < n) {
+                          await _wizardNext();
+                        } else {
+                          await _submit(request);
+                        }
+                      },
+                      style: FilledButton.styleFrom(
+                        backgroundColor: kOcAccent,
+                        foregroundColor: Colors.white,
+                        padding: const EdgeInsets.symmetric(vertical: 12),
+                      ),
+                      child: Text(
+                        _pageIndex < n
+                            ? l(context, '下一步', 'Next')
+                            : l(context, '提交', 'Submit'),
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+            ] else ...[
+              ...List.generate(n, (i) {
+                final info = request.questions[i];
+                return Padding(
+                  padding: EdgeInsets.only(bottom: i < n - 1 ? 14 : 0),
+                  child: _QuestionForm(
+                    info: info,
+                    selected: _selected.putIfAbsent(i, () => <String>{}),
+                    customController:
+                        _customControllers.putIfAbsent(i, () => TextEditingController()),
+                    onChanged: () => setState(() {}),
+                    onAfterSingleChoice: immediate
+                        ? () => _submit(request)
+                        : null,
+                  ),
+                );
+              }),
+              if (!immediate || request.questions[0].custom) ...[
+                const SizedBox(height: 14),
+                FilledButton(
+                  onPressed: () => _submit(request),
+                  style: FilledButton.styleFrom(
+                    backgroundColor: kOcAccent,
+                    foregroundColor: Colors.white,
+                    padding: const EdgeInsets.symmetric(vertical: 12),
+                  ),
+                  child: Text(l(context, '提交', 'Submit')),
+                ),
+              ],
+            ],
           ],
         ),
       ),
+    );
+
+    return Container(
+      margin: const EdgeInsets.fromLTRB(0, 0, 0, 10),
+      decoration: _panelDecoration(radius: 14, elevated: true),
+      clipBehavior: Clip.antiAlias,
+      child: themeWrap,
     );
   }
 }
@@ -243,6 +530,7 @@ class _QuestionForm extends StatelessWidget {
     required this.selected,
     required this.customController,
     required this.onChanged,
+    this.onAfterSingleChoice,
   });
 
   final QuestionInfo info;
@@ -250,44 +538,190 @@ class _QuestionForm extends StatelessWidget {
   final TextEditingController customController;
   final VoidCallback onChanged;
 
+  /// 单选题在选中一项后触发（OpenCode TUI：单 Tab 点选即提交；向导模式则进入下一页）。
+  final VoidCallback? onAfterSingleChoice;
+
+  void _notifyAfterSingleIfNeeded() {
+    if (!info.multiple) {
+      onAfterSingleChoice?.call();
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
+    final hint = info.multiple
+        ? l(context, '可多选', 'Select all that apply')
+        : l(context, '选择一项', 'Select one answer');
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        Text(info.header, style: const TextStyle(fontWeight: FontWeight.bold)),
-        const SizedBox(height: 6),
-        Text(info.question),
-        const SizedBox(height: 8),
-        Wrap(
-          spacing: 8,
-          children: info.options.map((option) {
-            final isSelected = selected.contains(option.label);
-            return FilterChip(
-              label: Text(option.label),
-              selected: isSelected,
-              onSelected: (value) {
-                if (!info.multiple) {
-                  selected
-                    ..clear()
-                    ..add(option.label);
-                } else if (value) {
-                  selected.add(option.label);
-                } else {
-                  selected.remove(option.label);
-                }
-                onChanged();
-              },
-            );
-          }).toList(),
+        if (info.header.trim().isNotEmpty) ...[
+          OcModelTag(label: info.header.trim()),
+          const SizedBox(height: 8),
+        ],
+        Text(
+          info.question,
+          style: const TextStyle(
+            fontSize: 15,
+            height: 1.45,
+            fontWeight: FontWeight.w600,
+            color: kOcText,
+          ),
         ),
+        const SizedBox(height: 6),
+        Text(
+          hint,
+          style: TextStyle(
+            fontSize: 12,
+            height: 1.3,
+            color: kOcMuted.withOpacity(0.95),
+          ),
+        ),
+        const SizedBox(height: 12),
+        ...info.options.map((option) {
+          final isSelected = selected.contains(option.label);
+          return Padding(
+            padding: const EdgeInsets.only(bottom: 8),
+            child: Material(
+              color: Colors.transparent,
+              child: InkWell(
+                onTap: () {
+                  if (!info.multiple) {
+                    selected
+                      ..clear()
+                      ..add(option.label);
+                  } else if (isSelected) {
+                    selected.remove(option.label);
+                  } else {
+                    selected.add(option.label);
+                  }
+                  onChanged();
+                  _notifyAfterSingleIfNeeded();
+                },
+                borderRadius: BorderRadius.circular(10),
+                child: AnimatedContainer(
+                  duration: const Duration(milliseconds: 160),
+                  curve: Curves.easeOut,
+                  padding:
+                      const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+                  decoration: BoxDecoration(
+                    color: isSelected
+                        ? kOcSelectedFill
+                        : const Color(0xFFF9FAFB),
+                    borderRadius: BorderRadius.circular(10),
+                    border: Border.all(
+                      color: isSelected
+                          ? kOcAccent.withOpacity(0.42)
+                          : kOcBorder,
+                      width: 1,
+                    ),
+                  ),
+                  child: Row(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Padding(
+                        padding: const EdgeInsets.only(top: 1),
+                        child: info.multiple
+                            ? SizedBox(
+                                width: 22,
+                                height: 22,
+                                child: Checkbox(
+                                  value: isSelected,
+                                  materialTapTargetSize:
+                                      MaterialTapTargetSize.shrinkWrap,
+                                  visualDensity: VisualDensity.compact,
+                                  onChanged: (_) {
+                                    if (isSelected) {
+                                      selected.remove(option.label);
+                                    } else {
+                                      selected.add(option.label);
+                                    }
+                                    onChanged();
+                                  },
+                                ),
+                              )
+                            : SizedBox(
+                                width: 22,
+                                height: 22,
+                                child: Radio<String>(
+                                  value: option.label,
+                                  groupValue: selected.isEmpty
+                                      ? null
+                                      : selected.first,
+                                  materialTapTargetSize:
+                                      MaterialTapTargetSize.shrinkWrap,
+                                  visualDensity: VisualDensity.compact,
+                                  onChanged: (_) {
+                                    selected
+                                      ..clear()
+                                      ..add(option.label);
+                                    onChanged();
+                                    _notifyAfterSingleIfNeeded();
+                                  },
+                                ),
+                              ),
+                      ),
+                      const SizedBox(width: 10),
+                      Expanded(
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Text(
+                              option.label,
+                              style: const TextStyle(
+                                fontWeight: FontWeight.w600,
+                                fontSize: 14,
+                                height: 1.3,
+                                color: kOcText,
+                              ),
+                            ),
+                            if (option.description.trim().isNotEmpty) ...[
+                              const SizedBox(height: 4),
+                              Text(
+                                option.description.trim(),
+                                style: const TextStyle(
+                                  fontSize: 12.5,
+                                  height: 1.4,
+                                  color: kOcMuted,
+                                ),
+                              ),
+                            ],
+                          ],
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+            ),
+          );
+        }),
         if (info.custom) ...[
           const SizedBox(height: 8),
           TextField(
             controller: customController,
+            minLines: 1,
+            maxLines: 4,
+            style: const TextStyle(fontSize: 14, height: 1.4),
             decoration: InputDecoration(
-              labelText: l(context, '自定义答案', 'Custom answer'),
-              border: const OutlineInputBorder(),
+              hintText: l(context, '或输入自定义答案…', 'Or type a custom answer…'),
+              filled: true,
+              fillColor: Colors.white,
+              contentPadding: const EdgeInsets.symmetric(
+                  horizontal: 12, vertical: 12),
+              border: OutlineInputBorder(
+                borderRadius: BorderRadius.circular(10),
+                borderSide: const BorderSide(color: kOcBorder),
+              ),
+              enabledBorder: OutlineInputBorder(
+                borderRadius: BorderRadius.circular(10),
+                borderSide: const BorderSide(color: kOcBorder),
+              ),
+              focusedBorder: OutlineInputBorder(
+                borderRadius: BorderRadius.circular(10),
+                borderSide:
+                    const BorderSide(color: kOcAccent, width: 1.4),
+              ),
             ),
             onChanged: (_) => onChanged(),
           ),

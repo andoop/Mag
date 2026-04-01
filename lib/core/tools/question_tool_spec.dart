@@ -7,8 +7,8 @@ Tool-calling:
 - Do not omit required keys. Follow each tool's description and parameter schema exactly.
 ''';
 
-/// Structured user question tool: when to use it and how to format options.
-/// The `custom` answer field is not passed by the model; the client enables it by default.
+/// 与 OpenCode `packages/opencode/src/tool/question.txt` 正文一致。
+/// `custom` 由客户端默认开启，模型侧 schema 不包含该字段（同 OpenCode `Question.Info.omit({ custom: true })`）。
 const String kQuestionToolDescription = r'''
 Use this tool when you need to ask the user questions during execution. This allows you to:
 1. Gather user preferences or requirements

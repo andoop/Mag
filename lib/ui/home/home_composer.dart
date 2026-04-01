@@ -37,22 +37,32 @@ extension _HomePageComposer on _HomePageState {
             mainAxisSize: MainAxisSize.min,
             children: [
               if (state.permissions.isNotEmpty || state.questions.isNotEmpty)
-                ConstrainedBox(
-                  constraints:
-                      BoxConstraints(maxHeight: isKeyboardOpen ? 120 : 168),
-                  child: SingleChildScrollView(
-                    padding: const EdgeInsets.only(bottom: 6),
-                    child: Column(
-                      children: [
-                        if (state.permissions.isNotEmpty)
-                          _PermissionPanel(
-                              controller: widget.controller, state: state),
-                        if (state.questions.isNotEmpty)
-                          _QuestionPanel(
-                              controller: widget.controller, state: state),
-                      ],
-                    ),
-                  ),
+                Builder(
+                  builder: (context) {
+                    final h = MediaQuery.of(context).size.height;
+                    // OpenCode TUI 占较大视区；移动端在 composer 上方用可滚动区域，避免 168px 截断题干/选项。
+                    final tall = state.questions.isNotEmpty;
+                    final maxH = tall
+                        ? (isKeyboardOpen ? h * 0.44 : h * 0.58)
+                            .clamp(240.0, 560.0)
+                        : (isKeyboardOpen ? 120.0 : 168.0);
+                    return ConstrainedBox(
+                      constraints: BoxConstraints(maxHeight: maxH),
+                      child: SingleChildScrollView(
+                        padding: const EdgeInsets.only(bottom: 6),
+                        child: Column(
+                          children: [
+                            if (state.permissions.isNotEmpty)
+                              _PermissionPanel(
+                                  controller: widget.controller, state: state),
+                            if (state.questions.isNotEmpty)
+                              _QuestionPanel(
+                                  controller: widget.controller, state: state),
+                          ],
+                        ),
+                      ),
+                    );
+                  },
                 ),
               SizedBox(height: isKeyboardOpen ? 4 : 6),
               Container(

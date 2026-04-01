@@ -56,6 +56,7 @@ class ToolRuntimeContext {
     required this.resolveInstructionReminder,
     required this.runSubtask,
     required this.saveTodos,
+    this.callId,
   });
 
   final WorkspaceInfo workspace;
@@ -70,6 +71,9 @@ class ToolRuntimeContext {
   final ResolveInstructionReminder resolveInstructionReminder;
   final RunSubtask runSubtask;
   final SaveTodos saveTodos;
+
+  /// 当前工具调用的 `call.id`，与 OpenCode `ctx.callID` 一致（如 `question` 关联 UI）。
+  final String? callId;
 }
 
 typedef ToolExecutor = Future<ToolExecutionResult> Function(
@@ -1419,13 +1423,35 @@ Future<ToolExecutionResult> _questionTool(
     sessionId: ctx.session.id,
     questions: parsed,
     messageId: ctx.message.id,
-    callId: newId('call'),
+    callId: ctx.callId,
   );
-  final answers = await ctx.askQuestion(request);
-  final sentence = answers.map((item) => item.join(', ')).join(' | ');
+  final answersRaw = await ctx.askQuestion(request);
+  final n = parsed.length;
+  final answers = <List<String>>[];
+  for (var i = 0; i < n; i++) {
+    if (i < answersRaw.length) {
+      answers.add(List<String>.from(answersRaw[i]));
+    } else {
+      answers.add(<String>[]);
+    }
+  }
+
+  String formatAnswer(List<String> answer) {
+    if (answer.isEmpty) return 'Unanswered';
+    return answer.join(', ');
+  }
+
+  final formatted = List.generate(
+    n,
+    (i) => '"${parsed[i].question}"="${formatAnswer(answers[i])}"',
+  ).join(', ');
+  final title = n == 1 ? 'Asked 1 question' : 'Asked $n questions';
+  final output =
+      'User has answered your questions: $formatted. You can now continue with the user\'s answers in mind.';
+
   return ToolExecutionResult(
-    title: 'Question',
-    output: sentence,
+    title: title,
+    output: output,
     metadata: {'answers': answers},
   );
 }
@@ -1543,7 +1569,7 @@ Future<ToolExecutionResult> _planExitTool(
         ),
       ],
       messageId: ctx.message.id,
-      callId: newId('call'),
+      callId: ctx.callId,
     ),
   );
   final accepted = answers.isNotEmpty && answers.first.contains('Switch');
