@@ -13,6 +13,7 @@ import 'package:flutter/services.dart';
 import 'package:webview_flutter/webview_flutter.dart';
 
 import '../core/models.dart';
+import '../core/workspace_bridge.dart';
 import '../sdk/local_server_client.dart';
 import '../store/app_controller.dart';
 import 'i18n.dart';
@@ -27,6 +28,7 @@ part 'home/home_pickers.dart';
 part 'home/home_parts.dart';
 part 'home/home_panels.dart';
 part 'home/home_landing.dart';
+part 'home/home_workspace_browser.dart';
 
 class HomePage extends StatefulWidget {
   const HomePage({super.key, required this.controller});
@@ -487,6 +489,17 @@ class _HomePageState extends State<HomePage> {
           running: state.isBusy,
         ),
         actions: [
+          IconButton(
+            tooltip: l(context, '工作区文件', 'Workspace files'),
+            onPressed: state.workspace == null
+                ? null
+                : () => _pushWorkspaceFileBrowser(
+                      context,
+                      workspace: state.workspace!,
+                      controller: widget.controller,
+                    ),
+            icon: const Icon(Icons.folder_open_outlined),
+          ),
           IconButton(
             tooltip: l(context, '设置', 'Settings'),
             onPressed: () => _openSettings(context, state.modelConfig),
