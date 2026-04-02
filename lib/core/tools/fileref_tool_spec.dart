@@ -16,7 +16,7 @@ You may still mention locations as `path:line` in natural language (OpenCode sty
 
 ## Parameters
 - `refs`: array of `{ "path": "workspace-relative/path", "kind": "created" | "modified" }`
-- Paths must be relative to the workspace root, POSIX slashes, no `..` segments.
+- Paths must stay under the workspace root, POSIX slashes. `.` / `./` are normalized; `..` is resolved and rejected if it would escape the root.
 
 ## When NOT to call
 - Read-only steps (`read`, `list`, `glob`, `grep`, `stat`) with no writes.

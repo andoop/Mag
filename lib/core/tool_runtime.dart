@@ -118,7 +118,7 @@ class ToolRegistry {
       ToolDefinition(
         id: 'read',
         description:
-            '${kReadToolDescription.trim()}$kMobileReadPathSuffix',
+            '${kReadToolDescription.trim()}$kMobileWorkspacePathSuffix',
         parameters: {
           'type': 'object',
           'properties': {
@@ -147,7 +147,8 @@ class ToolRegistry {
     register(
       ToolDefinition(
         id: 'write',
-        description: kWriteToolDescription.trim(),
+        description:
+            '${kWriteToolDescription.trim()}$kMobileWorkspacePathSuffix',
         parameters: {
           'type': 'object',
           'properties': {
@@ -165,7 +166,7 @@ class ToolRegistry {
       ToolDefinition(
         id: 'edit',
         description:
-            'Replace text in a file at `path` using `oldString` and `newString`.',
+            'Replace text in a file at `path` using `oldString` and `newString`.$kMobileWorkspacePathSuffix',
         parameters: {
           'type': 'object',
           'properties': {
@@ -183,7 +184,8 @@ class ToolRegistry {
     register(
       ToolDefinition(
         id: 'apply_patch',
-        description: kApplyPatchToolDescription.trim(),
+        description:
+            '${kApplyPatchToolDescription.trim()}$kMobileWorkspacePathSuffix',
         parameters: {
           'type': 'object',
           'properties': {
@@ -198,7 +200,8 @@ class ToolRegistry {
     register(
       ToolDefinition(
         id: 'list',
-        description: 'List files and directories in the workspace.',
+        description:
+            'List files and directories in the workspace.$kMobileWorkspacePathSuffix',
         parameters: {
           'type': 'object',
           'properties': {
@@ -216,7 +219,8 @@ class ToolRegistry {
     register(
       ToolDefinition(
         id: 'glob',
-        description: 'Search workspace files by glob pattern.',
+        description:
+            'Search workspace files by glob pattern.$kMobileWorkspacePathSuffix',
         parameters: {
           'type': 'object',
           'properties': {
@@ -232,7 +236,8 @@ class ToolRegistry {
     register(
       ToolDefinition(
         id: 'grep',
-        description: 'Search file contents by regular expression.',
+        description:
+            'Search file contents by regular expression.$kMobileWorkspacePathSuffix',
         parameters: {
           'type': 'object',
           'properties': {
@@ -250,7 +255,7 @@ class ToolRegistry {
       ToolDefinition(
         id: 'stat',
         description:
-            'Get file or directory metadata (path, size, lastModified, mimeType, isDirectory) in the workspace.',
+            'Get file or directory metadata (path, size, lastModified, mimeType, isDirectory) in the workspace.$kMobileWorkspacePathSuffix',
         parameters: {
           'type': 'object',
           'properties': {
@@ -266,7 +271,7 @@ class ToolRegistry {
       ToolDefinition(
         id: 'delete',
         description:
-            'Delete a file or directory in the workspace. Directories are removed recursively.',
+            'Delete a file or directory in the workspace. Directories are removed recursively.$kMobileWorkspacePathSuffix',
         parameters: {
           'type': 'object',
           'properties': {
@@ -282,7 +287,7 @@ class ToolRegistry {
       ToolDefinition(
         id: 'rename',
         description:
-            'Rename a file or directory within the same parent folder (provide `newName` only, not a path).',
+            'Rename a file or directory within the same parent folder (provide `newName` only, not a path).$kMobileWorkspacePathSuffix',
         parameters: {
           'type': 'object',
           'properties': {
@@ -299,7 +304,7 @@ class ToolRegistry {
       ToolDefinition(
         id: 'move',
         description:
-            'Move or rename a file or directory to a new workspace-relative path (`toPath` is the final destination path).',
+            'Move or rename a file or directory to a new workspace-relative path (`toPath` is the final destination path).$kMobileWorkspacePathSuffix',
         parameters: {
           'type': 'object',
           'properties': {
@@ -316,7 +321,7 @@ class ToolRegistry {
       ToolDefinition(
         id: 'copy',
         description:
-            'Copy a file or directory to another path within the workspace. Directory copies are recursive (subject to platform limits).',
+            'Copy a file or directory to another path within the workspace. Directory copies are recursive (subject to platform limits).$kMobileWorkspacePathSuffix',
         parameters: {
           'type': 'object',
           'properties': {
@@ -368,7 +373,7 @@ class ToolRegistry {
       ToolDefinition(
         id: 'browser',
         description:
-            'Open an HTML page from the workspace in the in-app browser.',
+            'Open an HTML page from the workspace in the in-app browser.$kMobileWorkspacePathSuffix',
         parameters: {
           'type': 'object',
           'properties': {
@@ -468,7 +473,7 @@ class ToolRegistry {
 
 String _toolFilePathArg(JsonMap args) {
   final raw = args['filePath'] ?? args['path'];
-  return _cleanPath(jsonStringCoerce(raw, ''));
+  return _normalizeWorkspaceRelativePath(jsonStringCoerce(raw, ''));
 }
 
 String _normalizeWriteContent(Object? value) {
@@ -980,7 +985,7 @@ Future<ToolExecutionResult> _applyPatchTool(
 
 Future<ToolExecutionResult> _listTool(
     JsonMap args, ToolRuntimeContext ctx) async {
-  final relativePath = _cleanPath(args['path'] as String? ?? '');
+  final relativePath = _normalizeWorkspaceRelativePath(args['path'] as String? ?? '');
   final ignore = (args['ignore'] as List?)
           ?.map((item) => item.toString())
           .where((item) => item.trim().isNotEmpty)
@@ -1017,7 +1022,7 @@ Future<ToolExecutionResult> _listTool(
 Future<ToolExecutionResult> _globTool(
     JsonMap args, ToolRuntimeContext ctx) async {
   final pattern = args['pattern'] as String? ?? '*';
-  final pathPrefix = _cleanPath(args['path'] as String? ?? '');
+  final pathPrefix = _normalizeWorkspaceRelativePath(args['path'] as String? ?? '');
   final matches = await ctx.bridge.searchEntries(
     treeUri: ctx.workspace.treeUri,
     relativePath: pathPrefix,
@@ -1074,7 +1079,7 @@ Future<ToolExecutionResult> _globTool(
 Future<ToolExecutionResult> _grepTool(
     JsonMap args, ToolRuntimeContext ctx) async {
   final pattern = args['pattern'] as String? ?? '';
-  final pathPrefix = _cleanPath(args['path'] as String? ?? '');
+  final pathPrefix = _normalizeWorkspaceRelativePath(args['path'] as String? ?? '');
   final include = args['include'] as String?;
   final matches = await ctx.bridge.grepText(
     treeUri: ctx.workspace.treeUri,
@@ -1138,15 +1143,27 @@ String _formatStatEntry(WorkspaceEntry entry) {
 Future<ToolExecutionResult> _statTool(
     JsonMap args, ToolRuntimeContext ctx) async {
   final filePath = _toolFilePathArg(args);
+  WorkspaceEntry? entry;
   if (filePath.isEmpty) {
-    throw Exception('Missing required `path`.');
+    entry = await ctx.bridge.getEntry(
+      treeUri: ctx.workspace.treeUri,
+      relativePath: '',
+    );
+    entry ??= WorkspaceEntry(
+      path: '',
+      name: ctx.workspace.name,
+      isDirectory: true,
+      lastModified: ctx.workspace.createdAt,
+      size: 0,
+    );
+  } else {
+    entry = await ctx.bridge.stat(
+      treeUri: ctx.workspace.treeUri,
+      relativePath: filePath,
+    );
   }
-  final entry = await ctx.bridge.stat(
-    treeUri: ctx.workspace.treeUri,
-    relativePath: filePath,
-  );
   if (entry == null) {
-    throw Exception('Not found: $filePath');
+    throw Exception('Not found: ${filePath.isEmpty ? '.' : filePath}');
   }
   final output = _formatStatEntry(entry);
   return ToolExecutionResult(
@@ -1267,8 +1284,8 @@ Future<ToolExecutionResult> _renameTool(
 
 Future<ToolExecutionResult> _moveTool(
     JsonMap args, ToolRuntimeContext ctx) async {
-  final fromPath = _cleanPath(args['fromPath'] as String? ?? '');
-  final toPath = _cleanPath(args['toPath'] as String? ?? '');
+  final fromPath = _normalizeWorkspaceRelativePath(args['fromPath'] as String? ?? '');
+  final toPath = _normalizeWorkspaceRelativePath(args['toPath'] as String? ?? '');
   if (fromPath.isEmpty || toPath.isEmpty) {
     throw Exception('Missing required `fromPath` or `toPath`.');
   }
@@ -1317,8 +1334,8 @@ Future<ToolExecutionResult> _moveTool(
 
 Future<ToolExecutionResult> _copyTool(
     JsonMap args, ToolRuntimeContext ctx) async {
-  final fromPath = _cleanPath(args['fromPath'] as String? ?? '');
-  final toPath = _cleanPath(args['toPath'] as String? ?? '');
+  final fromPath = _normalizeWorkspaceRelativePath(args['fromPath'] as String? ?? '');
+  final toPath = _normalizeWorkspaceRelativePath(args['toPath'] as String? ?? '');
   if (fromPath.isEmpty || toPath.isEmpty) {
     throw Exception('Missing required `fromPath` or `toPath`.');
   }
@@ -1507,7 +1524,7 @@ Future<ToolExecutionResult> _webFetchTool(
 
 Future<ToolExecutionResult> _browserTool(
     JsonMap args, ToolRuntimeContext ctx) async {
-  final requestedPath = _cleanPath(args['path'] as String? ?? '');
+  final requestedPath = _normalizeWorkspaceRelativePath(args['path'] as String? ?? '');
   if (requestedPath.isEmpty) {
     throw Exception('Missing workspace page path');
   }
@@ -1538,14 +1555,16 @@ Future<ToolExecutionResult> _filerefTool(
   final warnings = <String>[];
   for (final e in raw.whereType<Map>()) {
     final m = Map<String, dynamic>.from(e);
-    final path = _cleanPath(jsonStringCoerce(m['path'], ''));
+    String path;
+    try {
+      path = _normalizeWorkspaceRelativePath(jsonStringCoerce(m['path'], ''));
+    } catch (e) {
+      warnings.add('Invalid path ${m['path']}: $e');
+      continue;
+    }
     var kind = jsonStringCoerce(m['kind'], 'modified').trim().toLowerCase();
     if (path.isEmpty) {
       warnings.add('Skipped empty path');
-      continue;
-    }
-    if (!_isSafeWorkspaceRelativePath(path)) {
-      warnings.add('Rejected unsafe path: $path');
       continue;
     }
     if (kind != 'created' && kind != 'modified') {
@@ -1568,7 +1587,7 @@ Future<ToolExecutionResult> _filerefTool(
     return ToolExecutionResult(
       title: 'fileref',
       output:
-          'No valid refs. Provide refs: [{path, kind}] with workspace-relative paths (no ..).',
+          'No valid refs. Provide refs: [{path, kind}] with workspace-relative paths (. and ./ allowed; .. cannot escape root).',
       metadata: {'refs': <JsonMap>[]},
     );
   }
@@ -1654,18 +1673,50 @@ Future<ToolExecutionResult> _taskTool(
   );
 }
 
-String _cleanPath(String input) {
-  final value = input.trim().replaceAll('\\', '/');
-  if (value.startsWith('/')) return value.substring(1);
-  return value;
+/// Workspace-root-relative path: trims, uses `/`, strips redundant `./`, resolves
+/// `.` and `..`. A leading `/` is stripped (still under workspace). Returns `''`
+/// for the workspace root. Throws if `..` would escape above the root.
+String _normalizeWorkspaceRelativePath(String input) {
+  var value = input.trim().replaceAll('\\', '/');
+  if (value.isEmpty || value == '.') {
+    return '';
+  }
+  while (value.startsWith('./')) {
+    value = value.substring(2);
+  }
+  if (value.isEmpty || value == '.') {
+    return '';
+  }
+  if (value.startsWith('/')) {
+    value = value.substring(1);
+  }
+  if (value.isEmpty) {
+    return '';
+  }
+  final parts = <String>[];
+  for (final rawSeg in value.split('/')) {
+    final seg = rawSeg.trim();
+    if (seg.isEmpty || seg == '.') {
+      continue;
+    }
+    if (seg == '..') {
+      if (parts.isEmpty) {
+        throw Exception(
+          'Path escapes workspace root (invalid ..): ${_shortPathForError(input)}',
+        );
+      }
+      parts.removeLast();
+      continue;
+    }
+    parts.add(seg);
+  }
+  return parts.join('/');
 }
 
-bool _isSafeWorkspaceRelativePath(String path) {
-  if (path.startsWith('/') || path.contains('..')) return false;
-  for (final seg in path.split('/')) {
-    if (seg == '..') return false;
-  }
-  return true;
+String _shortPathForError(String s, [int max = 100]) {
+  final t = s.trim();
+  if (t.length <= max) return t;
+  return '${t.substring(0, max)}…';
 }
 
 bool _looksBinaryEntry(WorkspaceEntry entry) {
@@ -1820,7 +1871,7 @@ String _formatGrepOutput(
 
 Future<String> _resolveBrowserPath(
     String requestedPath, ToolRuntimeContext ctx) async {
-  final normalized = _cleanPath(requestedPath);
+  final normalized = _normalizeWorkspaceRelativePath(requestedPath);
   final direct = await ctx.bridge.getEntry(
     treeUri: ctx.workspace.treeUri,
     relativePath: normalized,
@@ -1882,6 +1933,16 @@ class _PatchHunk {
 
 enum _PatchSectionKind { add, update, delete, move }
 
+String _normalizePatchHeaderPath(String raw) {
+  final out = _normalizeWorkspaceRelativePath(raw);
+  if (out.isEmpty) {
+    throw Exception(
+      'apply_patch: file path in patch header cannot be empty or only "."',
+    );
+  }
+  return out;
+}
+
 List<_PatchSection> _parsePatchSections(String patchText) {
   final lines = const LineSplitter().convert(patchText);
   final sections = <_PatchSection>[];
@@ -1906,7 +1967,9 @@ List<_PatchSection> _parsePatchSections(String patchText) {
     if (line.startsWith('*** Add File: ')) {
       flush();
       currentKind = _PatchSectionKind.add;
-      currentPath = line.substring('*** Add File: '.length).trim();
+      currentPath = _normalizePatchHeaderPath(
+        line.substring('*** Add File: '.length).trim(),
+      );
       currentMovePath = null;
       currentLines.clear();
       continue;
@@ -1914,7 +1977,9 @@ List<_PatchSection> _parsePatchSections(String patchText) {
     if (line.startsWith('*** Update File: ')) {
       flush();
       currentKind = _PatchSectionKind.update;
-      currentPath = line.substring('*** Update File: '.length).trim();
+      currentPath = _normalizePatchHeaderPath(
+        line.substring('*** Update File: '.length).trim(),
+      );
       currentMovePath = null;
       currentLines.clear();
       continue;
@@ -1922,14 +1987,18 @@ List<_PatchSection> _parsePatchSections(String patchText) {
     if (line.startsWith('*** Delete File: ')) {
       flush();
       currentKind = _PatchSectionKind.delete;
-      currentPath = line.substring('*** Delete File: '.length).trim();
+      currentPath = _normalizePatchHeaderPath(
+        line.substring('*** Delete File: '.length).trim(),
+      );
       currentMovePath = null;
       currentLines.clear();
       continue;
     }
     if (line.startsWith('*** Move to: ')) {
       currentKind = _PatchSectionKind.move;
-      currentMovePath = line.substring('*** Move to: '.length).trim();
+      currentMovePath = _normalizePatchHeaderPath(
+        line.substring('*** Move to: '.length).trim(),
+      );
       continue;
     }
     if (line.startsWith('*** End')) continue;

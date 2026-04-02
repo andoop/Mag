@@ -81,9 +81,9 @@ Usage notes:
 ''';
 
 /// Client-specific: workspace-relative paths; `path` and `filePath` are both accepted.
-const String kMobileReadPathSuffix = '''
+const String kMobileWorkspacePathSuffix = '''
 
-In this workspace, paths are relative to the project root. Use `path` or `filePath` (either is accepted).''';
+In this workspace, paths are relative to the project root (not host absolute paths). Use forward slashes. For `read`, use `path` or `filePath` (either is accepted). You may write the root as `.`, `./`, or an empty path where allowed; segments like `./lib/main.dart` work. `..` is resolved lexically; paths that would escape above the workspace root are rejected.''';
 
 /// Client-specific: fetch returns plain text; format/timeout options are not exposed.
 const String kMobileWebFetchSuffix = '''
