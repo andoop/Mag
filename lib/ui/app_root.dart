@@ -16,10 +16,24 @@ class AppRoot extends StatelessWidget {
       animation: controller,
       builder: (context, _) {
         final workspace = controller.state.workspace;
-        if (workspace == null) {
-          return ProjectHomePage(controller: controller);
-        }
-        return HomePage(controller: controller);
+        return WillPopScope(
+          onWillPop: () async {
+            final s = controller.state;
+            if (s.workspace == null) {
+              return true;
+            }
+            // 与 AppBar 左上角返回一致：直接回到项目首页，而非新建会话落地页。
+            try {
+              await controller.leaveProject();
+            } catch (_) {
+              // 保留在当前界面，避免误退出
+            }
+            return false;
+          },
+          child: workspace == null
+              ? ProjectHomePage(controller: controller)
+              : HomePage(controller: controller),
+        );
       },
     );
   }

@@ -2,7 +2,7 @@
 part of 'app_controller.dart';
 
 extension AppControllerSession on AppController {
-  /// 从系统选择器打开文件夹并进入工作区（新建会话落地页，对齐 OpenCode）。
+  /// 从系统选择器打开文件夹并进入工作区（有历史会话则进入最近一条，否则新建落地页）。
   Future<void> pickAndOpenProject() async {
     try {
       await initialize();
@@ -37,7 +37,7 @@ extension AppControllerSession on AppController {
     await enterWorkspace(workspace, openSession: null);
   }
 
-  /// 打开已有工作区。`openSession == null` 时对齐 OpenCode `/session` 无 id：仅展示新建会话页与输入框。
+  /// 打开已有工作区。`openSession == null` 时：若有会话则进入 [updatedAt] 最新的一条，否则展示新建会话落地页。
   Future<void> enterWorkspace(
     WorkspaceInfo picked, {
     SessionInfo? openSession,
@@ -81,17 +81,29 @@ extension AppControllerSession on AppController {
           await refreshSession();
         }
       } else {
-        state = state.copyWith(
-          workspace: resolved,
-          sessions: sessions,
-          session: null,
-          messages: const [],
-          permissions: const [],
-          questions: const [],
-          todos: const [],
-          error: null,
-        );
-        notifyListeners();
+        final latest = _pickLatestSession(sessions);
+        if (latest != null) {
+          state = state.copyWith(
+            workspace: resolved,
+            sessions: sessions,
+            session: latest,
+            error: null,
+          );
+          notifyListeners();
+          await refreshSession();
+        } else {
+          state = state.copyWith(
+            workspace: resolved,
+            sessions: sessions,
+            session: null,
+            messages: const [],
+            permissions: const [],
+            questions: const [],
+            todos: const [],
+            error: null,
+          );
+          notifyListeners();
+        }
       }
       debugTrace(
         runId: 'workspace-enter',

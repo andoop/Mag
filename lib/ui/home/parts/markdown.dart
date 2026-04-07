@@ -31,6 +31,14 @@ class _StreamingMarkdownTextState extends State<_StreamingMarkdownText> {
 
   String _completeText = '';
   Widget? _completeWidget;
+  int? _cachedThemeKey;
+
+  void _invalidateCachedMarkdown() {
+    _stableText = '';
+    _stableWidget = null;
+    _completeText = '';
+    _completeWidget = null;
+  }
 
   /// Find the last paragraph boundary (\n\n) that is NOT inside a code fence.
   int _safeSplitPoint(String text) {
@@ -104,6 +112,11 @@ class _StreamingMarkdownTextState extends State<_StreamingMarkdownText> {
 
   @override
   Widget build(BuildContext context) {
+    final themeKey = context.themeCacheKey;
+    if (_cachedThemeKey != themeKey) {
+      _cachedThemeKey = themeKey;
+      _invalidateCachedMarkdown();
+    }
     if (widget.streaming) {
       return _buildStreaming(context);
     }
@@ -158,6 +171,10 @@ class _StreamingMarkdownTextState extends State<_StreamingMarkdownText> {
 MarkdownStyleSheet _kMarkdownStyle(BuildContext context) {
   final oc = context.oc;
   final dark = context.isDarkMode;
+  final blockBackground =
+      dark ? const Color(0xFF151821) : const Color(0xFFF8FAFC);
+  final blockquoteBackground =
+      dark ? const Color(0xFF161A24) : const Color(0xFFF6F8FB);
   return MarkdownStyleSheet.fromTheme(Theme.of(context)).copyWith(
     blockSpacing: 10,
     p: TextStyle(fontSize: 15, height: 1.5, color: oc.foreground),
@@ -181,17 +198,17 @@ MarkdownStyleSheet _kMarkdownStyle(BuildContext context) {
       fontSize: 13,
       height: 1.45,
       color: dark ? const Color(0xFFE06C75) : Colors.red.shade900,
-      backgroundColor: oc.composerOptionBg,
+      backgroundColor: blockBackground,
     ),
     codeblockDecoration: BoxDecoration(
-      color: oc.composerOptionBg,
+      color: blockBackground,
       borderRadius: BorderRadius.circular(10),
       border:
           Border.fromBorderSide(BorderSide(color: oc.borderColor)),
     ),
     codeblockPadding: const EdgeInsets.all(12),
     blockquoteDecoration: BoxDecoration(
-      color: oc.composerOptionBg,
+      color: blockquoteBackground,
       borderRadius: BorderRadius.circular(10),
       border: Border(
         left: BorderSide(color: oc.border, width: 3),
@@ -282,6 +299,10 @@ class _MarkdownCodeBlock extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final codeBackground =
+        context.isDarkMode ? const Color(0xFF151821) : const Color(0xFFF8FAFC);
+    final headerBackground =
+        context.isDarkMode ? const Color(0xFF202431) : const Color(0xFFEFF3F8);
     final inner = Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       mainAxisSize: MainAxisSize.min,
@@ -289,7 +310,7 @@ class _MarkdownCodeBlock extends StatelessWidget {
         Container(
           padding: const EdgeInsets.fromLTRB(10, 6, 6, 6),
           decoration: BoxDecoration(
-            color: context.oc.shadow,
+            color: headerBackground,
             border: Border(
               bottom: BorderSide(color: context.oc.borderColor),
             ),
@@ -329,16 +350,20 @@ class _MarkdownCodeBlock extends StatelessWidget {
         ),
         SingleChildScrollView(
           scrollDirection: Axis.horizontal,
-          padding: const EdgeInsets.all(10),
-          child: HighlightView(
-            code,
-            language: language,
-            theme: _codeHighlightTheme(context),
-            padding: EdgeInsets.zero,
-            textStyle: const TextStyle(
-              fontFamily: 'monospace',
-              fontSize: 13,
-              height: 1.45,
+          child: Container(
+            width: double.infinity,
+            color: codeBackground,
+            padding: const EdgeInsets.all(10),
+            child: HighlightView(
+              code,
+              language: language,
+              theme: _codeHighlightTheme(context),
+              padding: EdgeInsets.zero,
+              textStyle: const TextStyle(
+                fontFamily: 'monospace',
+                fontSize: 13,
+                height: 1.45,
+              ),
             ),
           ),
         ),
@@ -350,7 +375,7 @@ class _MarkdownCodeBlock extends StatelessWidget {
     return Container(
       width: double.infinity,
       decoration: BoxDecoration(
-        color: context.oc.composerOptionBg,
+        color: codeBackground,
         borderRadius: BorderRadius.circular(10),
         border: Border.fromBorderSide(BorderSide(color: context.oc.borderColor)),
       ),

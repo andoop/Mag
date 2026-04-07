@@ -25,6 +25,20 @@ part 'app_controller_provider.dart';
 part 'app_controller_workspace.dart';
 part 'app_controller_state.dart';
 
+/// 按 [SessionInfo.updatedAt] 选取最近活跃会话，相同则比较 [createdAt]。
+SessionInfo? _pickLatestSession(Iterable<SessionInfo> sessions) {
+  final list = sessions.toList();
+  if (list.isEmpty) return null;
+  var best = list.first;
+  for (final s in list.skip(1)) {
+    if (s.updatedAt > best.updatedAt ||
+        (s.updatedAt == best.updatedAt && s.createdAt > best.createdAt)) {
+      best = s;
+    }
+  }
+  return best;
+}
+
 const bool _kDebugEngine = false;
 
 void _debugLog(String tag, String message, [Map<String, dynamic>? data]) {

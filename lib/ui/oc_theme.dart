@@ -270,6 +270,29 @@ class OcColors extends ThemeExtension<OcColors> {
 extension OcThemeX on BuildContext {
   OcColors get oc => OcColors.of(this);
   bool get isDarkMode => Theme.of(this).brightness == Brightness.dark;
+  int get themeCacheKey {
+    final theme = Theme.of(this);
+    final colors = oc;
+    return Object.hashAll([
+      theme.brightness,
+      theme.scaffoldBackgroundColor.value,
+      colors.pageBackground.value,
+      colors.panelBackground.value,
+      colors.surface.value,
+      colors.agentBubble.value,
+      colors.userBubble.value,
+      colors.foreground.value,
+      colors.foregroundMuted.value,
+      colors.foregroundFaint.value,
+      colors.accent.value,
+      colors.border.value,
+      colors.borderColor.value,
+      colors.softBorderColor.value,
+      colors.composerOptionBg.value,
+      colors.shadow.value,
+      colors.progressBg.value,
+    ]);
+  }
 }
 
 ThemeData buildLightTheme() {

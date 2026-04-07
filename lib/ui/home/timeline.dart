@@ -141,6 +141,7 @@ class _MessageBubbleState extends State<_MessageBubble> {
   Widget? _cached;
   SessionMessageBundle? _lastBundle;
   bool? _lastStreaming;
+  int? _lastThemeKey;
 
   List<MessagePart>? _cachedPrimaryParts;
   List<MessagePart>? _cachedFooterParts;
@@ -150,13 +151,16 @@ class _MessageBubbleState extends State<_MessageBubble> {
 
   @override
   Widget build(BuildContext context) {
+    final themeKey = context.themeCacheKey;
     if (identical(widget.bundle, _lastBundle) &&
         widget.isStreamingAssistantMessage == _lastStreaming &&
+        themeKey == _lastThemeKey &&
         _cached != null) {
       return _cached!;
     }
     _lastBundle = widget.bundle;
     _lastStreaming = widget.isStreamingAssistantMessage;
+    _lastThemeKey = themeKey;
     _cached = _buildContent(context);
     return _cached!;
   }

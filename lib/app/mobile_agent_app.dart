@@ -39,6 +39,7 @@ class _MobileAgentAppState extends State<MobileAgentApp> {
       builder: (context, _) {
         return MaterialApp(
           onGenerateTitle: (context) => l(context, 'Mag', 'Mag'),
+          themeAnimationDuration: Duration.zero,
           localizationsDelegates: const [
             GlobalMaterialLocalizations.delegate,
             GlobalWidgetsLocalizations.delegate,
