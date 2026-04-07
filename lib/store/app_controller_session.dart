@@ -2,13 +2,19 @@
 part of 'app_controller.dart';
 
 extension AppControllerSession on AppController {
-  /// 从系统选择器打开文件夹并进入工作区（有历史会话则进入最近一条，否则新建落地页）。
+  /// 打开一个沙盒项目；若尚无项目则自动创建默认项目。
   Future<void> pickAndOpenProject() async {
     try {
       await initialize();
-      final picked = await _workspaceBridge.pickWorkspace();
-      if (picked == null) return;
-      await enterWorkspace(picked, openSession: null);
+      final existing = await workspacesForHome(limit: 1);
+      if (existing.isNotEmpty) {
+        await enterWorkspace(existing.first, openSession: null);
+        return;
+      }
+      final created = await _workspaceBridge.createSandboxProject(
+        name: _defaultProjectName(),
+      );
+      await enterWorkspace(created, openSession: null);
     } catch (error) {
       _setError(error);
     }
@@ -48,7 +54,7 @@ extension AppControllerSession on AppController {
       _cancelPendingPartDeltas();
       _clearWorkspacePreviewCaches();
       final resolved = await _resolveWorkspace(picked);
-      await ProjectRecentsStore.touch(resolved.treeUri, resolved.name);
+      await ProjectRecentsStore.touch(resolved.id, resolved.name);
       final sessions = await _client!.listSessions(resolved.id);
       if (openSession != null) {
         SessionInfo? resolvedSession;
@@ -122,6 +128,16 @@ extension AppControllerSession on AppController {
     }
   }
 
+  Future<void> createAndOpenProject(String name) async {
+    try {
+      await initialize();
+      final workspace = await _workspaceBridge.createSandboxProject(name: name);
+      await enterWorkspace(workspace, openSession: null);
+    } catch (error) {
+      _setError(error);
+    }
+  }
+
   Future<void> enterNewSessionLanding() async {
     final workspace = state.workspace;
     if (workspace == null) return;
@@ -145,30 +161,12 @@ extension AppControllerSession on AppController {
   }
 
   Future<WorkspaceInfo> _resolveWorkspace(WorkspaceInfo picked) async {
-    final all = await _client!.listWorkspaces();
-    for (final w in all) {
-      if (_treeUriEquivalent(w.treeUri, picked.treeUri)) {
-        return w;
-      }
+    await _workspaceBridge.getSandboxRootPath();
+    if (!_workspaceBridge.isSandboxWorkspace(picked.treeUri)) {
+      throw Exception('Unsupported workspace outside sandbox: ${picked.treeUri}');
     }
     await _client!.saveWorkspace(picked);
     return picked;
-  }
-
-  bool _treeUriEquivalent(String a, String b) {
-    if (a == b) return true;
-    try {
-      final ua = Uri.parse(a);
-      final ub = Uri.parse(b);
-      if (ua.scheme == 'file' && ub.scheme == 'file') {
-        var pa = ua.path;
-        var pb = ub.path;
-        if (pa.endsWith('/')) pa = pa.substring(0, pa.length - 1);
-        if (pb.endsWith('/')) pb = pb.substring(0, pb.length - 1);
-        return pa == pb;
-      }
-    } catch (_) {}
-    return false;
   }
 
   /// 供项目首页：已保存的工作区按最近打开时间排序，最多 [limit] 条。
@@ -180,11 +178,12 @@ extension AppControllerSession on AppController {
     }
     final c = _client;
     if (c == null) return const [];
-    final all = await c.listWorkspaces();
+    final all = await _workspaceBridge.listSandboxProjects();
     if (all.isEmpty) return const [];
+    await Future.wait(all.map(c.saveWorkspace));
     final recent = await ProjectRecentsStore.lastOpenedMap();
     int rank(WorkspaceInfo w) {
-      return recent[w.treeUri] ?? w.createdAt;
+      return recent[w.id] ?? w.createdAt;
     }
 
     final sorted = [...all]..sort((a, b) => rank(b).compareTo(rank(a)));
@@ -200,6 +199,13 @@ extension AppControllerSession on AppController {
   @Deprecated('Use enterWorkspace or pickAndOpenProject')
   Future<void> selectWorkspace(WorkspaceInfo workspace) async {
     await enterWorkspace(workspace, openSession: null);
+  }
+
+  String _defaultProjectName() {
+    final now = DateTime.now();
+    final stamp =
+        '${now.year}${now.month.toString().padLeft(2, '0')}${now.day.toString().padLeft(2, '0')}';
+    return 'Project $stamp';
   }
 
   Future<void> createSession({String agent = 'build'}) async {

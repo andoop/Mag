@@ -4,6 +4,8 @@ import 'dart:convert';
 import 'dart:io';
 
 import 'database.dart';
+import 'git/exceptions/git_exceptions.dart';
+import 'git/git_service.dart';
 import 'json_coerce.dart';
 import 'models.dart';
 import 'tools/builtin_tool_descriptions.dart';
@@ -17,6 +19,7 @@ part 'tool_file_ops.dart';
 part 'tool_patch.dart';
 part 'tool_misc.dart';
 part 'tool_utils.dart';
+part 'tool_git.dart';
 
 typedef AskPermission = Future<void> Function(PermissionRequest request);
 typedef AskQuestion = Future<List<List<String>>> Function(
@@ -446,6 +449,105 @@ class ToolRegistry {
         description: kFilerefToolDescription.trim(),
         parameters: filerefToolParametersSchema(),
         execute: _filerefTool,
+      ),
+    );
+    register(
+      ToolDefinition(
+        id: 'git',
+        description:
+            'Run git operations on the workspace repository (pure-Dart, no CLI needed). '
+            'Set `command` to one of: status, add, commit, log, diff, branch, '
+            'checkout, merge, init, show. '
+            'Each command accepts additional parameters — see per-command docs in the schema.',
+        parameters: {
+          'type': 'object',
+          'properties': {
+            'command': {
+              'type': 'string',
+              'description':
+                  'Git sub-command: status | add | commit | log | diff | '
+                      'branch | checkout | merge | init | show',
+            },
+            'paths': {
+              'type': 'array',
+              'items': {'type': 'string'},
+              'description': 'File paths (for add, diff)',
+            },
+            'all': {
+              'type': 'boolean',
+              'description': 'Stage all changes (for add)',
+            },
+            'message': {
+              'type': 'string',
+              'description': 'Commit message (for commit)',
+            },
+            'amend': {
+              'type': 'boolean',
+              'description': 'Amend the last commit (for commit)',
+            },
+            'maxCount': {
+              'type': 'integer',
+              'description': 'Max entries to return (for log, default 10)',
+            },
+            'firstParentOnly': {
+              'type': 'boolean',
+              'description': 'Follow only the first parent when walking history',
+            },
+            'since': {
+              'type': 'string',
+              'description': 'Only include commits on or after this ISO-8601 timestamp',
+            },
+            'until': {
+              'type': 'string',
+              'description': 'Only include commits on or before this ISO-8601 timestamp',
+            },
+            'action': {
+              'type': 'string',
+              'description':
+                  'Sub-action: list | create | delete (for branch)',
+            },
+            'name': {
+              'type': 'string',
+              'description': 'Branch name (for branch create/delete)',
+            },
+            'force': {
+              'type': 'boolean',
+              'description': 'Force the operation when supported (currently branch delete)',
+            },
+            'startPoint': {
+              'type': 'string',
+              'description': 'Start point ref for branch creation',
+            },
+            'target': {
+              'type': 'string',
+              'description': 'Branch or commit to switch to (for checkout)',
+            },
+            'newBranch': {
+              'type': 'boolean',
+              'description':
+                  'Create and switch to a new branch (for checkout)',
+            },
+            'branch': {
+              'type': 'string',
+              'description': 'Branch to merge (for merge)',
+            },
+            'ref': {
+              'type': 'string',
+              'description': 'Commit ref to show (for show, default HEAD)',
+            },
+            'authorName': {
+              'type': 'string',
+              'description': 'Override author name (for commit)',
+            },
+            'authorEmail': {
+              'type': 'string',
+              'description': 'Override author email (for commit)',
+            },
+          },
+          'required': ['command'],
+          'additionalProperties': false,
+        },
+        execute: _gitTool,
       ),
     );
     register(

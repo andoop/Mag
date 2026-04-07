@@ -13,7 +13,7 @@ class _RecentProjectsLoad {
   final Map<String, int> times;
 }
 
-/// 项目首页：最近项目与打开工作区（路径由系统沙盒 / 文件选择器与原生桥提供）。
+/// 项目首页：展示应用沙盒中的项目列表，并支持创建新项目。
 class ProjectHomePage extends StatefulWidget {
   const ProjectHomePage({super.key, required this.controller});
 
@@ -36,6 +36,17 @@ class _ProjectHomePageState extends State<ProjectHomePage> {
     final list = await widget.controller.workspacesForHome();
     final times = await ProjectRecentsStore.lastOpenedMap();
     return _RecentProjectsLoad(list: list, times: times);
+  }
+
+  Future<void> _showCreateProjectDialog() async {
+    final result = await showDialog<String>(
+      context: context,
+      builder: (context) => const _CreateProjectDialog(),
+    );
+    if (!mounted || result == null) {
+      return;
+    }
+    await widget.controller.createAndOpenProject(result);
   }
 
   @override
@@ -145,7 +156,7 @@ class _ProjectHomePageState extends State<ProjectHomePage> {
                     final times = data?.times ?? const <String, int>{};
                     if (list.isEmpty) {
                       return _EmptyProjects(
-                        onOpen: () => widget.controller.pickAndOpenProject(),
+                        onCreate: _showCreateProjectDialog,
                       );
                     }
                     return Column(
@@ -164,10 +175,9 @@ class _ProjectHomePageState extends State<ProjectHomePage> {
                               ),
                             ),
                             TextButton.icon(
-                              onPressed: () =>
-                                  widget.controller.pickAndOpenProject(),
-                              icon: const Icon(Icons.folder_open_rounded, size: 18),
-                              label: Text(l(context, '打开项目', 'Open project')),
+                              onPressed: _showCreateProjectDialog,
+                              icon: const Icon(Icons.create_new_folder_rounded, size: 18),
+                              label: Text(l(context, '新建项目', 'New project')),
                             ),
                           ],
                         ),
@@ -206,7 +216,7 @@ class _ProjectHomePageState extends State<ProjectHomePage> {
                                         Text(
                                           _relativeTime(
                                             context,
-                                            times[w.treeUri] ?? w.createdAt,
+                                            times[w.id] ?? w.createdAt,
                                           ),
                                           style: TextStyle(
                                             fontSize: 12,
@@ -276,10 +286,58 @@ class _ProjectHomePageState extends State<ProjectHomePage> {
   }
 }
 
-class _EmptyProjects extends StatelessWidget {
-  const _EmptyProjects({required this.onOpen});
+class _CreateProjectDialog extends StatefulWidget {
+  const _CreateProjectDialog();
 
-  final VoidCallback onOpen;
+  @override
+  State<_CreateProjectDialog> createState() => _CreateProjectDialogState();
+}
+
+class _CreateProjectDialogState extends State<_CreateProjectDialog> {
+  late final TextEditingController _controller;
+
+  @override
+  void initState() {
+    super.initState();
+    _controller = TextEditingController();
+  }
+
+  @override
+  void dispose() {
+    _controller.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return AlertDialog(
+      title: Text(l(context, '新建项目', 'New project')),
+      content: TextField(
+        controller: _controller,
+        autofocus: true,
+        decoration: InputDecoration(
+          hintText: l(context, '输入项目名称', 'Enter project name'),
+        ),
+        onSubmitted: (value) => Navigator.of(context).pop(value.trim()),
+      ),
+      actions: [
+        TextButton(
+          onPressed: () => Navigator.of(context).pop(),
+          child: Text(l(context, '取消', 'Cancel')),
+        ),
+        FilledButton(
+          onPressed: () => Navigator.of(context).pop(_controller.text.trim()),
+          child: Text(l(context, '创建', 'Create')),
+        ),
+      ],
+    );
+  }
+}
+
+class _EmptyProjects extends StatelessWidget {
+  const _EmptyProjects({required this.onCreate});
+
+  final VoidCallback onCreate;
 
   @override
   Widget build(BuildContext context) {
@@ -306,8 +364,8 @@ class _EmptyProjects extends StatelessWidget {
           Text(
             l(
               context,
-              '选择一个文件夹作为工作区，访问权限由系统文件选择器授权。',
-              'Pick a folder as your workspace. Access is granted through the system file picker.',
+              '项目将保存在应用自己的沙盒目录中，后续文件编辑与 Git 都只在这里运行。',
+              'Projects live inside the app sandbox so file editing and Git always run there.',
             ),
             textAlign: TextAlign.center,
             style: TextStyle(
@@ -318,9 +376,9 @@ class _EmptyProjects extends StatelessWidget {
           ),
           const SizedBox(height: 20),
           FilledButton.icon(
-            onPressed: onOpen,
-            icon: const Icon(Icons.add_rounded, size: 20),
-            label: Text(l(context, '打开项目', 'Open project')),
+            onPressed: onCreate,
+            icon: const Icon(Icons.create_new_folder_rounded, size: 20),
+            label: Text(l(context, '新建项目', 'New project')),
             style: FilledButton.styleFrom(
               padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 12),
               backgroundColor: oc.sendButtonBg,

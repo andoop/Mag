@@ -2,21 +2,20 @@ import 'dart:convert';
 
 import 'package:shared_preferences/shared_preferences.dart';
 
-/// 最近打开的项目（按 [treeUri] 去重），用于对齐 OpenCode 首页「最近项目」。
-/// 与平台沙盒 URI 绑定，便于日后 iOS 文件访问演进后仍用同一 key。
+/// 最近打开的项目（按 workspace id 去重）。
 class ProjectRecentsStore {
   ProjectRecentsStore._();
 
-  static const _key = 'project_recents_v1';
+  static const _key = 'project_recents_v2';
 
-  static Future<void> touch(String treeUri, String displayName) async {
-    final trimmedUri = treeUri.trim();
-    if (trimmedUri.isEmpty) return;
+  static Future<void> touch(String workspaceId, String displayName) async {
+    final trimmedId = workspaceId.trim();
+    if (trimmedId.isEmpty) return;
     final prefs = await SharedPreferences.getInstance();
     final list = _decode(prefs.getString(_key));
-    list.removeWhere((e) => e['treeUri'] == trimmedUri);
+    list.removeWhere((e) => e['workspaceId'] == trimmedId);
     list.insert(0, {
-      'treeUri': trimmedUri,
+      'workspaceId': trimmedId,
       'displayName': displayName.trim().isEmpty ? 'Project' : displayName.trim(),
       'lastOpenedAt': DateTime.now().millisecondsSinceEpoch,
     });
@@ -32,13 +31,13 @@ class ProjectRecentsStore {
     final list = _decode(prefs.getString(_key));
     final out = <String, int>{};
     for (final e in list) {
-      final uri = e['treeUri'] as String?;
+      final workspaceId = e['workspaceId'] as String?;
       final at = e['lastOpenedAt'];
-      if (uri == null || uri.isEmpty) continue;
+      if (workspaceId == null || workspaceId.isEmpty) continue;
       if (at is int) {
-        out[uri] = at;
+        out[workspaceId] = at;
       } else if (at is num) {
-        out[uri] = at.toInt();
+        out[workspaceId] = at.toInt();
       }
     }
     return out;
