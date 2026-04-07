@@ -104,6 +104,7 @@ class _PermissionPreviewCard extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final oc = context.oc;
     final kind = preview['kind'] as String? ?? 'update';
     final path = preview['path'] as String? ?? '';
     final sourcePath = preview['sourcePath'] as String?;
@@ -113,8 +114,8 @@ class _PermissionPreviewCard extends StatelessWidget {
     return Container(
       width: double.infinity,
       padding: const EdgeInsets.all(12),
-      decoration: _panelDecoration(
-          background: const Color(0xFFF5F3FF), radius: 14, elevated: false),
+      decoration: _panelDecoration(context,
+          background: oc.permissionPreviewBg, radius: 14, elevated: false),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
@@ -232,6 +233,7 @@ class _QuestionPanelState extends State<_QuestionPanel> {
 
   @override
   Widget build(BuildContext context) {
+    final oc = context.oc;
     final request = widget.state.questions.first;
     final n = request.questions.length;
     final wizard = _useWizard(request);
@@ -276,11 +278,11 @@ class _QuestionPanelState extends State<_QuestionPanel> {
           Container(
             padding: const EdgeInsets.all(8),
             decoration: BoxDecoration(
-              color: kOcSelectedFill,
+              color: oc.selectedFill,
               borderRadius: BorderRadius.circular(10),
             ),
-            child: const Icon(Icons.help_outline_rounded,
-                size: 22, color: kOcAccent),
+            child: Icon(Icons.help_outline_rounded,
+                size: 22, color: oc.accent),
           ),
           const SizedBox(width: 10),
           Expanded(
@@ -289,11 +291,11 @@ class _QuestionPanelState extends State<_QuestionPanel> {
               children: [
                 Text(
                   l(context, '需要你的选择', 'Your input needed'),
-                  style: const TextStyle(
+                  style: TextStyle(
                     fontWeight: FontWeight.w700,
                     fontSize: 15,
                     height: 1.25,
-                    color: kOcText,
+                    color: oc.text,
                   ),
                 ),
                 if (wizard) ...[
@@ -304,20 +306,20 @@ class _QuestionPanelState extends State<_QuestionPanel> {
                       '第 ${_pageIndex + 1} 步，共 $pageCount 步',
                       'Step ${_pageIndex + 1} of $pageCount',
                     ),
-                    style: const TextStyle(
+                    style: TextStyle(
                       fontSize: 12,
                       fontWeight: FontWeight.w600,
-                      color: kOcAccent,
+                      color: oc.accent,
                     ),
                   ),
                 ],
                 const SizedBox(height: 4),
                 Text(
                   subtitleText(),
-                  style: const TextStyle(
+                  style: TextStyle(
                     fontSize: 12,
                     height: 1.35,
-                    color: kOcMuted,
+                    color: oc.muted,
                   ),
                 ),
               ],
@@ -326,7 +328,7 @@ class _QuestionPanelState extends State<_QuestionPanel> {
           TextButton(
             onPressed: () => _dismiss(request),
             style: TextButton.styleFrom(
-              foregroundColor: kOcMuted,
+              foregroundColor: oc.muted,
               padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
               minimumSize: Size.zero,
               tapTargetSize: MaterialTapTargetSize.shrinkWrap,
@@ -347,10 +349,10 @@ class _QuestionPanelState extends State<_QuestionPanel> {
           children: [
             Text(
               l(context, '核对答案', 'Review'),
-              style: const TextStyle(
+              style: TextStyle(
                 fontWeight: FontWeight.w700,
                 fontSize: 15,
-                color: kOcText,
+                color: oc.text,
               ),
             ),
             const SizedBox(height: 12),
@@ -358,11 +360,11 @@ class _QuestionPanelState extends State<_QuestionPanel> {
               if (i > 0) const SizedBox(height: 12),
               Text(
                 request.questions[i].question,
-                style: const TextStyle(
+                style: TextStyle(
                   fontWeight: FontWeight.w600,
                   fontSize: 13.5,
                   height: 1.35,
-                  color: kOcText,
+                  color: oc.text,
                 ),
               ),
               const SizedBox(height: 4),
@@ -372,10 +374,10 @@ class _QuestionPanelState extends State<_QuestionPanel> {
                   if (parts.isEmpty) return none;
                   return parts.join(', ');
                 }(),
-                style: const TextStyle(
+                style: TextStyle(
                   fontSize: 13,
                   height: 1.4,
-                  color: kOcMuted,
+                  color: oc.muted,
                 ),
               ),
             ],
@@ -389,14 +391,14 @@ class _QuestionPanelState extends State<_QuestionPanel> {
         radioTheme: RadioThemeData(
           fillColor: MaterialStateProperty.resolveWith((states) =>
               states.contains(MaterialState.selected)
-                  ? kOcAccent
-                  : kOcMuted),
+                  ? oc.accent
+                  : oc.muted),
         ),
         checkboxTheme: CheckboxThemeData(
           fillColor: MaterialStateProperty.resolveWith((states) =>
-              states.contains(MaterialState.selected) ? kOcAccent : null),
+              states.contains(MaterialState.selected) ? oc.accent : null),
           checkColor: MaterialStateProperty.all(Colors.white),
-          side: const BorderSide(color: kOcBorder, width: 1.2),
+          side: BorderSide(color: oc.border, width: 1.2),
         ),
       ),
       child: Padding(
@@ -448,8 +450,8 @@ class _QuestionPanelState extends State<_QuestionPanel> {
                       child: OutlinedButton(
                         onPressed: () => _wizardPrev(),
                         style: OutlinedButton.styleFrom(
-                          foregroundColor: kOcText,
-                          side: const BorderSide(color: kOcBorder),
+                          foregroundColor: oc.text,
+                          side: BorderSide(color: oc.border),
                           padding: const EdgeInsets.symmetric(vertical: 12),
                         ),
                         child: Text(l(context, '上一步', 'Back')),
@@ -467,7 +469,7 @@ class _QuestionPanelState extends State<_QuestionPanel> {
                         }
                       },
                       style: FilledButton.styleFrom(
-                        backgroundColor: kOcAccent,
+                        backgroundColor: oc.accent,
                         foregroundColor: Colors.white,
                         padding: const EdgeInsets.symmetric(vertical: 12),
                       ),
@@ -502,7 +504,7 @@ class _QuestionPanelState extends State<_QuestionPanel> {
                 FilledButton(
                   onPressed: () => _submit(request),
                   style: FilledButton.styleFrom(
-                    backgroundColor: kOcAccent,
+                    backgroundColor: oc.accent,
                     foregroundColor: Colors.white,
                     padding: const EdgeInsets.symmetric(vertical: 12),
                   ),
@@ -517,7 +519,7 @@ class _QuestionPanelState extends State<_QuestionPanel> {
 
     return Container(
       margin: const EdgeInsets.fromLTRB(0, 0, 0, 10),
-      decoration: _panelDecoration(radius: 14, elevated: true),
+      decoration: _panelDecoration(context, radius: 14, elevated: true),
       clipBehavior: Clip.antiAlias,
       child: themeWrap,
     );
@@ -549,6 +551,7 @@ class _QuestionForm extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final oc = context.oc;
     final hint = info.multiple
         ? l(context, '可多选', 'Select all that apply')
         : l(context, '选择一项', 'Select one answer');
@@ -561,11 +564,11 @@ class _QuestionForm extends StatelessWidget {
         ],
         Text(
           info.question,
-          style: const TextStyle(
+          style: TextStyle(
             fontSize: 15,
             height: 1.45,
             fontWeight: FontWeight.w600,
-            color: kOcText,
+            color: oc.text,
           ),
         ),
         const SizedBox(height: 6),
@@ -574,7 +577,7 @@ class _QuestionForm extends StatelessWidget {
           style: TextStyle(
             fontSize: 12,
             height: 1.3,
-            color: kOcMuted.withOpacity(0.95),
+            color: oc.muted.withOpacity(0.95),
           ),
         ),
         const SizedBox(height: 12),
@@ -606,13 +609,13 @@ class _QuestionForm extends StatelessWidget {
                       const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
                   decoration: BoxDecoration(
                     color: isSelected
-                        ? kOcSelectedFill
-                        : const Color(0xFFF9FAFB),
+                        ? oc.selectedFill
+                        : oc.optionDefaultBg,
                     borderRadius: BorderRadius.circular(10),
                     border: Border.all(
                       color: isSelected
-                          ? kOcAccent.withOpacity(0.42)
-                          : kOcBorder,
+                          ? oc.accent.withOpacity(0.42)
+                          : oc.border,
                       width: 1,
                     ),
                   ),
@@ -668,21 +671,21 @@ class _QuestionForm extends StatelessWidget {
                           children: [
                             Text(
                               option.label,
-                              style: const TextStyle(
+                              style: TextStyle(
                                 fontWeight: FontWeight.w600,
                                 fontSize: 14,
                                 height: 1.3,
-                                color: kOcText,
+                                color: oc.text,
                               ),
                             ),
                             if (option.description.trim().isNotEmpty) ...[
                               const SizedBox(height: 4),
                               Text(
                                 option.description.trim(),
-                                style: const TextStyle(
+                                style: TextStyle(
                                   fontSize: 12.5,
                                   height: 1.4,
-                                  color: kOcMuted,
+                                  color: oc.muted,
                                 ),
                               ),
                             ],
@@ -706,21 +709,21 @@ class _QuestionForm extends StatelessWidget {
             decoration: InputDecoration(
               hintText: l(context, '或输入自定义答案…', 'Or type a custom answer…'),
               filled: true,
-              fillColor: Colors.white,
+              fillColor: oc.panelBackground,
               contentPadding: const EdgeInsets.symmetric(
                   horizontal: 12, vertical: 12),
               border: OutlineInputBorder(
                 borderRadius: BorderRadius.circular(10),
-                borderSide: const BorderSide(color: kOcBorder),
+                borderSide: BorderSide(color: oc.border),
               ),
               enabledBorder: OutlineInputBorder(
                 borderRadius: BorderRadius.circular(10),
-                borderSide: const BorderSide(color: kOcBorder),
+                borderSide: BorderSide(color: oc.border),
               ),
               focusedBorder: OutlineInputBorder(
                 borderRadius: BorderRadius.circular(10),
                 borderSide:
-                    const BorderSide(color: kOcAccent, width: 1.4),
+                    BorderSide(color: oc.accent, width: 1.4),
               ),
             ),
             onChanged: (_) => onChanged(),

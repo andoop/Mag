@@ -5,6 +5,7 @@ part of '../home_page.dart';
 extension _HomePageComposer on _HomePageState {
   Widget _buildComposerDock(
       BuildContext context, AppState state, bool isKeyboardOpen) {
+    final oc = context.oc;
     final currentModel = state.modelConfig ?? ModelConfig.defaults();
     final currentModelChoice =
         _findModelChoice(
@@ -16,11 +17,11 @@ extension _HomePageComposer on _HomePageState {
       duration: const Duration(milliseconds: 180),
       curve: Curves.easeOut,
       decoration: BoxDecoration(
-        color: _kPageBackground,
-        border: const Border(top: BorderSide(color: _kSoftBorderColor)),
+        color: oc.pageBackground,
+        border: Border(top: BorderSide(color: oc.softBorderColor)),
         boxShadow: [
           BoxShadow(
-            color: Colors.black.withOpacity(0.025),
+            color: oc.shadow,
             blurRadius: 16,
             offset: const Offset(0, -2),
           ),
@@ -40,7 +41,6 @@ extension _HomePageComposer on _HomePageState {
                 Builder(
                   builder: (context) {
                     final h = MediaQuery.of(context).size.height;
-                    // OpenCode TUI 占较大视区；移动端在 composer 上方用可滚动区域，避免 168px 截断题干/选项。
                     final tall = state.questions.isNotEmpty;
                     final maxH = tall
                         ? (isKeyboardOpen ? h * 0.44 : h * 0.58)
@@ -67,13 +67,13 @@ extension _HomePageComposer on _HomePageState {
               SizedBox(height: isKeyboardOpen ? 4 : 6),
               Container(
                 decoration: BoxDecoration(
-                  color: _kPanelBackground,
+                  color: oc.panelBackground,
                   borderRadius: BorderRadius.circular(24),
-                  border: const Border.fromBorderSide(
-                      BorderSide(color: _kBorderColor)),
+                  border: Border.fromBorderSide(
+                      BorderSide(color: oc.borderColor)),
                   boxShadow: [
                     BoxShadow(
-                      color: Colors.black.withOpacity(0.02),
+                      color: oc.shadow,
                       blurRadius: 12,
                       offset: const Offset(0, 2),
                     ),
@@ -141,7 +141,7 @@ extension _HomePageComposer on _HomePageState {
                               hintStyle: Theme.of(context)
                                   .textTheme
                                   .bodyMedium
-                                  ?.copyWith(color: Colors.black45),
+                                  ?.copyWith(color: oc.foregroundHint),
                             ),
                           ),
                         ),
@@ -210,9 +210,8 @@ extension _HomePageComposer on _HomePageState {
                                         tapTargetSize:
                                             MaterialTapTargetSize.shrinkWrap,
                                         visualDensity: VisualDensity.compact,
-                                        backgroundColor:
-                                            const Color(0xFF111827),
-                                        foregroundColor: Colors.white,
+                                        backgroundColor: oc.sendButtonBg,
+                                        foregroundColor: oc.sendButtonFg,
                                         elevation: 0,
                                       ),
                                       onPressed: () async {
@@ -371,8 +370,8 @@ extension _HomePageComposer on _HomePageState {
                       'Toggle schema-based structured output',
                     ),
                     trailing: _structuredOutputEnabled
-                        ? const Icon(Icons.check_circle,
-                            size: 18, color: Color(0xFF2563EB))
+                        ? Icon(Icons.check_circle,
+                            size: 18, color: context.oc.accent)
                         : null,
                     onTap: () {
                       Navigator.of(sheetContext).pop();
@@ -440,7 +439,7 @@ extension _HomePageComposer on _HomePageState {
                             style: Theme.of(context)
                                 .textTheme
                                 .bodySmall
-                                ?.copyWith(color: Colors.black54),
+                                ?.copyWith(color: context.oc.foregroundMuted),
                           ),
                         ],
                       ),
@@ -480,12 +479,12 @@ class _PromptTrayButton extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    const foregroundColor = Colors.black87;
+    final oc = context.oc;
     return OutlinedButton(
       onPressed: onTap,
       style: OutlinedButton.styleFrom(
-        backgroundColor: Colors.white,
-        side: const BorderSide(color: _kBorderColor),
+        backgroundColor: oc.panelBackground,
+        side: BorderSide(color: oc.borderColor),
         shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
         padding: const EdgeInsets.symmetric(horizontal: 11, vertical: 7),
         minimumSize: Size.zero,
@@ -495,15 +494,15 @@ class _PromptTrayButton extends StatelessWidget {
       child: Row(
         mainAxisSize: MainAxisSize.min,
         children: [
-          Icon(icon, size: 15, color: foregroundColor),
+          Icon(icon, size: 15, color: oc.foreground),
           const SizedBox(width: 6),
           Text(
             label,
             overflow: TextOverflow.ellipsis,
-            style: const TextStyle(
+            style: TextStyle(
               fontSize: 12,
               fontWeight: FontWeight.w600,
-              color: foregroundColor,
+              color: oc.foreground,
             ),
           ),
         ],
@@ -529,10 +528,11 @@ class _ComposerOptionTile extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final oc = context.oc;
     return Padding(
       padding: const EdgeInsets.only(bottom: 10),
       child: Material(
-        color: const Color(0xFFF8FAFC),
+        color: oc.composerOptionBg,
         borderRadius: BorderRadius.circular(16),
         child: InkWell(
           borderRadius: BorderRadius.circular(16),
@@ -541,8 +541,8 @@ class _ComposerOptionTile extends StatelessWidget {
             padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 13),
             decoration: BoxDecoration(
               borderRadius: BorderRadius.circular(16),
-              border: const Border.fromBorderSide(
-                BorderSide(color: _kBorderColor),
+              border: Border.fromBorderSide(
+                BorderSide(color: oc.borderColor),
               ),
             ),
             child: Row(
@@ -551,13 +551,13 @@ class _ComposerOptionTile extends StatelessWidget {
                   width: 32,
                   height: 32,
                   decoration: BoxDecoration(
-                    color: Colors.white,
+                    color: oc.panelBackground,
                     borderRadius: BorderRadius.circular(10),
-                    border: const Border.fromBorderSide(
-                      BorderSide(color: _kBorderColor),
+                    border: Border.fromBorderSide(
+                      BorderSide(color: oc.borderColor),
                     ),
                   ),
-                  child: Icon(icon, size: 17, color: Colors.black87),
+                  child: Icon(icon, size: 17, color: oc.foreground),
                 ),
                 const SizedBox(width: 12),
                 Expanded(
@@ -566,19 +566,19 @@ class _ComposerOptionTile extends StatelessWidget {
                     children: [
                       Text(
                         title,
-                        style: const TextStyle(
+                        style: TextStyle(
                           fontSize: 13,
                           fontWeight: FontWeight.w600,
-                          color: Colors.black87,
+                          color: oc.foreground,
                         ),
                       ),
                       const SizedBox(height: 2),
                       Text(
                         subtitle,
-                        style: const TextStyle(
+                        style: TextStyle(
                           fontSize: 11.5,
                           height: 1.3,
-                          color: Colors.black54,
+                          color: oc.foregroundMuted,
                         ),
                       ),
                     ],
@@ -586,10 +586,10 @@ class _ComposerOptionTile extends StatelessWidget {
                 ),
                 const SizedBox(width: 8),
                 trailing ??
-                    const Icon(
+                    Icon(
                       Icons.chevron_right,
                       size: 18,
-                      color: Colors.black38,
+                      color: oc.foregroundFaint,
                     ),
               ],
             ),

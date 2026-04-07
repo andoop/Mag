@@ -2,28 +2,6 @@ part of '../home_page.dart';
 
 typedef PromptReferenceAction = Future<void> Function(String);
 
-const Color _kPageBackground = Color(0xFFF5F5F4);
-const Color _kPanelBackground = Colors.white;
-
-/// 底部菜单、会话列表等 Sheet（浅色，与 [_kPageBackground] 协调）
-const Color kOcBgDeep = Color(0xFFF4F4F5);
-const Color kOcSurface = Color(0xFFFFFFFF);
-const Color kOcElevated = Color(0xFFE4E4E7);
-const Color kOcSelectedFill = Color(0xFFEFF6FF);
-const Color kOcBorder = Color(0xFFE4E4E7);
-const Color kOcText = Color(0xFF18181B);
-const Color kOcMuted = Color(0xFF71717A);
-const Color kOcAccent = Color(0xFF2563EB);
-const Color kOcAccentMuted = Color(0xFF0891B2);
-const Color kOcGreen = Color(0xFF16A34A);
-const Color kOcOrange = Color(0xFFEA580C);
-const Color _kMutedPanel = Color(0xFFFAFAF9);
-const Color _kBorderColor = Color(0x14000000);
-const Color _kSoftBorderColor = Color(0x0F000000);
-const Color _kAgentBubble = Colors.white;
-const Color _kUserBubble = Color(0xFFF0FDF4);
-
-/// 小标签样式：浅底细边框（用于 Free / Latest）。
 class OcModelTag extends StatelessWidget {
   const OcModelTag({
     super.key,
@@ -34,20 +12,21 @@ class OcModelTag extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final oc = context.oc;
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
       decoration: BoxDecoration(
-        color: const Color(0xFFF4F4F5),
+        color: oc.bgDeep,
         borderRadius: BorderRadius.circular(4),
-        border: Border.all(color: kOcBorder),
+        border: Border.all(color: oc.border),
       ),
       child: Text(
         label,
-        style: const TextStyle(
+        style: TextStyle(
           fontSize: 10.5,
           fontWeight: FontWeight.w600,
           height: 1.15,
-          color: kOcMuted,
+          color: oc.muted,
           letterSpacing: 0.02,
         ),
       ),
@@ -55,19 +34,21 @@ class OcModelTag extends StatelessWidget {
   }
 }
 
-BoxDecoration _panelDecoration({
-  Color background = _kPanelBackground,
+BoxDecoration _panelDecoration(
+  BuildContext context, {
+  Color? background,
   double radius = 18,
   bool elevated = true,
 }) {
+  final oc = context.oc;
   return BoxDecoration(
-    color: background,
+    color: background ?? oc.panelBackground,
     borderRadius: BorderRadius.circular(radius),
-    border: const Border.fromBorderSide(BorderSide(color: _kBorderColor)),
+    border: Border.fromBorderSide(BorderSide(color: oc.borderColor)),
     boxShadow: elevated
         ? [
             BoxShadow(
-              color: Colors.black.withOpacity(0.02),
+              color: oc.shadow,
               blurRadius: 10,
               offset: const Offset(0, 1),
             ),
@@ -77,6 +58,7 @@ BoxDecoration _panelDecoration({
 }
 
 ButtonStyle _compactActionButtonStyle(BuildContext context) {
+  final oc = context.oc;
   return OutlinedButton.styleFrom(
     fixedSize: const Size.fromHeight(30),
     minimumSize: Size.zero,
@@ -87,10 +69,10 @@ ButtonStyle _compactActionButtonStyle(BuildContext context) {
           fontWeight: FontWeight.w600,
           fontSize: 11.5,
         ),
-    side: const BorderSide(color: _kBorderColor),
+    side: BorderSide(color: oc.borderColor),
     shape: const StadiumBorder(),
-    foregroundColor: Colors.black87,
-    backgroundColor: Colors.white.withOpacity(0.78),
+    foregroundColor: oc.foreground,
+    backgroundColor: oc.panelBackground.withOpacity(0.78),
   );
 }
 
@@ -162,6 +144,7 @@ class _CompactIconButton extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final oc = context.oc;
     return IconButton(
       tooltip: tooltip,
       onPressed: onPressed,
@@ -172,8 +155,8 @@ class _CompactIconButton extends StatelessWidget {
       iconSize: 17,
       style: IconButton.styleFrom(
         tapTargetSize: MaterialTapTargetSize.shrinkWrap,
-        backgroundColor: Colors.white.withOpacity(0.78),
-        side: const BorderSide(color: _kBorderColor),
+        backgroundColor: oc.panelBackground.withOpacity(0.78),
+        side: BorderSide(color: oc.borderColor),
       ),
       icon: Icon(icon),
     );

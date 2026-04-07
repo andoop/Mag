@@ -85,12 +85,16 @@ extension _HomePageTimeline on _HomePageState {
         final msgIndex = index - cursor;
         final bundle = renderedMessages[msgIndex];
         final isLast = msgIndex == renderedMessages.length - 1;
-        return _buildMessage(
-          state,
-          bundle,
+        return _MessageBubble(
+          key: ValueKey<String>(bundle.message.id),
+          bundle: bundle,
+          state: state,
           isStreamingAssistantMessage: state.isBusy &&
               isLast &&
               bundle.message.role == SessionRole.assistant,
+          controller: widget.controller,
+          onInsertPromptReference: _appendPromptReference,
+          onSendPromptReference: _sendPromptReference,
         );
       }
       cursor = messageEnd;
@@ -109,26 +113,96 @@ extension _HomePageTimeline on _HomePageState {
     return const SizedBox.shrink();
   }
 
-  Widget _buildMessage(
-    AppState state,
-    SessionMessageBundle bundle, {
-    required bool isStreamingAssistantMessage,
-  }) {
-    bool isFilerefPart(MessagePart p) {
-      if (p.type != PartType.tool) return false;
-      return (p.data['tool'] as String?) == 'fileref';
+}
+
+class _MessageBubble extends StatefulWidget {
+  const _MessageBubble({
+    super.key,
+    required this.bundle,
+    required this.state,
+    required this.isStreamingAssistantMessage,
+    required this.controller,
+    required this.onInsertPromptReference,
+    required this.onSendPromptReference,
+  });
+
+  final SessionMessageBundle bundle;
+  final AppState state;
+  final bool isStreamingAssistantMessage;
+  final AppController controller;
+  final ValueChanged<String> onInsertPromptReference;
+  final PromptReferenceAction onSendPromptReference;
+
+  @override
+  State<_MessageBubble> createState() => _MessageBubbleState();
+}
+
+class _MessageBubbleState extends State<_MessageBubble> {
+  Widget? _cached;
+  SessionMessageBundle? _lastBundle;
+  bool? _lastStreaming;
+
+  List<MessagePart>? _cachedPrimaryParts;
+  List<MessagePart>? _cachedFooterParts;
+  List<MessagePart>? _lastPartsList;
+  int? _cachedTurnDurationMs;
+  bool _turnDurationComputed = false;
+
+  @override
+  Widget build(BuildContext context) {
+    if (identical(widget.bundle, _lastBundle) &&
+        widget.isStreamingAssistantMessage == _lastStreaming &&
+        _cached != null) {
+      return _cached!;
     }
+    _lastBundle = widget.bundle;
+    _lastStreaming = widget.isStreamingAssistantMessage;
+    _cached = _buildContent(context);
+    return _cached!;
+  }
 
-    final primaryParts =
-        bundle.parts.where((p) => !isFilerefPart(p)).toList();
-    final footerParts = bundle.parts.where(isFilerefPart).toList();
+  void _refreshPartsSplit(List<MessagePart> parts) {
+    if (identical(parts, _lastPartsList)) return;
+    _lastPartsList = parts;
+    final primary = <MessagePart>[];
+    final footer = <MessagePart>[];
+    for (final p in parts) {
+      if (p.type == PartType.tool && (p.data['tool'] as String?) == 'fileref') {
+        footer.add(p);
+      } else {
+        primary.add(p);
+      }
+    }
+    _cachedPrimaryParts = primary;
+    _cachedFooterParts = footer;
+  }
 
-    final globalIdx =
-        state.messages.indexWhere((b) => b.message.id == bundle.message.id);
-    final turnDurationMs = bundle.message.role == SessionRole.assistant &&
-            globalIdx >= 0
-        ? _turnDurationMsForAssistantBundle(state, globalIdx)
-        : null;
+  int? _computeTurnDuration() {
+    final bundle = widget.bundle;
+    if (bundle.message.role != SessionRole.assistant) return null;
+    if (!widget.isStreamingAssistantMessage && _turnDurationComputed) {
+      return _cachedTurnDurationMs;
+    }
+    final globalIdx = widget.state.messages
+        .indexWhere((b) => b.message.id == bundle.message.id);
+    if (globalIdx < 0) return null;
+    final result = _turnDurationMsForAssistantBundle(widget.state, globalIdx);
+    if (!widget.isStreamingAssistantMessage) {
+      _cachedTurnDurationMs = result;
+      _turnDurationComputed = true;
+    }
+    return result;
+  }
+
+  Widget _buildContent(BuildContext context) {
+    final oc = context.oc;
+    final bundle = widget.bundle;
+
+    _refreshPartsSplit(bundle.parts);
+    final primaryParts = _cachedPrimaryParts!;
+    final footerParts = _cachedFooterParts!;
+
+    final turnDurationMs = _computeTurnDuration();
 
     MessagePart? lastPlainTextPart;
     for (var i = primaryParts.length - 1; i >= 0; i--) {
@@ -142,80 +216,53 @@ extension _HomePageTimeline on _HomePageState {
 
     final isUser = bundle.message.role == SessionRole.user;
     final label = isUser ? l(context, '你', 'You') : bundle.message.agent;
-    final bubbleColor = isUser ? _kUserBubble : _kAgentBubble;
-    return Padding(
-      padding: const EdgeInsets.only(bottom: 10),
-      child: Align(
-        alignment: isUser ? Alignment.centerRight : Alignment.centerLeft,
-        child: ConstrainedBox(
-          constraints: const BoxConstraints(maxWidth: 720),
-          child: Container(
-            padding: const EdgeInsets.fromLTRB(13, 11, 13, 12),
-            decoration: BoxDecoration(
-              color: bubbleColor,
-              borderRadius: BorderRadius.circular(20),
-              border: Border.all(color: _kSoftBorderColor),
-            ),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Row(
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    Text(
-                      label,
-                      style: Theme.of(context).textTheme.labelSmall?.copyWith(
-                            fontWeight: FontWeight.w600,
-                            color: Colors.black54,
-                            letterSpacing: 0.1,
-                          ),
-                    ),
-                    const SizedBox(width: 6),
-                    Text(
-                      _formatTimestamp(bundle.message.createdAt),
-                      style: Theme.of(context)
-                          .textTheme
-                          .labelSmall
-                          ?.copyWith(color: Colors.black38),
+    final bubbleColor = isUser ? oc.userBubble : oc.agentBubble;
+    return RepaintBoundary(
+      child: Padding(
+        padding: const EdgeInsets.only(bottom: 10),
+        child: Align(
+          alignment: isUser ? Alignment.centerRight : Alignment.centerLeft,
+          child: ConstrainedBox(
+            constraints: const BoxConstraints(maxWidth: 720),
+            child: Container(
+              padding: const EdgeInsets.fromLTRB(13, 11, 13, 12),
+              decoration: BoxDecoration(
+                color: bubbleColor,
+                borderRadius: BorderRadius.circular(20),
+                border: Border.all(color: oc.softBorderColor),
+              ),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Text(
+                        label,
+                        style: Theme.of(context).textTheme.labelSmall?.copyWith(
+                              fontWeight: FontWeight.w600,
+                              color: oc.foregroundMuted,
+                              letterSpacing: 0.1,
+                            ),
+                      ),
+                      const SizedBox(width: 6),
+                      Text(
+                        _formatTimestamp(bundle.message.createdAt),
+                        style: Theme.of(context)
+                            .textTheme
+                            .labelSmall
+                            ?.copyWith(color: oc.foregroundFaint),
+                      ),
+                    ],
+                  ),
+                  if (bundle.message.text.isNotEmpty) ...[
+                    const SizedBox(height: 8),
+                    SelectableText(
+                      bundle.message.text,
+                      style: const TextStyle(fontSize: 15, height: 1.45),
                     ),
                   ],
-                ),
-                if (bundle.message.text.isNotEmpty) ...[
-                  const SizedBox(height: 8),
-                  SelectableText(
-                    bundle.message.text,
-                    style: const TextStyle(fontSize: 15, height: 1.45),
-                  ),
-                ],
-                for (final part in primaryParts) ...[
-                  const SizedBox(height: 10),
-                  _PartTile(
-                    part: part,
-                    message: bundle.message,
-                    controller: widget.controller,
-                    workspace: widget.controller.state.workspace,
-                    serverUri: widget.controller.state.serverUri,
-                    streamAssistantContent: isStreamingAssistantMessage,
-                    turnDurationMs: turnDurationMs,
-                    showAssistantTextMeta: !isUser &&
-                        lastPlainTextPart != null &&
-                        identical(part, lastPlainTextPart),
-                    onInsertPromptReference: _appendPromptReference,
-                    onSendPromptReference: _sendPromptReference,
-                  ),
-                ],
-                if (footerParts.isNotEmpty) ...[
-                  const SizedBox(height: 10),
-                  const Divider(height: 1, thickness: 1, color: _kSoftBorderColor),
-                  const SizedBox(height: 8),
-                  Text(
-                    l(context, '文件引用', 'File references'),
-                    style: Theme.of(context).textTheme.labelSmall?.copyWith(
-                          color: Colors.black45,
-                          fontWeight: FontWeight.w600,
-                        ),
-                  ),
-                  for (final part in footerParts) ...[
+                  for (final part in primaryParts) ...[
                     const SizedBox(height: 10),
                     _PartTile(
                       part: part,
@@ -223,20 +270,63 @@ extension _HomePageTimeline on _HomePageState {
                       controller: widget.controller,
                       workspace: widget.controller.state.workspace,
                       serverUri: widget.controller.state.serverUri,
-                      streamAssistantContent: isStreamingAssistantMessage,
+                      streamAssistantContent:
+                          widget.isStreamingAssistantMessage,
                       turnDurationMs: turnDurationMs,
-                      showAssistantTextMeta: false,
-                      onInsertPromptReference: _appendPromptReference,
-                      onSendPromptReference: _sendPromptReference,
+                      showAssistantTextMeta: !isUser &&
+                          lastPlainTextPart != null &&
+                          identical(part, lastPlainTextPart),
+                      onInsertPromptReference:
+                          widget.onInsertPromptReference,
+                      onSendPromptReference:
+                          widget.onSendPromptReference,
                     ),
                   ],
+                  if (footerParts.isNotEmpty) ...[
+                    const SizedBox(height: 10),
+                    Divider(
+                        height: 1, thickness: 1, color: oc.softBorderColor),
+                    const SizedBox(height: 8),
+                    Text(
+                      l(context, '文件引用', 'File references'),
+                      style: Theme.of(context).textTheme.labelSmall?.copyWith(
+                            color: oc.foregroundHint,
+                            fontWeight: FontWeight.w600,
+                          ),
+                    ),
+                    for (final part in footerParts) ...[
+                      const SizedBox(height: 10),
+                      _PartTile(
+                        part: part,
+                        message: bundle.message,
+                        controller: widget.controller,
+                        workspace: widget.controller.state.workspace,
+                        serverUri: widget.controller.state.serverUri,
+                        streamAssistantContent:
+                            widget.isStreamingAssistantMessage,
+                        turnDurationMs: turnDurationMs,
+                        showAssistantTextMeta: false,
+                        onInsertPromptReference:
+                            widget.onInsertPromptReference,
+                        onSendPromptReference:
+                            widget.onSendPromptReference,
+                      ),
+                    ],
+                  ],
                 ],
-              ],
+              ),
             ),
           ),
         ),
       ),
     );
+  }
+
+  String _formatTimestamp(int ms) {
+    final dt = DateTime.fromMillisecondsSinceEpoch(ms);
+    final hh = dt.hour.toString().padLeft(2, '0');
+    final mm = dt.minute.toString().padLeft(2, '0');
+    return '$hh:$mm';
   }
 }
 
@@ -300,15 +390,16 @@ class _TimelineHeaderCard extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final oc = context.oc;
     return Container(
       padding: const EdgeInsets.fromLTRB(16, 14, 16, 16),
       decoration: BoxDecoration(
-        color: _kPanelBackground,
+        color: oc.panelBackground,
         borderRadius: BorderRadius.circular(22),
-        border: const Border.fromBorderSide(BorderSide(color: _kBorderColor)),
+        border: Border.fromBorderSide(BorderSide(color: oc.borderColor)),
         boxShadow: [
           BoxShadow(
-            color: Colors.black.withOpacity(0.02),
+            color: oc.shadow,
             blurRadius: 10,
             offset: const Offset(0, 1),
           ),
@@ -327,7 +418,7 @@ class _TimelineHeaderCard extends StatelessWidget {
             style: Theme.of(context)
                 .textTheme
                 .bodySmall
-                ?.copyWith(color: Colors.black54),
+                ?.copyWith(color: oc.foregroundMuted),
           ),
           if (showMeta) ...[
             const SizedBox(height: 10),
@@ -336,9 +427,9 @@ class _TimelineHeaderCard extends StatelessWidget {
               runSpacing: 8,
               crossAxisAlignment: WrapCrossAlignment.center,
               children: [
-                _TinyTag(label: agentName, color: Colors.blueGrey.shade100),
-                _TinyTag(label: providerLabel, color: Colors.green.shade100),
-                _TinyTag(label: modelLabel, color: Colors.blue.shade100),
+                _TinyTag(label: agentName, color: oc.tagBlueGrey),
+                _TinyTag(label: providerLabel, color: oc.tagGreen),
+                _TinyTag(label: modelLabel, color: oc.tagBlue),
                 if (showModelFreeTag)
                   OcModelTag(
                     label: l(context, '免费', 'Free'),
@@ -371,6 +462,7 @@ class _ContextStatsCard extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final oc = context.oc;
     final ratio = _contextUsageRatio(session, model);
     final progressColor = ratio >= 0.95
         ? Colors.red.shade400
@@ -382,9 +474,9 @@ class _ContextStatsCard extends StatelessWidget {
     return Container(
       padding: const EdgeInsets.fromLTRB(16, 14, 16, 14),
       decoration: BoxDecoration(
-        color: _kPanelBackground,
+        color: oc.panelBackground,
         borderRadius: BorderRadius.circular(20),
-        border: const Border.fromBorderSide(BorderSide(color: _kBorderColor)),
+        border: Border.fromBorderSide(BorderSide(color: oc.borderColor)),
       ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
@@ -401,7 +493,7 @@ class _ContextStatsCard extends StatelessWidget {
                 style: Theme.of(context)
                     .textTheme
                     .bodySmall
-                    ?.copyWith(color: Colors.black54),
+                    ?.copyWith(color: oc.foregroundMuted),
               ),
             ],
           ),
@@ -411,7 +503,7 @@ class _ContextStatsCard extends StatelessWidget {
             child: LinearProgressIndicator(
               value: ratio,
               minHeight: 8,
-              backgroundColor: Colors.black.withOpacity(0.06),
+              backgroundColor: oc.progressBg,
               valueColor: AlwaysStoppedAnimation<Color>(progressColor),
             ),
           ),
@@ -423,17 +515,17 @@ class _ContextStatsCard extends StatelessWidget {
               _TinyTag(
                 label:
                     '${l(context, "输入", "Input")} ${formatTokenCount(promptTokens)}',
-                color: Colors.blue.shade100,
+                color: oc.tagBlue,
               ),
               _TinyTag(
                 label:
                     '${l(context, "输出", "Output")} ${formatTokenCount(completionTokens)}',
-                color: Colors.green.shade100,
+                color: oc.tagGreen,
               ),
               if (session?.hasSummary == true)
                 _TinyTag(
                   label: l(context, '已 Compact', 'Compacted'),
-                  color: Colors.orange.shade100,
+                  color: oc.tagOrange,
                 ),
             ],
           ),
@@ -477,6 +569,7 @@ class _ContextRingButton extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final oc = context.oc;
     final progressColor = ratio >= 0.95
         ? Colors.red.shade400
         : ratio >= 0.8
@@ -502,23 +595,23 @@ class _ContextRingButton extends StatelessWidget {
                 child: CircularProgressIndicator(
                   value: clampedRatio,
                   strokeWidth: 2.2,
-                  backgroundColor: Colors.black.withOpacity(0.08),
+                  backgroundColor: oc.progressBg,
                   valueColor: AlwaysStoppedAnimation<Color>(progressColor),
                 ),
               ),
               Container(
                 width: 28,
                 height: 28,
-                decoration: const BoxDecoration(
-                  color: Colors.white,
+                decoration: BoxDecoration(
+                  color: oc.panelBackground,
                   shape: BoxShape.circle,
                   border:
-                      Border.fromBorderSide(BorderSide(color: _kBorderColor)),
+                      Border.fromBorderSide(BorderSide(color: oc.borderColor)),
                 ),
                 child: Icon(
                   compacted ? Icons.compress_outlined : Icons.memory_outlined,
                   size: 15,
-                  color: Colors.black87,
+                  color: oc.foreground,
                 ),
               ),
             ],
@@ -546,15 +639,16 @@ class _EmptyTimelineCard extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final oc = context.oc;
     return Container(
       padding: const EdgeInsets.all(18),
       decoration: BoxDecoration(
-        color: _kPanelBackground,
+        color: oc.panelBackground,
         borderRadius: BorderRadius.circular(22),
-        border: const Border.fromBorderSide(BorderSide(color: _kBorderColor)),
+        border: Border.fromBorderSide(BorderSide(color: oc.borderColor)),
         boxShadow: [
           BoxShadow(
-            color: Colors.black.withOpacity(0.02),
+            color: oc.shadow,
             blurRadius: 10,
             offset: const Offset(0, 1),
           ),
@@ -581,9 +675,9 @@ class _EmptyTimelineCard extends StatelessWidget {
               crossAxisAlignment: WrapCrossAlignment.center,
               children: [
                 if (modelLabel != null)
-                  _TinyTag(label: modelLabel!, color: Colors.blue.shade100),
+                  _TinyTag(label: modelLabel!, color: oc.tagBlue),
                 if (providerLabel != null)
-                  _TinyTag(label: providerLabel!, color: Colors.green.shade100),
+                  _TinyTag(label: providerLabel!, color: oc.tagGreen),
                 if (showModelFreeTag)
                   OcModelTag(
                     label: l(context, '免费', 'Free'),
@@ -612,14 +706,15 @@ class _RunningIndicator extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final oc = context.oc;
     return Align(
       alignment: Alignment.centerLeft,
       child: Container(
         padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 9),
         decoration: BoxDecoration(
-          color: _kMutedPanel,
+          color: oc.mutedPanel,
           borderRadius: BorderRadius.circular(999),
-          border: const Border.fromBorderSide(BorderSide(color: _kBorderColor)),
+          border: Border.fromBorderSide(BorderSide(color: oc.borderColor)),
         ),
         child: Row(
           mainAxisSize: MainAxisSize.min,
@@ -645,14 +740,15 @@ class _TimelineLoadEarlierCard extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final oc = context.oc;
     return Padding(
       padding: const EdgeInsets.only(bottom: 10),
       child: Center(
         child: OutlinedButton.icon(
           onPressed: onPressed,
           style: OutlinedButton.styleFrom(
-            backgroundColor: Colors.white,
-            side: const BorderSide(color: _kBorderColor),
+            backgroundColor: oc.panelBackground,
+            side: BorderSide(color: oc.borderColor),
             shape: RoundedRectangleBorder(
               borderRadius: BorderRadius.circular(999),
             ),
@@ -711,10 +807,11 @@ class _ModelListTile extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final oc = context.oc;
     final free = _modelChoiceIsFree(item);
     final latest = _modelChoiceIsLatest(item);
     return Material(
-      color: selected ? kOcSelectedFill : Colors.transparent,
+      color: selected ? oc.selectedFill : Colors.transparent,
       child: InkWell(
         onTap: onTap,
         child: Padding(
@@ -734,11 +831,11 @@ class _ModelListTile extends StatelessWidget {
                             item.name,
                             maxLines: 1,
                             overflow: TextOverflow.ellipsis,
-                            style: const TextStyle(
+                            style: TextStyle(
                               fontSize: 13,
                               fontWeight: FontWeight.w500,
                               height: 1.25,
-                              color: kOcText,
+                              color: oc.text,
                               letterSpacing: -0.1,
                             ),
                           ),
@@ -760,19 +857,19 @@ class _ModelListTile extends StatelessWidget {
                     const SizedBox(height: 3),
                     Text(
                       '${item.providerId}/${item.id}',
-                      style: const TextStyle(
+                      style: TextStyle(
                         fontSize: 11.5,
                         height: 1.2,
-                        color: kOcMuted,
+                        color: oc.muted,
                       ),
                     ),
                   ],
                 ),
               ),
               if (selected)
-                const Padding(
-                  padding: EdgeInsets.only(left: 6, top: 1),
-                  child: Icon(Icons.check, size: 16, color: kOcAccent),
+                Padding(
+                  padding: const EdgeInsets.only(left: 6, top: 1),
+                  child: Icon(Icons.check, size: 16, color: oc.accent),
                 ),
             ],
           ),
@@ -795,8 +892,9 @@ class _ProviderListTile extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final oc = context.oc;
     return Material(
-      color: selected ? kOcSelectedFill : Colors.transparent,
+      color: selected ? oc.selectedFill : Colors.transparent,
       child: InkWell(
         onTap: onTap,
         child: Padding(
@@ -810,11 +908,11 @@ class _ProviderListTile extends StatelessWidget {
                   children: [
                     Text(
                       item.name,
-                      style: const TextStyle(
+                      style: TextStyle(
                         fontSize: 13.5,
                         fontWeight: FontWeight.w500,
                         height: 1.25,
-                        color: kOcText,
+                        color: oc.text,
                       ),
                     ),
                     const SizedBox(height: 2),
@@ -822,10 +920,10 @@ class _ProviderListTile extends StatelessWidget {
                       item.note ?? item.baseUrl,
                       maxLines: 2,
                       overflow: TextOverflow.ellipsis,
-                      style: const TextStyle(
+                      style: TextStyle(
                         fontSize: 11.5,
                         height: 1.2,
-                        color: kOcMuted,
+                        color: oc.muted,
                       ),
                     ),
                   ],
@@ -836,16 +934,16 @@ class _ProviderListTile extends StatelessWidget {
                   margin: const EdgeInsets.only(left: 6, top: 1),
                   padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 3),
                   decoration: BoxDecoration(
-                    color: kOcSelectedFill,
+                    color: oc.selectedFill,
                     borderRadius: BorderRadius.circular(999),
-                    border: Border.all(color: kOcBorder),
+                    border: Border.all(color: oc.border),
                   ),
                   child: Text(
                     l(context, '已连接', 'Connected'),
-                    style: const TextStyle(
+                    style: TextStyle(
                       fontSize: 10.5,
                       fontWeight: FontWeight.w600,
-                      color: kOcAccent,
+                      color: oc.accent,
                     ),
                   ),
                 ),

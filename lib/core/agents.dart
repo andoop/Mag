@@ -15,6 +15,7 @@ class AgentRegistry {
         name: 'build',
         description:
             'Default agent. Executes tools inside configured permissions.',
+        descriptionZh: '默认智能体，可读写文件、执行工具，完成编码任务。',
         mode: AgentMode.primary,
         permissionRules: _defaultRules(
           overrides: [
@@ -31,6 +32,7 @@ class AgentRegistry {
         name: 'plan',
         description:
             'Plan mode. Focuses on analysis and intentionally blocks edit tools.',
+        descriptionZh: '规划模式，只读分析代码并制定方案，禁止任何文件修改。',
         mode: AgentMode.primary,
         promptOverride: null,
         permissionRules: _defaultRules(
@@ -73,6 +75,7 @@ class AgentRegistry {
   static AgentDefinition get general => AgentDefinition(
         name: 'general',
         description: 'General-purpose subagent for multi-step work.',
+        descriptionZh: '通用子智能体，用于执行多步骤任务。',
         mode: AgentMode.subagent,
         permissionRules: _defaultRules(
           overrides: [
@@ -89,6 +92,7 @@ class AgentRegistry {
         name: 'explore',
         description:
             'Fast codebase exploration agent with read and search tools.',
+        descriptionZh: '快速代码探索智能体，只读搜索和浏览，不修改任何文件。',
         mode: AgentMode.subagent,
         promptOverride: explorePrompt,
         permissionRules: [

@@ -1,0 +1,381 @@
+// ignore_for_file: invalid_use_of_protected_member, invalid_use_of_visible_for_testing_member
+part of 'app_controller.dart';
+
+extension AppControllerSession on AppController {
+  /// 从系统选择器打开文件夹并进入工作区（新建会话落地页，对齐 OpenCode）。
+  Future<void> pickAndOpenProject() async {
+    try {
+      await initialize();
+      final picked = await _workspaceBridge.pickWorkspace();
+      if (picked == null) return;
+      await enterWorkspace(picked, openSession: null);
+    } catch (error) {
+      _setError(error);
+    }
+  }
+
+  /// 返回项目首页（最近项目 / 打开项目）。
+  Future<void> leaveProject() async {
+    _cancelPendingPartDeltas();
+    _clearWorkspacePreviewCaches();
+    state = state.copyWith(
+      workspace: null,
+      session: null,
+      sessions: const [],
+      messages: const [],
+      permissions: const [],
+      questions: const [],
+      todos: const [],
+      isBusy: false,
+      error: null,
+    );
+    notifyListeners();
+  }
+
+  /// 与 [enterWorkspace] 相同路径：解析 treeUri、写入最近、进入落地页。
+  Future<void> openSavedProject(WorkspaceInfo workspace) async {
+    await enterWorkspace(workspace, openSession: null);
+  }
+
+  /// 打开已有工作区。`openSession == null` 时对齐 OpenCode `/session` 无 id：仅展示新建会话页与输入框。
+  Future<void> enterWorkspace(
+    WorkspaceInfo picked, {
+    SessionInfo? openSession,
+  }) async {
+    final startedAt = DateTime.now().millisecondsSinceEpoch;
+    try {
+      await initialize();
+      _cancelPendingPartDeltas();
+      _clearWorkspacePreviewCaches();
+      final resolved = await _resolveWorkspace(picked);
+      await ProjectRecentsStore.touch(resolved.treeUri, resolved.name);
+      final sessions = await _client!.listSessions(resolved.id);
+      if (openSession != null) {
+        SessionInfo? resolvedSession;
+        for (final s in sessions) {
+          if (s.id == openSession.id) {
+            resolvedSession = s;
+            break;
+          }
+        }
+        if (resolvedSession == null) {
+          state = state.copyWith(
+            workspace: resolved,
+            sessions: sessions,
+            session: null,
+            messages: const [],
+            permissions: const [],
+            questions: const [],
+            todos: const [],
+            error: null,
+          );
+          notifyListeners();
+        } else {
+          state = state.copyWith(
+            workspace: resolved,
+            sessions: sessions,
+            session: resolvedSession,
+            error: null,
+          );
+          notifyListeners();
+          await refreshSession();
+        }
+      } else {
+        state = state.copyWith(
+          workspace: resolved,
+          sessions: sessions,
+          session: null,
+          messages: const [],
+          permissions: const [],
+          questions: const [],
+          todos: const [],
+          error: null,
+        );
+        notifyListeners();
+      }
+      debugTrace(
+        runId: 'workspace-enter',
+        hypothesisId: 'H2',
+        location: 'app_controller.dart:enterWorkspace',
+        message: 'enterWorkspace completed',
+        data: {
+          'workspaceId': resolved.id,
+          'sessionId': openSession?.id,
+          'sessions': sessions.length,
+          'elapsedMs': DateTime.now().millisecondsSinceEpoch - startedAt,
+        },
+      );
+    } catch (error) {
+      _setError(error);
+    }
+  }
+
+  Future<void> enterNewSessionLanding() async {
+    final workspace = state.workspace;
+    if (workspace == null) return;
+    try {
+      _cancelPendingPartDeltas();
+      _clearWorkspacePreviewCaches();
+      final sessions = await _client!.listSessions(workspace.id);
+      state = state.copyWith(
+        session: null,
+        sessions: sessions,
+        messages: const [],
+        permissions: const [],
+        questions: const [],
+        todos: const [],
+        error: null,
+      );
+      notifyListeners();
+    } catch (error) {
+      _setError(error);
+    }
+  }
+
+  Future<WorkspaceInfo> _resolveWorkspace(WorkspaceInfo picked) async {
+    final all = await _client!.listWorkspaces();
+    for (final w in all) {
+      if (_treeUriEquivalent(w.treeUri, picked.treeUri)) {
+        return w;
+      }
+    }
+    await _client!.saveWorkspace(picked);
+    return picked;
+  }
+
+  bool _treeUriEquivalent(String a, String b) {
+    if (a == b) return true;
+    try {
+      final ua = Uri.parse(a);
+      final ub = Uri.parse(b);
+      if (ua.scheme == 'file' && ub.scheme == 'file') {
+        var pa = ua.path;
+        var pb = ub.path;
+        if (pa.endsWith('/')) pa = pa.substring(0, pa.length - 1);
+        if (pb.endsWith('/')) pb = pb.substring(0, pb.length - 1);
+        return pa == pb;
+      }
+    } catch (_) {}
+    return false;
+  }
+
+  /// 供项目首页：已保存的工作区按最近打开时间排序，最多 [limit] 条。
+  Future<List<WorkspaceInfo>> workspacesForHome({int limit = 5}) async {
+    try {
+      await initialize();
+    } catch (_) {
+      return const [];
+    }
+    final c = _client;
+    if (c == null) return const [];
+    final all = await c.listWorkspaces();
+    if (all.isEmpty) return const [];
+    final recent = await ProjectRecentsStore.lastOpenedMap();
+    int rank(WorkspaceInfo w) {
+      return recent[w.treeUri] ?? w.createdAt;
+    }
+
+    final sorted = [...all]..sort((a, b) => rank(b).compareTo(rank(a)));
+    return sorted.take(limit).toList();
+  }
+
+  void _cancelPendingPartDeltas() {
+    _partDeltaFlushTimer?.cancel();
+    _partDeltaFlushTimer = null;
+    _pendingPartDeltas.clear();
+  }
+
+  @Deprecated('Use enterWorkspace or pickAndOpenProject')
+  Future<void> selectWorkspace(WorkspaceInfo workspace) async {
+    await enterWorkspace(workspace, openSession: null);
+  }
+
+  Future<void> createSession({String agent = 'build'}) async {
+    final workspace = state.workspace;
+    if (workspace == null) return;
+    try {
+      _cancelPendingPartDeltas();
+      _clearWorkspacePreviewCaches();
+      final session = await _client!.createSession(workspace, agent: agent);
+      final sessions = await _client!.listSessions(workspace.id);
+      state = state.copyWith(
+          session: session,
+          sessions: sessions,
+          messages: const [],
+          todos: const [],
+          permissions: const [],
+          questions: const []);
+      notifyListeners();
+      await refreshSession();
+    } catch (error) {
+      _setError(error);
+    }
+  }
+
+  /// OpenCode `Session.setTitle`：重命名后由 `session.updated` 同步列表与顶栏。
+  Future<void> renameSession(SessionInfo session, String newTitle) async {
+    if (state.workspace == null) return;
+    try {
+      await initialize();
+      await _client!.updateSessionTitle(session.id, newTitle);
+    } catch (error) {
+      _setError(error);
+    }
+  }
+
+  /// OpenCode `Session.remove`：删除后由 `session.deleted` 更新列表；若删的是当前会话则回到空白落地页。
+  Future<void> removeSession(SessionInfo session) async {
+    if (state.workspace == null) return;
+    try {
+      await initialize();
+      await _client!.deleteSession(session.id);
+    } catch (error) {
+      _setError(error);
+    }
+  }
+
+  Future<void> refreshSession() async {
+    final session = state.session;
+    if (session == null) return;
+    final workspace = state.workspace;
+    if (workspace == null) return;
+    final startedAt = DateTime.now().millisecondsSinceEpoch;
+    final messages = await _client!.listSessionMessages(session.id);
+    final sessions = await _client!.listSessions(workspace.id);
+    final permissions = await _client!.listPermissions();
+    final questions = await _client!.listQuestions();
+    final todos = await _db.listTodos(session.id);
+    state = state.copyWith(
+      messages: messages,
+      sessions: sessions,
+      permissions:
+          permissions.where((item) => item.sessionId == session.id).toList(),
+      questions:
+          questions.where((item) => item.sessionId == session.id).toList(),
+      todos: todos,
+    );
+    notifyListeners();
+    // #region agent log
+    debugTrace(
+      runId: 'workspace-refresh',
+      hypothesisId: 'H2',
+      location: 'app_controller.dart:221',
+      message: 'refreshSession completed',
+      data: {
+        'sessionId': session.id,
+        'messages': messages.length,
+        'parts': messages.fold<int>(0, (sum, item) => sum + item.parts.length),
+        'permissions': state.permissions.length,
+        'questions': state.questions.length,
+        'todos': todos.length,
+        'elapsedMs': DateTime.now().millisecondsSinceEpoch - startedAt,
+      },
+    );
+    // #endregion
+  }
+
+  Future<void> sendPrompt(String text,
+      {String? agent, MessageFormat? format}) async {
+    if (text.trim().isEmpty) return;
+    final workspace = state.workspace;
+    if (workspace == null) return;
+    var session = state.session;
+    if (session == null) {
+      final useAgent = agent ?? 'build';
+      await createSession(agent: useAgent);
+      session = state.session;
+      if (session == null) return;
+    }
+    final modelConfig = state.modelConfig ?? ModelConfig.defaults();
+    _debugLog('sendPrompt',
+        'provider=${modelConfig.provider} model=${modelConfig.model}');
+    final mag = modelConfig.isMagProvider;
+    final hasKey = modelConfig.apiKey.trim().isNotEmpty;
+    final freeMag = mag && modelConfig.isMagZenFreeModel;
+    final needsKey = mag ? (!freeMag && !hasKey) : !hasKey;
+    if (needsKey) {
+      state = state.copyWith(
+        isBusy: false,
+        error: 'Missing API key. 请先在设置里配置模型 API Key。',
+      );
+      notifyListeners();
+      return;
+    }
+    state = state.copyWith(
+      isBusy: true,
+      error: null,
+    );
+    notifyListeners();
+    try {
+      await _client!
+          .sendPromptAsync(session.id, text, agent: agent, format: format);
+      if (agent != null && agent != session.agent) {
+        state = state.copyWith(session: session.copyWith(agent: agent));
+        notifyListeners();
+      }
+    } catch (error) {
+      _setError(error);
+    }
+  }
+
+  Future<void> initializeProjectMemory() async {
+    final session = state.session;
+    if (session == null || state.isBusy) return;
+    await sendPrompt(
+      magMemoryInitializationPrompt,
+      agent: session.agent,
+    );
+  }
+
+  Future<void> compactSession() async {
+    final session = state.session;
+    if (session == null || state.isBusy) return;
+    state = state.copyWith(isBusy: true, error: null);
+    notifyListeners();
+    try {
+      final updated = await _client!.compactSession(session.id);
+      state = state.copyWith(
+        session: updated,
+        sessions: _upsertSession(state.sessions, updated),
+      );
+      notifyListeners();
+    } catch (error) {
+      _setError(error);
+    }
+  }
+
+  Future<void> cancelPrompt() async {
+    final session = state.session;
+    if (session == null) return;
+    try {
+      await _client!.cancelSession(session.id);
+      state = state.copyWith(isBusy: false, error: null);
+      notifyListeners();
+    } catch (error) {
+      _setError(error);
+    }
+  }
+
+  Future<void> replyPermission(String requestId, PermissionReply reply) async {
+    await _client!.replyPermission(requestId, reply);
+  }
+
+  Future<void> replyQuestion(
+      String requestId, List<List<String>> answers) async {
+    await _client!.replyQuestion(requestId, answers);
+  }
+
+  Future<void> switchSession(SessionInfo session) async {
+    _cancelPendingPartDeltas();
+    _clearWorkspacePreviewCaches();
+    state = state.copyWith(
+      session: session,
+      messages: const [],
+      todos: const [],
+      permissions: const [],
+      questions: const [],
+    );
+    notifyListeners();
+    await refreshSession();
+  }
+}

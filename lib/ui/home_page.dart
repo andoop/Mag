@@ -6,6 +6,7 @@ import 'dart:convert';
 import 'package:flutter/material.dart';
 import 'package:flutter_highlight/flutter_highlight.dart';
 import 'package:flutter_highlight/themes/github.dart';
+import 'package:flutter_highlight/themes/atom-one-dark.dart';
 import 'package:flutter_markdown/flutter_markdown.dart';
 import 'package:markdown/markdown.dart' as md;
 import 'package:pdfx/pdfx.dart';
@@ -17,18 +18,39 @@ import '../core/workspace_bridge.dart';
 import '../sdk/local_server_client.dart';
 import '../store/app_controller.dart';
 import 'i18n.dart';
+import 'oc_theme.dart';
 
 
-part 'home/home_constants.dart';
-part 'home/home_catalog.dart';
-part 'home/home_timeline.dart';
-part 'home/home_composer.dart';
-part 'home/home_shell.dart';
-part 'home/home_pickers.dart';
-part 'home/home_parts.dart';
-part 'home/home_panels.dart';
-part 'home/home_landing.dart';
-part 'home/home_workspace_browser.dart';
+part 'home/constants.dart';
+part 'home/timeline.dart';
+part 'home/composer.dart';
+part 'home/shell.dart';
+part 'home/panels.dart';
+part 'home/landing.dart';
+part 'home/workspace_browser.dart';
+
+part 'home/parts/tiles.dart';
+part 'home/parts/markdown.dart';
+part 'home/parts/reasoning.dart';
+part 'home/parts/text_footer.dart';
+part 'home/parts/tool_widgets.dart';
+
+part 'home/attachments/attachment_tile.dart';
+part 'home/attachments/file_results.dart';
+part 'home/attachments/diff_preview.dart';
+part 'home/attachments/media_tiles.dart';
+
+part 'home/previews/web_preview.dart';
+part 'home/previews/pdf_preview.dart';
+part 'home/previews/file_preview.dart';
+part 'home/previews/html_preview.dart';
+
+part 'home/pickers/picker_utils.dart';
+part 'home/pickers/oauth_sheet.dart';
+part 'home/pickers/provider_picker.dart';
+part 'home/pickers/model_picker.dart';
+part 'home/pickers/agent_picker.dart';
+part 'home/pickers/presets.dart';
 
 class HomePage extends StatefulWidget {
   const HomePage({super.key, required this.controller});
@@ -54,7 +76,9 @@ class _HomePageState extends State<HomePage> {
   bool _structuredOutputEnabled = false;
   // ignore: prefer_final_fields
   String _selectedSchemaTemplate = 'answer';
-  bool _stickToBottom = true;
+  final ValueNotifier<bool> _stickToBottom = ValueNotifier<bool>(true);
+  final ValueNotifier<int> _messageVersion = ValueNotifier<int>(0);
+  bool _isAutoScrolling = false;
   String _lastTimelineAnchor = '';
   String _historySessionId = '';
   int _historyStartIndex = 0;
@@ -63,6 +87,7 @@ class _HomePageState extends State<HomePage> {
   int _lastBackfillAt = 0;
   int _lastTimelineSyncAt = 0;
   String _lastStateRenderKey = '';
+  String _lastStructuralKey = '';
   /// 会话切换时必须重建时间线；不能仅依赖 [_stateRenderKey]，否则新建/切换会话后可能与旧 key 碰撞而不调用 setState，界面仍显示旧消息。
   String? _lastObservedSessionId;
 
@@ -81,6 +106,8 @@ class _HomePageState extends State<HomePage> {
       ..dispose();
     _promptController.dispose();
     _schemaController.dispose();
+    _stickToBottom.dispose();
+    _messageVersion.dispose();
     super.dispose();
   }
 
@@ -93,12 +120,14 @@ class _HomePageState extends State<HomePage> {
     if (sessionChanged) {
       _lastObservedSessionId = sid;
       _lastStateRenderKey = renderKey;
+      _lastStructuralKey = _structuralRenderKey(state);
       _reconcileTimelineWindow(state);
       _scheduleTimelineSync(state);
       setState(() {});
+      _stickToBottom.value = true;
       WidgetsBinding.instance.addPostFrameCallback((_) {
         if (!mounted || !_timelineController.hasClients) return;
-        _timelineController.jumpTo(0);
+        _scrollTimelineToBottom(animate: false);
       });
       return;
     }
@@ -108,7 +137,13 @@ class _HomePageState extends State<HomePage> {
     _lastStateRenderKey = renderKey;
     _reconcileTimelineWindow(state);
     _scheduleTimelineSync(state);
-    setState(() {});
+    final structuralKey = _structuralRenderKey(state);
+    if (structuralKey != _lastStructuralKey) {
+      _lastStructuralKey = structuralKey;
+      setState(() {});
+    } else {
+      _messageVersion.value++;
+    }
   }
 
   int _initialHistoryStart(List<SessionMessageBundle> messages) {
@@ -159,7 +194,7 @@ class _HomePageState extends State<HomePage> {
     if (_stagedMessageCount > visibleCount) {
       _stagedMessageCount = visibleCount;
     }
-    if (_stagedMessageCount < visibleCount && _stickToBottom) {
+    if (_stagedMessageCount < visibleCount && _stickToBottom.value) {
       _scheduleStageMount(state);
     }
   }
@@ -465,7 +500,6 @@ class _HomePageState extends State<HomePage> {
         _modelChoiceIsFree(currentModelChoice);
     final showModelLatestTag = currentModelChoice != null &&
         _modelChoiceIsLatest(currentModelChoice);
-    final renderedMessages = _renderedTimelineMessages(state);
     return Scaffold(
       key: _scaffoldKey,
       drawer: _buildSessionDrawer(context, state),
@@ -489,6 +523,15 @@ class _HomePageState extends State<HomePage> {
           running: state.isBusy,
         ),
         actions: [
+          IconButton(
+            tooltip: l(context, '切换主题', 'Toggle theme'),
+            onPressed: () => widget.controller.toggleThemeMode(),
+            icon: Icon(
+              context.isDarkMode
+                  ? Icons.light_mode_outlined
+                  : Icons.dark_mode_outlined,
+            ),
+          ),
           IconButton(
             tooltip: l(context, '工作区文件', 'Workspace files'),
             onPressed: state.workspace == null
@@ -514,7 +557,7 @@ class _HomePageState extends State<HomePage> {
       ),
       body: SafeArea(
         child: Container(
-          color: _kPageBackground,
+          color: context.oc.pageBackground,
           child: Stack(
             children: [
               Column(
@@ -542,60 +585,70 @@ class _HomePageState extends State<HomePage> {
                   Expanded(
                     child: state.session == null
                         ? _buildNewSessionLanding(context, state)
-                        : NotificationListener<ScrollNotification>(
-                            onNotification: _handleTimelineNotification,
-                            child: ListView.builder(
-                              key: ValueKey<String>(
-                                  'timeline-${state.session?.id ?? 'none'}'),
-                              controller: _timelineController,
-                              keyboardDismissBehavior:
-                                  ScrollViewKeyboardDismissBehavior.onDrag,
-                              physics: const BouncingScrollPhysics(
-                                  parent: AlwaysScrollableScrollPhysics()),
-                              padding: EdgeInsets.fromLTRB(
-                                  12, isKeyboardOpen ? 8 : 12, 12, 16),
-                              itemCount:
-                                  _timelineItemCount(state, renderedMessages),
-                              itemBuilder: (context, index) =>
-                                  _buildTimelineItem(
-                                context,
-                                state: state,
-                                modelConfig: modelConfig,
-                                currentModelChoice: currentModelChoice,
-                                showModelFreeTag: showModelFreeTag,
-                                showModelLatestTag: showModelLatestTag,
-                                isKeyboardOpen: isKeyboardOpen,
-                                renderedMessages: renderedMessages,
-                                index: index,
-                              ),
-                            ),
+                        : ValueListenableBuilder<int>(
+                            valueListenable: _messageVersion,
+                            builder: (context, _, __) {
+                              final liveState = widget.controller.state;
+                              final renderedMessages =
+                                  _renderedTimelineMessages(liveState);
+                              return NotificationListener<ScrollNotification>(
+                                onNotification: _handleTimelineNotification,
+                                child: ListView.builder(
+                                  key: ValueKey<String>(
+                                      'timeline-${liveState.session?.id ?? 'none'}'),
+                                  controller: _timelineController,
+                                  keyboardDismissBehavior:
+                                      ScrollViewKeyboardDismissBehavior.onDrag,
+                                  physics: const BouncingScrollPhysics(
+                                      parent: AlwaysScrollableScrollPhysics()),
+                                  padding: EdgeInsets.fromLTRB(
+                                      12, isKeyboardOpen ? 8 : 12, 12, 16),
+                                  itemCount: _timelineItemCount(
+                                      liveState, renderedMessages),
+                                  itemBuilder: (context, index) =>
+                                      _buildTimelineItem(
+                                    context,
+                                    state: liveState,
+                                    modelConfig: modelConfig,
+                                    currentModelChoice: currentModelChoice,
+                                    showModelFreeTag: showModelFreeTag,
+                                    showModelLatestTag: showModelLatestTag,
+                                    isKeyboardOpen: isKeyboardOpen,
+                                    renderedMessages: renderedMessages,
+                                    index: index,
+                                  ),
+                                ),
+                              );
+                            },
                           ),
                   ),
                   _buildComposerDock(context, state, isKeyboardOpen),
                 ],
               ),
-              if (state.session != null && !_stickToBottom)
-                Positioned(
-                  right: 16,
-                  bottom: isKeyboardOpen ? 104 : 132,
-                  child: FilledButton.tonalIcon(
-                    style: FilledButton.styleFrom(
-                      backgroundColor: Colors.white,
-                      foregroundColor: Colors.black87,
-                      elevation: 0,
-                      side: const BorderSide(color: _kBorderColor),
-                    ),
-                    onPressed: () {
-                      _stickToBottom = true;
-                      setState(() {});
-                      WidgetsBinding.instance.addPostFrameCallback((_) {
-                        if (!mounted) return;
-                        _scrollTimelineToBottom();
-                      });
-                    },
-                    icon: const Icon(Icons.arrow_downward, size: 16),
-                    label: Text(l(context, '回到底部', 'Bottom')),
-                  ),
+              if (state.session != null)
+                ValueListenableBuilder<bool>(
+                  valueListenable: _stickToBottom,
+                  builder: (context, stickToBottom, _) {
+                    if (stickToBottom) return const SizedBox.shrink();
+                    return Positioned(
+                      right: 16,
+                      bottom: isKeyboardOpen ? 104 : 132,
+                      child: FilledButton.tonalIcon(
+                        style: FilledButton.styleFrom(
+                          backgroundColor: context.oc.panelBackground,
+                          foregroundColor: context.oc.foreground,
+                          elevation: 0,
+                          side: BorderSide(color: context.oc.borderColor),
+                        ),
+                        onPressed: () {
+                          _stickToBottom.value = true;
+                          _scrollTimelineToBottom();
+                        },
+                        icon: const Icon(Icons.arrow_downward, size: 16),
+                        label: Text(l(context, '回到底部', 'Bottom')),
+                      ),
+                    );
+                  },
                 ),
             ],
           ),
@@ -606,24 +659,21 @@ class _HomePageState extends State<HomePage> {
 
 
   void _handleTimelineScroll() {
-    if (!_timelineController.hasClients) return;
+    if (!_timelineController.hasClients || _isAutoScrolling) return;
     final distance = _timelineController.position.maxScrollExtent -
         _timelineController.offset;
     final nextStick = distance < 24;
-    if (nextStick != _stickToBottom) {
-      setState(() {
-        _stickToBottom = nextStick;
-      });
+    if (nextStick != _stickToBottom.value) {
+      _stickToBottom.value = nextStick;
     }
   }
 
   bool _handleTimelineNotification(ScrollNotification notification) {
+    if (_isAutoScrolling) return false;
     if (notification is ScrollStartNotification &&
         notification.dragDetails != null &&
-        _stickToBottom) {
-      setState(() {
-        _stickToBottom = false;
-      });
+        _stickToBottom.value) {
+      _stickToBottom.value = false;
       return false;
     }
     if (notification is ScrollUpdateNotification ||
@@ -631,10 +681,8 @@ class _HomePageState extends State<HomePage> {
       final distance =
           notification.metrics.maxScrollExtent - notification.metrics.pixels;
       final nextStick = distance < 24;
-      if (nextStick != _stickToBottom) {
-        setState(() {
-          _stickToBottom = nextStick;
-        });
+      if (nextStick != _stickToBottom.value) {
+        _stickToBottom.value = nextStick;
       }
       if (notification.metrics.pixels < 180 &&
           _hasEarlierHistory(widget.controller.state)) {
@@ -652,14 +700,15 @@ class _HomePageState extends State<HomePage> {
     final anchor = _timelineAnchor(state);
     if (anchor == _lastTimelineAnchor) return;
     _lastTimelineAnchor = anchor;
+    if (_isAutoScrolling) return;
     final now = DateTime.now().millisecondsSinceEpoch;
     final canAnimate = !state.isBusy;
-    if (!canAnimate && now - _lastTimelineSyncAt < 48) {
+    if (!canAnimate && now - _lastTimelineSyncAt < 64) {
       return;
     }
     _lastTimelineSyncAt = now;
     WidgetsBinding.instance.addPostFrameCallback((_) {
-      if (!mounted || !_stickToBottom) return;
+      if (!mounted || !_stickToBottom.value || _isAutoScrolling) return;
       _scrollTimelineToBottom(animate: canAnimate);
     });
   }
@@ -668,11 +717,21 @@ class _HomePageState extends State<HomePage> {
     if (!_timelineController.hasClients) return;
     final offset = _timelineController.position.maxScrollExtent;
     if (animate) {
-      _timelineController.animateTo(
-        offset,
-        duration: const Duration(milliseconds: 180),
-        curve: Curves.easeOut,
-      );
+      _isAutoScrolling = true;
+      _timelineController
+          .animateTo(
+            offset,
+            duration: const Duration(milliseconds: 220),
+            curve: Curves.easeOutCubic,
+          )
+          .whenComplete(() {
+        _isAutoScrolling = false;
+        if (_timelineController.hasClients) {
+          final dist = _timelineController.position.maxScrollExtent -
+              _timelineController.offset;
+          _stickToBottom.value = dist < 24;
+        }
+      });
       return;
     }
     _timelineController.jumpTo(offset);
@@ -692,6 +751,21 @@ class _HomePageState extends State<HomePage> {
       lastPart?.id ?? '',
       lastPart?.type.name ?? '',
       _partRenderHint(lastPart),
+    ].join('|');
+  }
+
+  String _structuralRenderKey(AppState state) {
+    final mc = state.modelConfig;
+    return [
+      state.session?.id ?? '',
+      state.permissions.length,
+      state.questions.length,
+      state.todos.length,
+      state.isBusy,
+      state.error ?? '',
+      mc?.provider ?? '',
+      mc?.model ?? '',
+      state.messages.length,
     ].join('|');
   }
 
@@ -741,10 +815,4 @@ class _HomePageState extends State<HomePage> {
     }
   }
 
-  String _formatTimestamp(int ms) {
-    final dt = DateTime.fromMillisecondsSinceEpoch(ms);
-    final hh = dt.hour.toString().padLeft(2, '0');
-    final mm = dt.minute.toString().padLeft(2, '0');
-    return '$hh:$mm';
-  }
 }

@@ -4,6 +4,7 @@ import '../core/models.dart';
 import '../store/app_controller.dart';
 import '../store/project_recents_store.dart';
 import 'i18n.dart';
+import 'oc_theme.dart';
 
 class _RecentProjectsLoad {
   _RecentProjectsLoad({required this.list, required this.times});
@@ -37,17 +38,14 @@ class _ProjectHomePageState extends State<ProjectHomePage> {
     return _RecentProjectsLoad(list: list, times: times);
   }
 
-  static const _bg = Color(0xFFF5F5F4);
-  static const _muted = Color(0xFF71717A);
-  static const _text = Color(0xFF18181B);
-
   @override
   Widget build(BuildContext context) {
+    final oc = context.oc;
     return AnimatedBuilder(
       animation: widget.controller,
       builder: (context, _) {
         return Scaffold(
-      backgroundColor: _bg,
+      backgroundColor: oc.pageBackground,
       body: SafeArea(
         child: Padding(
           padding: const EdgeInsets.symmetric(horizontal: 20),
@@ -55,6 +53,20 @@ class _ProjectHomePageState extends State<ProjectHomePage> {
             crossAxisAlignment: CrossAxisAlignment.stretch,
             children: [
               const SizedBox(height: 48),
+              Row(
+                mainAxisAlignment: MainAxisAlignment.end,
+                children: [
+                  IconButton(
+                    tooltip: l(context, '切换主题', 'Toggle theme'),
+                    onPressed: () => widget.controller.toggleThemeMode(),
+                    icon: Icon(
+                      context.isDarkMode
+                          ? Icons.light_mode_outlined
+                          : Icons.dark_mode_outlined,
+                    ),
+                  ),
+                ],
+              ),
               Text(
                 l(context, 'Mag', 'Mag'),
                 textAlign: TextAlign.center,
@@ -62,17 +74,17 @@ class _ProjectHomePageState extends State<ProjectHomePage> {
                   fontSize: 42,
                   fontWeight: FontWeight.w800,
                   letterSpacing: -1.2,
-                  color: _text.withOpacity(0.12),
+                  color: oc.text.withOpacity(0.12),
                 ),
               ),
               const SizedBox(height: 8),
               Text(
                 l(context, '本地 AI 工作区', 'Local AI workspace'),
                 textAlign: TextAlign.center,
-                style: const TextStyle(
+                style: TextStyle(
                   fontSize: 14,
                   fontWeight: FontWeight.w500,
-                  color: _muted,
+                  color: oc.muted,
                 ),
               ),
               if (widget.controller.state.serverUri != null) ...[
@@ -84,7 +96,7 @@ class _ProjectHomePageState extends State<ProjectHomePage> {
                   overflow: TextOverflow.ellipsis,
                   style: TextStyle(
                     fontSize: 11,
-                    color: _muted.withOpacity(0.85),
+                    color: oc.muted.withOpacity(0.85),
                   ),
                 ),
               ],
@@ -101,8 +113,8 @@ class _ProjectHomePageState extends State<ProjectHomePage> {
                             Text(
                               l(context, '项目列表加载失败', 'Failed to load projects'),
                               textAlign: TextAlign.center,
-                              style: const TextStyle(
-                                color: _muted,
+                              style: TextStyle(
+                                color: oc.muted,
                                 fontSize: 14,
                               ),
                             ),
@@ -124,7 +136,7 @@ class _ProjectHomePageState extends State<ProjectHomePage> {
                       return Center(
                         child: Text(
                           l(context, '加载中…', 'Loading…'),
-                          style: const TextStyle(color: _muted, fontSize: 13),
+                          style: TextStyle(color: oc.muted, fontSize: 13),
                         ),
                       );
                     }
@@ -144,10 +156,10 @@ class _ProjectHomePageState extends State<ProjectHomePage> {
                             Expanded(
                               child: Text(
                                 l(context, '最近项目', 'Recent projects'),
-                                style: const TextStyle(
+                                style: TextStyle(
                                   fontSize: 14,
                                   fontWeight: FontWeight.w600,
-                                  color: _text,
+                                  color: oc.text,
                                 ),
                               ),
                             ),
@@ -168,7 +180,7 @@ class _ProjectHomePageState extends State<ProjectHomePage> {
                             itemBuilder: (context, i) {
                               final w = list[i];
                               return Material(
-                                color: Colors.white,
+                                color: oc.panelBackground,
                                 borderRadius: BorderRadius.circular(14),
                                 child: InkWell(
                                   borderRadius: BorderRadius.circular(14),
@@ -184,10 +196,10 @@ class _ProjectHomePageState extends State<ProjectHomePage> {
                                         Expanded(
                                           child: Text(
                                             _displayPath(context, w.name),
-                                            style: const TextStyle(
+                                            style: TextStyle(
                                               fontSize: 14,
                                               fontWeight: FontWeight.w500,
-                                              color: _text,
+                                              color: oc.text,
                                             ),
                                           ),
                                         ),
@@ -196,9 +208,9 @@ class _ProjectHomePageState extends State<ProjectHomePage> {
                                             context,
                                             times[w.treeUri] ?? w.createdAt,
                                           ),
-                                          style: const TextStyle(
+                                          style: TextStyle(
                                             fontSize: 12,
-                                            color: _muted,
+                                            color: oc.muted,
                                           ),
                                         ),
                                       ],
@@ -271,6 +283,7 @@ class _EmptyProjects extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final oc = context.oc;
     return Center(
       child: Column(
         mainAxisAlignment: MainAxisAlignment.center,
@@ -278,15 +291,15 @@ class _EmptyProjects extends StatelessWidget {
           Icon(
             Icons.folder_open_rounded,
             size: 48,
-            color: const Color(0xFF18181B).withOpacity(0.2),
+            color: oc.text.withOpacity(0.2),
           ),
           const SizedBox(height: 16),
           Text(
             l(context, '尚无项目', 'No projects yet'),
-            style: const TextStyle(
+            style: TextStyle(
               fontSize: 16,
               fontWeight: FontWeight.w600,
-              color: Color(0xFF18181B),
+              color: oc.text,
             ),
           ),
           const SizedBox(height: 6),
@@ -297,10 +310,10 @@ class _EmptyProjects extends StatelessWidget {
               'Pick a folder as your workspace. The path is granted by the system sandbox, like OpenCode.',
             ),
             textAlign: TextAlign.center,
-            style: const TextStyle(
+            style: TextStyle(
               fontSize: 12.5,
               height: 1.35,
-              color: Color(0xFF71717A),
+              color: oc.muted,
             ),
           ),
           const SizedBox(height: 20),
@@ -310,8 +323,8 @@ class _EmptyProjects extends StatelessWidget {
             label: Text(l(context, '打开项目', 'Open project')),
             style: FilledButton.styleFrom(
               padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 12),
-              backgroundColor: const Color(0xFF111827),
-              foregroundColor: Colors.white,
+              backgroundColor: oc.sendButtonBg,
+              foregroundColor: oc.sendButtonFg,
             ),
           ),
         ],

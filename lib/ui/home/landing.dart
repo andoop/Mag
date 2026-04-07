@@ -3,8 +3,9 @@ part of '../home_page.dart';
 extension _HomePageLanding on _HomePageState {
   Widget _buildNewSessionLanding(BuildContext context, AppState state) {
     final ws = state.workspace!;
+    final oc = context.oc;
     return ColoredBox(
-      color: _kPageBackground,
+      color: oc.pageBackground,
       child: ListView(
         physics: const AlwaysScrollableScrollPhysics(
           parent: BouncingScrollPhysics(),
@@ -16,17 +17,17 @@ extension _HomePageLanding on _HomePageState {
             child: Icon(
               Icons.blur_circular_rounded,
               size: 44,
-              color: kOcMuted.withOpacity(0.35),
+              color: oc.muted.withOpacity(0.35),
             ),
           ),
           const SizedBox(height: 22),
           Text(
             l(context, '新建会话', 'New session'),
             textAlign: TextAlign.center,
-            style: const TextStyle(
+            style: TextStyle(
               fontSize: 20,
               fontWeight: FontWeight.w600,
-              color: kOcText,
+              color: oc.text,
               letterSpacing: -0.3,
             ),
           ),
@@ -34,11 +35,11 @@ extension _HomePageLanding on _HomePageState {
           Text(
             ws.name,
             textAlign: TextAlign.center,
-            style: const TextStyle(
+            style: TextStyle(
               fontSize: 12.5,
               fontWeight: FontWeight.w500,
               height: 1.35,
-              color: kOcMuted,
+              color: oc.muted,
             ),
           ),
           const SizedBox(height: 12),
@@ -48,15 +49,15 @@ extension _HomePageLanding on _HomePageState {
               Icon(
                 Icons.call_split_rounded,
                 size: 15,
-                color: kOcMuted.withOpacity(0.9),
+                color: oc.muted.withOpacity(0.9),
               ),
               const SizedBox(width: 6),
               Text(
                 l(context, '主工作区', 'main'),
-                style: const TextStyle(
+                style: TextStyle(
                   fontSize: 12.5,
                   fontWeight: FontWeight.w500,
-                  color: kOcMuted,
+                  color: oc.muted,
                 ),
               ),
             ],
@@ -65,9 +66,9 @@ extension _HomePageLanding on _HomePageState {
           Text(
             '${l(context, '加入于', 'Added')} · ${_formatLandingDate(ws.createdAt)}',
             textAlign: TextAlign.center,
-            style: const TextStyle(
+            style: TextStyle(
               fontSize: 12.5,
-              color: kOcMuted,
+              color: oc.muted,
             ),
           ),
           const SizedBox(height: 40),
@@ -81,7 +82,7 @@ extension _HomePageLanding on _HomePageState {
             style: TextStyle(
               fontSize: 12.5,
               height: 1.4,
-              color: kOcMuted.withOpacity(0.95),
+              color: oc.muted.withOpacity(0.95),
             ),
           ),
         ],
@@ -97,8 +98,9 @@ extension _HomePageLanding on _HomePageState {
   /// 左侧滑出：会话列表 + 新建 + 压缩/记忆（原「更多」里依赖会话的项）。
   Widget _buildSessionDrawer(BuildContext context, AppState state) {
     final ws = state.workspace!;
+    final oc = context.oc;
     return Drawer(
-      backgroundColor: kOcSurface,
+      backgroundColor: oc.surface,
       child: SafeArea(
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.stretch,
@@ -115,10 +117,10 @@ extension _HomePageLanding on _HomePageState {
                         children: [
                           Text(
                             l(context, '会话记录', 'Sessions'),
-                            style: const TextStyle(
+                            style: TextStyle(
                               fontSize: 13,
                               fontWeight: FontWeight.w600,
-                              color: kOcMuted,
+                              color: oc.muted,
                             ),
                           ),
                           const SizedBox(height: 4),
@@ -126,10 +128,10 @@ extension _HomePageLanding on _HomePageState {
                             ws.name,
                             maxLines: 2,
                             overflow: TextOverflow.ellipsis,
-                            style: const TextStyle(
+                            style: TextStyle(
                               fontSize: 15,
                               fontWeight: FontWeight.w700,
-                              color: kOcText,
+                              color: oc.text,
                             ),
                           ),
                         ],
@@ -138,15 +140,15 @@ extension _HomePageLanding on _HomePageState {
                   ),
                   IconButton(
                     icon: const Icon(Icons.close_rounded),
-                    color: kOcMuted,
+                    color: oc.muted,
                     onPressed: () => Navigator.pop(context),
                   ),
                 ],
               ),
             ),
-            const Divider(height: 1, color: kOcBorder),
+            Divider(height: 1, color: oc.border),
             ListTile(
-              leading: const Icon(Icons.edit_note_outlined, color: kOcAccent),
+              leading: Icon(Icons.edit_note_outlined, color: oc.accent),
               title: Text(l(context, '新建空白页', 'New chat (blank)')),
               subtitle: Text(
                 l(context, '仅输入区，首条消息再建会话', 'Composer only; first send creates session'),
@@ -159,7 +161,7 @@ extension _HomePageLanding on _HomePageState {
             ),
             ListTile(
               leading:
-                  const Icon(Icons.add_comment_outlined, color: kOcAccentMuted),
+                  Icon(Icons.add_comment_outlined, color: oc.accentMuted),
               title: Text(l(context, '新建会话', 'New session')),
               subtitle: Text(
                 l(context, '立即创建新对话', 'Create a new thread now'),
@@ -172,7 +174,7 @@ extension _HomePageLanding on _HomePageState {
                 );
               },
             ),
-            const Divider(height: 1, color: kOcBorder),
+            Divider(height: 1, color: oc.border),
             Expanded(
               child: state.sessions.isEmpty
                   ? Center(
@@ -181,7 +183,7 @@ extension _HomePageLanding on _HomePageState {
                         child: Text(
                           l(context, '暂无历史会话', 'No sessions yet'),
                           textAlign: TextAlign.center,
-                          style: const TextStyle(color: kOcMuted, fontSize: 13),
+                          style: TextStyle(color: oc.muted, fontSize: 13),
                         ),
                       ),
                     )
@@ -196,10 +198,10 @@ extension _HomePageLanding on _HomePageState {
                         return ListTile(
                           leading: Icon(
                             Icons.chat_bubble_outline_rounded,
-                            color: selected ? kOcAccent : kOcMuted,
+                            color: selected ? oc.accent : oc.muted,
                           ),
                           selected: selected,
-                          selectedTileColor: kOcSelectedFill.withOpacity(0.5),
+                          selectedTileColor: oc.selectedFill.withOpacity(0.5),
                           title: Text(
                             s.title.isNotEmpty
                                 ? s.title
@@ -214,30 +216,30 @@ extension _HomePageLanding on _HomePageState {
                             style: selected
                                 ? TextStyle(
                                     fontSize: 11,
-                                    color: kOcAccent.withOpacity(0.95),
+                                    color: oc.accent.withOpacity(0.95),
                                     fontWeight: FontWeight.w600,
                                   )
-                                : const TextStyle(
+                                : TextStyle(
                                     fontSize: 11,
-                                    color: kOcMuted,
+                                    color: oc.muted,
                                   ),
                           ),
                           trailing: Row(
                             mainAxisSize: MainAxisSize.min,
                             children: [
                               if (selected)
-                                const Padding(
-                                  padding: EdgeInsets.only(right: 2),
+                                Padding(
+                                  padding: const EdgeInsets.only(right: 2),
                                   child: Icon(
                                     Icons.check_circle_rounded,
                                     size: 18,
-                                    color: kOcAccent,
+                                    color: oc.accent,
                                   ),
                                 ),
                               PopupMenuButton<String>(
-                                icon: const Icon(
+                                icon: Icon(
                                   Icons.more_vert_rounded,
-                                  color: kOcMuted,
+                                  color: oc.muted,
                                   size: 20,
                                 ),
                                 padding: const EdgeInsets.all(0),
@@ -280,9 +282,9 @@ extension _HomePageLanding on _HomePageState {
                     ),
             ),
             if (state.session != null) ...[
-              const Divider(height: 1, color: kOcBorder),
+              Divider(height: 1, color: oc.border),
               ListTile(
-                leading: const Icon(Icons.compress_outlined, color: kOcOrange),
+                leading: Icon(Icons.compress_outlined, color: oc.orange),
                 title: Text(l(context, '压缩当前会话', 'Compact session')),
                 enabled: !state.isBusy,
                 onTap: state.isBusy
@@ -293,7 +295,7 @@ extension _HomePageLanding on _HomePageState {
                       },
               ),
               ListTile(
-                leading: const Icon(Icons.note_alt_outlined, color: kOcGreen),
+                leading: Icon(Icons.note_alt_outlined, color: oc.green),
                 title: Text(l(
                   context,
                   '初始化/更新项目记忆',

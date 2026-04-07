@@ -207,20 +207,29 @@ void main() {}
 
 ### 7. `grep`
 
-**作用**：用正则表达式搜索文件内容（经 `WorkspaceBridge.grepText`）。
+**作用**：用正则表达式按**行**搜索文件内容（经 `WorkspaceBridge.grepText` → Android `grepWorkspace`）。正则为 **Kotlin `Regex`**，与 ripgrep/PCRE 不完全相同。
 
 **参数**：
 
 | 参数 | 类型 | 说明 |
 |------|------|------|
-| `pattern` | string | **必填** |
-| `path` | string | 可选，子路径前缀 |
-| `include` | string | 可选，文件名过滤（行为依赖原生实现） |
+| `pattern` | string | **必填**，每行独立匹配 |
+| `path` | string | 可选，必须是工作区内的**目录**（不能传单个文件路径；搜单文件请 `read` 或传父目录 + `include`/`glob`） |
+| `include` | string | 可选，glob；与 **`glob` 二选一**（`include` 非空时优先） |
+| `glob` | string | 可选，**`include` 的别名**，方便与常见工具命名对齐 |
+
+**`include` / `glob` 语义**：按**整条工作区相对路径**匹配（如 `lib/main.dart`），不是仅文件名。子目录下按扩展名过滤请用 `**/*.dart`；仅用 `*.dart` 只会匹配根目录下一层文件名。
 
 **示例**：
 
 ```json
-{ "pattern": "class\\s+Foo", "path": "lib", "include": "*.dart" }
+{ "pattern": "class\\s+Foo", "path": "lib", "include": "**/*.dart" }
+```
+
+在整仓中只搜 Dart：
+
+```json
+{ "pattern": "WorkspaceBridge", "glob": "**/*.dart" }
 ```
 
 ---

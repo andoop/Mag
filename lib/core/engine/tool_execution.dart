@@ -1,0 +1,506 @@
+part of '../session_engine.dart';
+
+/// OpenCode `packages/opencode/src/agent/prompt/title.txt`
+const _titleSystemPrompt = '''
+You are a title generator. You output ONLY a thread title. Nothing else.
+
+<task>
+Generate a brief title that would help the user find this conversation later.
+
+Follow all rules in <rules>
+Use the <examples> so you know what a good title looks like.
+Your output must be:
+- A single line
+- ≤50 characters
+- No explanations
+</task>
+
+<rules>
+- you MUST use the same language as the user message you are summarizing
+- Title must be grammatically correct and read naturally - no word salad
+- Never include tool names in the title (e.g. "read tool", "bash tool", "edit tool")
+- Focus on the main topic or question the user needs to retrieve
+- Vary your phrasing - avoid repetitive patterns like always starting with "Analyzing"
+- When a file is mentioned, focus on WHAT the user wants to do WITH the file, not just that they shared it
+- Keep exact: technical terms, numbers, filenames, HTTP codes
+- Remove: the, this, my, a, an
+- Never assume tech stack
+- Never use tools
+- NEVER respond to questions, just generate a title for the conversation
+- The title should NEVER include "summarizing" or "generating" when generating a title
+- DO NOT SAY YOU CANNOT GENERATE A TITLE OR COMPLAIN ABOUT THE INPUT
+- Always output something meaningful, even if the input is minimal.
+- If the user message is short or conversational (e.g. "hello", "lol", "what's up", "hey"):
+  → create a title that reflects the user's tone or intent (such as Greeting, Quick check-in, Light chat, Intro message, etc.)
+</rules>
+
+<examples>
+"debug 500 errors in production" → Debugging production 500 errors
+"refactor user service" → Refactoring user service
+"why is app.js failing" → app.js failure investigation
+"implement rate limiting" → Rate limiting implementation
+"how do I connect postgres to my API" → Postgres API connection
+"best practices for React hooks" → React hooks best practices
+"@src/auth.ts can you add refresh token support" → Auth refresh token support
+"@utils/parser.ts this is broken" → Parser bug fix
+"look at @config.json" → Config review
+"@App.tsx add dark mode toggle" → Dark mode toggle in App
+</examples>
+''';
+
+extension SessionEngineTools on SessionEngine {
+  Future<ToolExecutionResult> _executeTool({
+    required WorkspaceInfo workspace,
+    required SessionInfo session,
+    required MessageInfo message,
+    required String agent,
+    required ToolCall call,
+    CancelToken? cancelToken,
+    Map<String, MessagePart>? toolPartCache,
+    void Function(MessagePart part)? onPartSaved,
+  }) async {
+    cancelToken?.throwIfCancelled();
+    final tool = toolRegistry[call.name] ?? toolRegistry['invalid']!;
+    final argumentError = _validateToolArguments(tool, call);
+    final ctx = ToolRuntimeContext(
+      workspace: workspace,
+      session: session,
+      message: message,
+      agent: agent,
+      agentDefinition: agentDefinition(agent),
+      bridge: workspaceBridge,
+      database: database,
+      callId: call.id,
+      askPermission: (request) => permissionCenter.ask(
+        workspace: workspace,
+        request: request,
+        rules: agentDefinition(agent).permissionRules,
+        cancelToken: cancelToken,
+      ),
+      askQuestion: (request) => questionCenter.ask(
+        workspace: workspace,
+        request: request,
+        cancelToken: cancelToken,
+      ),
+      resolveInstructionReminder: (relativePath) =>
+          promptAssembler.directoryInstructionReminder(
+        workspace: workspace,
+        relativePath: relativePath,
+      ),
+      runSubtask: ({
+        required SessionInfo session,
+        required String description,
+        required String prompt,
+        required String subagentType,
+      }) async {
+        final subSession = await createSession(
+          workspace: workspace,
+          agent: subagentType,
+          isChildSession: true,
+        );
+        await this.prompt(
+          workspace: workspace,
+          session: subSession,
+          text: prompt,
+          agent: subagentType,
+        );
+        final messages = await database.listMessages(subSession.id);
+        final parts = await database.listPartsForSession(subSession.id);
+        final lastAssistant =
+            messages.lastWhere((item) => item.role == SessionRole.assistant);
+        final output = parts
+            .where((item) =>
+                item.messageId == lastAssistant.id &&
+                item.type == PartType.text)
+            .map((item) => item.data['text'] as String? ?? '')
+            .join('\n');
+        return ToolExecutionResult(
+          title: description,
+          output: '<task_result>$output</task_result>',
+          metadata: {'taskSessionId': subSession.id},
+        );
+      },
+      saveTodos: (items) async {
+        await database.deleteTodosForSession(session.id);
+        for (final item in items) {
+          await database.saveTodo(item);
+        }
+        events.emit(ServerEvent(
+          type: 'todo.updated',
+          properties: {
+            'sessionID': session.id,
+            'todos': items.map((item) => item.toJson()).toList()
+          },
+          directory: workspace.treeUri,
+        ));
+      },
+    );
+    try {
+      _debugLog('tool', 'execute ${call.name}');
+      await _updateToolState(
+        workspace: workspace,
+        sessionId: session.id,
+        callId: call.id,
+        status: ToolStatus.running,
+        toolPartCache: toolPartCache,
+        onPartSaved: onPartSaved,
+      );
+      if (argumentError != null) {
+        throw Exception(argumentError);
+      }
+      final result = await tool.execute(call.arguments, ctx);
+      _invalidatePromptContextForToolResult(
+        workspace: workspace,
+        toolName: call.name,
+        metadata: result.metadata,
+      );
+      await _updateToolState(
+        workspace: workspace,
+        sessionId: session.id,
+        callId: call.id,
+        status: ToolStatus.completed,
+        output: result.output,
+        displayOutput: result.displayOutput,
+        title: result.title,
+        metadata: result.metadata,
+        attachments: result.attachments,
+        toolPartCache: toolPartCache,
+        onPartSaved: onPartSaved,
+      );
+      return result;
+    } on CancelledException {
+      rethrow;
+    } catch (error) {
+      _debugLog('tool', 'error ${call.name}: $error');
+      final errText = error.toString();
+      final toolOutput =
+          'Tool `${call.name}` failed — the model should read this and fix the issue.\n\n$errText';
+      await _updateToolState(
+        workspace: workspace,
+        sessionId: session.id,
+        callId: call.id,
+        status: ToolStatus.error,
+        output: toolOutput,
+        displayOutput: '${call.name} failed: $errText',
+        toolPartCache: toolPartCache,
+        onPartSaved: onPartSaved,
+      );
+      return ToolExecutionResult(
+        title: call.name,
+        output: toolOutput,
+        displayOutput: '${call.name} failed',
+        metadata: {
+          'failed': true,
+          'error': errText,
+        },
+      );
+    }
+  }
+
+  String? _validateToolArguments(ToolDefinition tool, ToolCall call) {
+    final args = call.arguments;
+    if (args.containsKey('raw')) {
+      final raw = (args['raw'] as String? ?? '').trim();
+      final preview =
+          raw.length > 200 ? '${raw.substring(0, 200)}...' : raw;
+      return 'The ${call.name} tool was called with invalid arguments: '
+          'expected a valid JSON object matching the tool schema.\n'
+          'Please rewrite the input so it satisfies the expected schema.\n'
+          '${preview.isNotEmpty ? 'Received (truncated): $preview' : ''}';
+    }
+    // Flexible parameter aliases: 'path' ↔ 'filePath'
+    if (!args.containsKey('filePath') && args.containsKey('path')) {
+      args['filePath'] = args['path'];
+    }
+    if (!args.containsKey('path') && args.containsKey('filePath')) {
+      args['path'] = args['filePath'];
+    }
+    final required =
+        ((tool.parameters['required'] as List?) ?? const <dynamic>[])
+            .whereType<String>();
+    final missing = <String>[];
+    for (final key in required) {
+      final value = args[key];
+      if (value == null || (value is String && value.trim().isEmpty)) {
+        missing.add(key);
+      }
+    }
+    if (missing.isNotEmpty) {
+      final props = tool.parameters['properties'] as Map? ?? const {};
+      final hints = missing.map((key) {
+        final prop = props[key] as Map?;
+        final desc = prop?['description'] as String? ?? '';
+        return desc.isNotEmpty ? '  - `$key`: $desc' : '  - `$key`';
+      }).join('\n');
+      return 'The ${call.name} tool was called with missing required arguments: '
+          '${missing.join(", ")}.\n'
+          'Please rewrite the input with all required parameters:\n$hints';
+    }
+    return null;
+  }
+
+  Future<void> _updateToolState({
+    required WorkspaceInfo workspace,
+    required String sessionId,
+    required String callId,
+    required ToolStatus status,
+    String? output,
+    String? displayOutput,
+    String? title,
+    JsonMap? metadata,
+    List<JsonMap>? attachments,
+    Map<String, MessagePart>? toolPartCache,
+    void Function(MessagePart part)? onPartSaved,
+  }) async {
+    final part = toolPartCache?[callId] ??
+        (await database.listPartsForSession(sessionId)).lastWhere(
+          (item) => item.type == PartType.tool && item.data['callID'] == callId,
+        );
+    final state =
+        Map<String, dynamic>.from(part.data['state'] as Map? ?? const {});
+    state['status'] = status.name;
+    if (output != null) {
+      state['output'] = output;
+    }
+    if (displayOutput != null) {
+      state['displayOutput'] = displayOutput;
+    }
+    if (title != null) {
+      state['title'] = title;
+    }
+    if (metadata != null) {
+      state['metadata'] = metadata;
+    }
+    if (attachments != null) {
+      state['attachments'] = attachments;
+    }
+    final updated = MessagePart(
+      id: part.id,
+      sessionId: part.sessionId,
+      messageId: part.messageId,
+      type: part.type,
+      createdAt: part.createdAt,
+      data: {...part.data, 'state': state},
+    );
+    await _savePart(workspace: workspace, part: updated);
+    if (toolPartCache != null) {
+      toolPartCache[callId] = updated;
+    }
+    onPartSaved?.call(updated);
+  }
+
+  Future<void> _savePart({
+    required WorkspaceInfo workspace,
+    required MessagePart part,
+  }) async {
+    await database.savePart(part);
+    events.emit(ServerEvent(
+      type: 'message.part.updated',
+      properties: part.toJson(),
+      directory: workspace.treeUri,
+    ));
+  }
+
+  Future<void> _saveSession({
+    required WorkspaceInfo workspace,
+    required SessionInfo session,
+  }) async {
+    await database.saveSession(session);
+    events.emit(ServerEvent(
+      type: 'session.updated',
+      properties: session.toJson(),
+      directory: workspace.treeUri,
+    ));
+  }
+
+  /// Aligned with OpenCode `SessionPrompt.ensureTitle`:
+  /// Only fires for parent sessions whose title still matches the default
+  /// pattern. Sends the full conversation context (up to and including the
+  /// first user message) so the model can generate a meaningful short title.
+  Future<void> _ensureSessionTitle({
+    required WorkspaceInfo workspace,
+    required String sessionId,
+    required List<MessageInfo> history,
+    required List<MessagePart> historyParts,
+  }) async {
+    try {
+      final current = await database.getSession(sessionId);
+      if (current == null) return;
+      if (!SessionTitlePolicy.shouldAutoGenerateFromModel(current.title)) {
+        return;
+      }
+
+      final firstUserIdx =
+          history.indexWhere((m) => m.role == SessionRole.user);
+      if (firstUserIdx == -1) return;
+      final userCount =
+          history.where((m) => m.role == SessionRole.user).length;
+      if (userCount != 1) return;
+
+      final context = history.sublist(0, firstUserIdx + 1);
+      final firstUser = context[firstUserIdx];
+      if (firstUser.role != SessionRole.user) return;
+      if (firstUser.text.trim().isEmpty) return;
+
+      final modelConfig = ModelConfig.fromJson(
+        await database.getSetting('model_config') ??
+            ModelConfig.defaults().toJson(),
+      );
+      final mag = modelConfig.isMagProvider;
+      final hasKey = modelConfig.apiKey.trim().isNotEmpty;
+      final freeMag = mag && modelConfig.isMagZenFreeModel;
+      final needsKey = mag ? (!freeMag && !hasKey) : !hasKey;
+      if (needsKey) return;
+
+      final contextMsgs = _messagesToConversation(
+        messages: context,
+        parts: historyParts,
+        currentAgent: firstUser.agent,
+      );
+
+      final messages = <Map<String, dynamic>>[
+        {
+          'role': 'system',
+          'content': _titleSystemPrompt,
+        },
+        {
+          'role': 'user',
+          'content': 'Generate a title for this conversation:\n',
+        },
+        ...contextMsgs,
+      ];
+      final response = await modelGateway.complete(
+        config: modelConfig,
+        messages: messages,
+        tools: const [],
+        format: null,
+        cancelToken: null,
+      );
+      final cleaned = _cleanGeneratedSessionTitle(response.text);
+      if (cleaned.isEmpty) return;
+      final title = cleaned.length > 100
+          ? '${cleaned.substring(0, 97)}...'
+          : cleaned;
+
+      final again = await database.getSession(sessionId);
+      if (again == null) return;
+      if (!SessionTitlePolicy.shouldAutoGenerateFromModel(again.title)) return;
+
+      await _saveSession(
+        workspace: workspace,
+        session: again.copyWith(
+          title: title,
+          updatedAt: DateTime.now().millisecondsSinceEpoch,
+        ),
+      );
+    } catch (_) {
+      // Best-effort: failure must not interrupt the main prompt flow.
+    }
+  }
+
+  String _cleanGeneratedSessionTitle(String text) {
+    var t = text.trim();
+    t = t.replaceAll(
+      RegExp(r'<think>[\s\S]*?</think>\s*', multiLine: true),
+      '',
+    );
+    t = t.replaceAll(
+      RegExp(
+        r'<redacted_thinking>[\s\S]*?</redacted_thinking>\s*',
+        multiLine: true,
+      ),
+      '',
+    );
+    for (final raw in t.split('\n')) {
+      var line = raw.trim();
+      if (line.isEmpty) continue;
+      if (line.length >= 2 &&
+          ((line.startsWith('"') && line.endsWith('"')) ||
+              (line.startsWith("'") && line.endsWith("'")))) {
+        line = line.substring(1, line.length - 1).trim();
+      }
+      if (line.isNotEmpty) return _stripMarkdown(line);
+    }
+    return '';
+  }
+
+  String _stripMarkdown(String line) {
+    var s = line;
+    // heading prefix: # / ## / ### ...
+    s = s.replaceFirst(RegExp(r'^#{1,6}\s+'), '');
+    // bold/italic: ***x***, **x**, *x*, ___x___, __x__, _x_
+    s = s.replaceAllMapped(
+      RegExp(r'(\*{1,3}|_{1,3})(.+?)\1'),
+      (m) => m.group(2)!,
+    );
+    // inline code: `x`
+    s = s.replaceAllMapped(RegExp(r'`([^`]+)`'), (m) => m.group(1)!);
+    // links: [text](url)
+    s = s.replaceAllMapped(RegExp(r'\[([^\]]+)\]\([^)]+\)'), (m) => m.group(1)!);
+    // images: ![alt](url)
+    s = s.replaceAllMapped(RegExp(r'!\[([^\]]*)\]\([^)]+\)'), (m) => m.group(1)!);
+    // blockquote prefix
+    s = s.replaceFirst(RegExp(r'^>\s+'), '');
+    // strikethrough: ~~x~~
+    s = s.replaceAllMapped(RegExp(r'~~(.+?)~~'), (m) => m.group(1)!);
+    return s.trim();
+  }
+
+  Future<void> _saveMessage({
+    required WorkspaceInfo workspace,
+    required MessageInfo message,
+  }) async {
+    await database.saveMessage(message);
+    events.emit(ServerEvent(
+      type: 'message.updated',
+      properties: message.toJson(),
+      directory: workspace.treeUri,
+    ));
+  }
+
+  void _emitPartDelta({
+    required WorkspaceInfo workspace,
+    required String sessionId,
+    required String messageId,
+    required String partId,
+    required PartType partType,
+    required int createdAt,
+    required JsonMap delta,
+  }) {
+    events.emit(ServerEvent(
+      type: 'message.part.delta',
+      properties: {
+        'sessionID': sessionId,
+        'messageID': messageId,
+        'partID': partId,
+        'type': partType.name,
+        'createdAt': createdAt,
+        'delta': delta,
+      },
+      directory: workspace.treeUri,
+    ));
+  }
+
+  void _invalidatePromptContextForToolResult({
+    required WorkspaceInfo workspace,
+    required String toolName,
+    JsonMap? metadata,
+  }) {
+    final writeLikeTools = {'write', 'edit', 'apply_patch'};
+    if (!writeLikeTools.contains(toolName)) return;
+    final paths = <String>{};
+    final singlePath =
+        metadata?['filepath'] as String? ?? metadata?['path'] as String?;
+    if (singlePath != null && singlePath.trim().isNotEmpty) {
+      paths.add(singlePath.trim());
+    }
+    final files = (metadata?['files'] as List? ?? const [])
+        .map((item) => item.toString().trim())
+        .where((item) => item.isNotEmpty);
+    paths.addAll(files);
+    promptAssembler.invalidateWorkspaceContext(
+      workspace.treeUri,
+      paths: paths.isEmpty ? null : paths,
+    );
+  }
+}

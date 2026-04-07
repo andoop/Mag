@@ -1,6 +1,6 @@
 part of '../home_page.dart';
 
-Widget _ocSheetDragHandle() {
+Widget _ocSheetDragHandle(BuildContext context) {
   return Padding(
     padding: const EdgeInsets.only(top: 10, bottom: 6),
     child: Center(
@@ -8,11 +8,10 @@ Widget _ocSheetDragHandle() {
         width: 40,
         height: 4,
         decoration: BoxDecoration(
-          color: kOcMuted.withOpacity(0.35),
+          color: context.oc.muted.withOpacity(0.35),
           borderRadius: BorderRadius.circular(999),
         ),
       ),
     ),
   );
 }
-

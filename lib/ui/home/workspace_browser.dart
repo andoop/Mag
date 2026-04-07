@@ -57,7 +57,7 @@ void _openBrowserFile(
     Navigator.of(context).push<void>(
       MaterialPageRoute<void>(
         builder: (ctx) => Scaffold(
-          backgroundColor: Colors.white,
+          backgroundColor: ctx.oc.panelBackground,
           body: _PdfPreviewSheet(
             filename: entry.name,
             controller: controller,
@@ -210,6 +210,7 @@ class _WorkspaceFileBrowserPageState extends State<_WorkspaceFileBrowserPage> {
 
   @override
   Widget build(BuildContext context) {
+    final oc = context.oc;
     final title = _relativePath.isEmpty
         ? l(context, '工作区文件', 'Workspace files')
         : _relativePath;
@@ -234,7 +235,7 @@ class _WorkspaceFileBrowserPageState extends State<_WorkspaceFileBrowserPage> {
         children: [
           if (_relativePath.isNotEmpty)
             Material(
-              color: kOcSurface,
+              color: oc.surface,
               child: InkWell(
                 onTap: _goUp,
                 child: Padding(
@@ -242,15 +243,15 @@ class _WorkspaceFileBrowserPageState extends State<_WorkspaceFileBrowserPage> {
                       const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
                   child: Row(
                     children: [
-                      const Icon(Icons.arrow_upward_rounded,
-                          size: 20, color: kOcAccent),
+                      Icon(Icons.arrow_upward_rounded,
+                          size: 20, color: oc.accent),
                       const SizedBox(width: 8),
                       Expanded(
                         child: Text(
                           l(context, '上级目录', 'Parent folder'),
-                          style: const TextStyle(
+                          style: TextStyle(
                             fontWeight: FontWeight.w600,
-                            color: kOcText,
+                            color: oc.text,
                           ),
                         ),
                       ),
@@ -260,7 +261,7 @@ class _WorkspaceFileBrowserPageState extends State<_WorkspaceFileBrowserPage> {
               ),
             ),
           if (_relativePath.isNotEmpty)
-            const Divider(height: 1, color: kOcBorder),
+            Divider(height: 1, color: oc.border),
           Expanded(
             child: FutureBuilder<List<WorkspaceEntry>>(
               future: _future,
@@ -277,14 +278,14 @@ class _WorkspaceFileBrowserPageState extends State<_WorkspaceFileBrowserPage> {
                         children: [
                           Text(
                             l(context, '无法读取目录', 'Could not read folder'),
-                            style: const TextStyle(
-                                fontWeight: FontWeight.w600, color: kOcText),
+                            style: TextStyle(
+                                fontWeight: FontWeight.w600, color: oc.text),
                           ),
                           const SizedBox(height: 8),
                           Text(
                             '${snapshot.error}',
-                            style: const TextStyle(
-                                fontSize: 12, color: kOcMuted),
+                            style: TextStyle(
+                                fontSize: 12, color: oc.muted),
                             textAlign: TextAlign.center,
                           ),
                           const SizedBox(height: 16),
@@ -303,7 +304,7 @@ class _WorkspaceFileBrowserPageState extends State<_WorkspaceFileBrowserPage> {
                   return Center(
                     child: Text(
                       l(context, '此文件夹为空', 'This folder is empty'),
-                      style: const TextStyle(color: kOcMuted),
+                      style: TextStyle(color: oc.muted),
                     ),
                   );
                 }
@@ -311,7 +312,7 @@ class _WorkspaceFileBrowserPageState extends State<_WorkspaceFileBrowserPage> {
                   padding: const EdgeInsets.only(bottom: 16),
                   itemCount: items.length,
                   separatorBuilder: (_, __) =>
-                      const Divider(height: 1, color: kOcBorder),
+                      Divider(height: 1, color: oc.border),
                   itemBuilder: (context, i) {
                     final e = items[i];
                     final icon = e.isDirectory
@@ -331,7 +332,7 @@ class _WorkspaceFileBrowserPageState extends State<_WorkspaceFileBrowserPage> {
                             ? _formatBrowserFileSize(e.size)
                             : l(context, '文件', 'File'));
                     return ListTile(
-                      leading: Icon(icon, color: kOcAccent),
+                      leading: Icon(icon, color: oc.accent),
                       title: Text(
                         e.name,
                         maxLines: 1,
@@ -339,7 +340,7 @@ class _WorkspaceFileBrowserPageState extends State<_WorkspaceFileBrowserPage> {
                       ),
                       subtitle: Text(
                         meta,
-                        style: const TextStyle(fontSize: 11, color: kOcMuted),
+                        style: TextStyle(fontSize: 11, color: oc.muted),
                       ),
                       onTap: () {
                         if (e.isDirectory) {
