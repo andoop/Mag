@@ -4,6 +4,7 @@ import 'package:flutter_localizations/flutter_localizations.dart';
 import '../store/app_controller.dart';
 import '../ui/app_root.dart';
 import '../ui/i18n.dart';
+import '../ui/mag_splash.dart';
 import '../ui/oc_theme.dart';
 
 class MobileAgentApp extends StatefulWidget {
@@ -15,12 +16,13 @@ class MobileAgentApp extends StatefulWidget {
 
 class _MobileAgentAppState extends State<MobileAgentApp> {
   late final AppController _controller;
+  late final Future<void> _bootstrap;
 
   @override
   void initState() {
     super.initState();
     _controller = AppController();
-    _controller.initialize();
+    _bootstrap = _controller.initialize();
   }
 
   @override
@@ -36,7 +38,7 @@ class _MobileAgentAppState extends State<MobileAgentApp> {
       animation: _controller,
       builder: (context, _) {
         return MaterialApp(
-          onGenerateTitle: (context) => l(context, '移动代理', 'Mobile Agent'),
+          onGenerateTitle: (context) => l(context, 'Mag', 'Mag'),
           localizationsDelegates: const [
             GlobalMaterialLocalizations.delegate,
             GlobalWidgetsLocalizations.delegate,
@@ -49,7 +51,18 @@ class _MobileAgentAppState extends State<MobileAgentApp> {
           theme: buildLightTheme(),
           darkTheme: buildDarkTheme(),
           themeMode: _controller.themeMode,
-          home: AppRoot(controller: _controller),
+          home: FutureBuilder<void>(
+            future: _bootstrap,
+            builder: (context, snapshot) {
+              if (snapshot.connectionState != ConnectionState.done) {
+                return const MagSplashPage();
+              }
+              if (snapshot.hasError) {
+                return MagSplashPage(error: snapshot.error);
+              }
+              return AppRoot(controller: _controller);
+            },
+          ),
         );
       },
     );

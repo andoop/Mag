@@ -246,9 +246,9 @@ class ProviderListResponse {
 
 List<ProviderInfo> normalizeProviderCatalog(List<ProviderInfo> input) {
   return input.map((provider) {
-    final models = provider.models
+    final models = Map<String, ProviderModelInfo>.from(provider.models)
       ..removeWhere((_, model) => model.isDeprecated);
-    return provider.copyWith(models: Map<String, ProviderModelInfo>.from(models));
+    return provider.copyWith(models: models);
   }).toList();
 }
 

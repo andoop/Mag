@@ -183,6 +183,7 @@ class AppController extends ChangeNotifier {
 
   Future<void> _runInitialize() async {
     await loadThemeMode();
+    notifyListeners();
     final serverUri = await _server.start();
     _client = LocalServerClient(serverUri);
     _connectEventStream();

@@ -13,7 +13,7 @@ class _RecentProjectsLoad {
   final Map<String, int> times;
 }
 
-/// OpenCode 首页：最近项目 + 打开项目（路径来自系统沙盒 / 文件选择，与 iOS/Android 桥一致）。
+/// 项目首页：最近项目与打开工作区（路径由系统沙盒 / 文件选择器与原生桥提供）。
 class ProjectHomePage extends StatefulWidget {
   const ProjectHomePage({super.key, required this.controller});
 
@@ -306,8 +306,8 @@ class _EmptyProjects extends StatelessWidget {
           Text(
             l(
               context,
-              '选择一个文件夹作为工作区，路径由系统沙盒授权（与 OpenCode 一致）。',
-              'Pick a folder as your workspace. The path is granted by the system sandbox, like OpenCode.',
+              '选择一个文件夹作为工作区，访问权限由系统文件选择器授权。',
+              'Pick a folder as your workspace. Access is granted through the system file picker.',
             ),
             textAlign: TextAlign.center,
             style: TextStyle(

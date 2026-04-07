@@ -2,7 +2,7 @@
     package="com.magent.mobile_agent">
    <uses-permission android:name="android.permission.INTERNET" />
    <application
-        android:label="Mobile Agent"
+        android:label="Mag"
         android:name="${applicationName}"
         android:icon="@mipmap/ic_launcher"
         android:usesCleartextTraffic="true">
