@@ -85,6 +85,18 @@ class _AppSettingsSheetState extends State<_AppSettingsSheet> {
             content: Column(
               mainAxisSize: MainAxisSize.min,
               children: [
+                Align(
+                  alignment: Alignment.centerLeft,
+                  child: Text(
+                    l(
+                      context,
+                      '将生成 Ed25519 OpenSSH 密钥。',
+                      'This generates an Ed25519 OpenSSH key.',
+                    ),
+                    style: TextStyle(fontSize: 12.5, color: context.oc.muted),
+                  ),
+                ),
+                const SizedBox(height: 12),
                 TextField(
                   controller: nameController,
                   decoration: InputDecoration(
@@ -168,7 +180,11 @@ class _AppSettingsSheetState extends State<_AppSettingsSheet> {
                       minLines: 2,
                       maxLines: 4,
                       decoration: InputDecoration(
-                        labelText: l(context, '公钥（可选）', 'Public key (optional)'),
+                        labelText: l(
+                          context,
+                          '公钥（可选，ssh-ed25519）',
+                          'Public key (optional, ssh-ed25519)',
+                        ),
                       ),
                     ),
                     const SizedBox(height: 12),
@@ -177,7 +193,11 @@ class _AppSettingsSheetState extends State<_AppSettingsSheet> {
                       minLines: 6,
                       maxLines: 10,
                       decoration: InputDecoration(
-                        labelText: l(context, '私钥 PEM', 'Private key PEM'),
+                        labelText: l(
+                          context,
+                          '私钥（仅 Ed25519 OpenSSH）',
+                          'Private key (Ed25519 OpenSSH only)',
+                        ),
                       ),
                     ),
                   ],
@@ -284,140 +304,25 @@ class _AppSettingsSheetState extends State<_AppSettingsSheet> {
 
   Future<void> _showRemoteCredentialDialog(String type) async {
     final gitSettings = widget.controller.state.gitSettings ?? GitSettings.defaults();
-    final nameController = TextEditingController();
-    final hostController = TextEditingController();
-    final pathController = TextEditingController();
-    final usernameController = TextEditingController(
-      text: type == 'sshKey' ? 'git' : '',
+    final result = await showDialog<_RemoteCredentialDraft>(
+      context: context,
+      builder: (context) => _RemoteCredentialDialog(
+        type: type,
+        gitSettings: gitSettings,
+      ),
     );
-    final secretController = TextEditingController();
-    var selectedSshKeyId = gitSettings.defaultSshKey?.id;
+    if (result == null) {
+      return;
+    }
     try {
-      final result = await showDialog<bool>(
-        context: context,
-        builder: (context) {
-          return StatefulBuilder(
-            builder: (context, setState) {
-              return AlertDialog(
-                title: Text(
-                  type == 'sshKey'
-                      ? l(context, '新增 SSH 远程认证', 'Add SSH remote credential')
-                      : type == 'httpsBasic'
-                          ? l(context, '新增 HTTPS 账号密码', 'Add HTTPS user/password')
-                          : l(context, '新增 HTTPS Token', 'Add HTTPS token'),
-                ),
-                content: SizedBox(
-                  width: 520,
-                  child: SingleChildScrollView(
-                    child: Column(
-                      mainAxisSize: MainAxisSize.min,
-                      children: [
-                        TextField(
-                          controller: nameController,
-                          decoration: InputDecoration(
-                            labelText: l(context, '名称', 'Name'),
-                            hintText: l(
-                              context,
-                              '例如：GitHub 主账号',
-                              'Example: GitHub primary account',
-                            ),
-                          ),
-                        ),
-                        const SizedBox(height: 12),
-                        TextField(
-                          controller: hostController,
-                          decoration: InputDecoration(
-                            labelText: l(context, '主机', 'Host'),
-                            hintText: 'github.com',
-                          ),
-                        ),
-                        const SizedBox(height: 12),
-                        TextField(
-                          controller: pathController,
-                          decoration: InputDecoration(
-                            labelText: l(
-                              context,
-                              '路径前缀（可选）',
-                              'Path prefix (optional)',
-                            ),
-                            hintText: l(
-                              context,
-                              '/owner/repo.git 或 /owner',
-                              '/owner/repo.git or /owner',
-                            ),
-                          ),
-                        ),
-                        const SizedBox(height: 12),
-                        TextField(
-                          controller: usernameController,
-                          decoration: InputDecoration(
-                            labelText: l(context, '用户名', 'Username'),
-                            hintText: type == 'sshKey' ? 'git' : '',
-                          ),
-                        ),
-                        if (type == 'sshKey') ...[
-                          const SizedBox(height: 12),
-                          DropdownButtonFormField<String>(
-                            value: selectedSshKeyId,
-                            items: gitSettings.sshKeys
-                                .map(
-                                  (key) => DropdownMenuItem<String>(
-                                    value: key.id,
-                                    child: Text(key.name),
-                                  ),
-                                )
-                                .toList(),
-                            onChanged: (value) {
-                              setState(() {
-                                selectedSshKeyId = value;
-                              });
-                            },
-                            decoration: InputDecoration(
-                              labelText: l(context, 'SSH Key', 'SSH key'),
-                            ),
-                          ),
-                        ] else ...[
-                          const SizedBox(height: 12),
-                          TextField(
-                            controller: secretController,
-                            obscureText: true,
-                            decoration: InputDecoration(
-                              labelText: type == 'httpsBasic'
-                                  ? l(context, '密码', 'Password')
-                                  : l(context, 'Token', 'Token'),
-                            ),
-                          ),
-                        ],
-                      ],
-                    ),
-                  ),
-                ),
-                actions: [
-                  TextButton(
-                    onPressed: () => Navigator.of(context).pop(false),
-                    child: Text(l(context, '取消', 'Cancel')),
-                  ),
-                  FilledButton(
-                    onPressed: () => Navigator.of(context).pop(true),
-                    child: Text(l(context, '保存', 'Save')),
-                  ),
-                ],
-              );
-            },
-          );
-        },
-      );
-      if (result != true) {
-        return;
-      }
       await widget.controller.saveGitRemoteCredential(
         type: type,
-        name: nameController.text.trim(),
-        host: hostController.text.trim(),
-        pathPrefix: pathController.text.trim(),
-        username: usernameController.text.trim(),
-        secret: secretController.text,
-        sshKeyId: selectedSshKeyId,
+        name: result.name.trim(),
+        host: result.host.trim(),
+        pathPrefix: result.pathPrefix.trim(),
+        username: result.username.trim(),
+        secret: result.secret,
+        sshKeyId: result.sshKeyId,
       );
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
@@ -427,12 +332,8 @@ class _AppSettingsSheetState extends State<_AppSettingsSheet> {
           ),
         ),
       );
-    } finally {
-      nameController.dispose();
-      hostController.dispose();
-      pathController.dispose();
-      usernameController.dispose();
-      secretController.dispose();
+    } catch (_) {
+      rethrow;
     }
   }
 
@@ -611,8 +512,8 @@ class _AppSettingsSheetState extends State<_AppSettingsSheet> {
                           child: Text(
                             l(
                               context,
-                              '还没有 SSH Key。你可以直接在这里生成，或者导入已有私钥。',
-                              'No SSH keys yet. Generate one here or import an existing private key.',
+                              '还没有 SSH Key。当前仅支持 Ed25519 OpenSSH，可直接生成或导入现有私钥。',
+                              'No SSH keys yet. Only Ed25519 OpenSSH is supported now.',
                             ),
                             style: TextStyle(fontSize: 12.5, color: oc.muted),
                           ),
@@ -862,6 +763,189 @@ class _SettingsSectionTitle extends StatelessWidget {
           color: context.oc.text,
         ),
       ),
+    );
+  }
+}
+
+class _RemoteCredentialDraft {
+  const _RemoteCredentialDraft({
+    required this.name,
+    required this.host,
+    required this.pathPrefix,
+    required this.username,
+    required this.secret,
+    required this.sshKeyId,
+  });
+
+  final String name;
+  final String host;
+  final String pathPrefix;
+  final String username;
+  final String secret;
+  final String? sshKeyId;
+}
+
+class _RemoteCredentialDialog extends StatefulWidget {
+  const _RemoteCredentialDialog({
+    required this.type,
+    required this.gitSettings,
+  });
+
+  final String type;
+  final GitSettings gitSettings;
+
+  @override
+  State<_RemoteCredentialDialog> createState() => _RemoteCredentialDialogState();
+}
+
+class _RemoteCredentialDialogState extends State<_RemoteCredentialDialog> {
+  late final TextEditingController _nameController;
+  late final TextEditingController _hostController;
+  late final TextEditingController _pathController;
+  late final TextEditingController _usernameController;
+  late final TextEditingController _secretController;
+  String? _selectedSshKeyId;
+
+  @override
+  void initState() {
+    super.initState();
+    _nameController = TextEditingController();
+    _hostController = TextEditingController();
+    _pathController = TextEditingController();
+    _usernameController = TextEditingController(
+      text: widget.type == 'sshKey' ? 'git' : '',
+    );
+    _secretController = TextEditingController();
+    _selectedSshKeyId = widget.gitSettings.defaultSshKey?.id;
+  }
+
+  @override
+  void dispose() {
+    _nameController.dispose();
+    _hostController.dispose();
+    _pathController.dispose();
+    _usernameController.dispose();
+    _secretController.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return AlertDialog(
+      title: Text(
+        widget.type == 'sshKey'
+            ? l(context, '新增 SSH 远程认证', 'Add SSH remote credential')
+            : widget.type == 'httpsBasic'
+                ? l(context, '新增 HTTPS 账号密码', 'Add HTTPS user/password')
+                : l(context, '新增 HTTPS Token', 'Add HTTPS token'),
+      ),
+      content: SizedBox(
+        width: 520,
+        child: SingleChildScrollView(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              TextField(
+                controller: _nameController,
+                decoration: InputDecoration(
+                  labelText: l(context, '名称', 'Name'),
+                  hintText: l(
+                    context,
+                    '例如：GitHub 主账号',
+                    'Example: GitHub primary account',
+                  ),
+                ),
+              ),
+              const SizedBox(height: 12),
+              TextField(
+                controller: _hostController,
+                decoration: InputDecoration(
+                  labelText: l(context, '主机', 'Host'),
+                  hintText: 'github.com',
+                ),
+              ),
+              const SizedBox(height: 12),
+              TextField(
+                controller: _pathController,
+                decoration: InputDecoration(
+                  labelText: l(
+                    context,
+                    '路径前缀（可选）',
+                    'Path prefix (optional)',
+                  ),
+                  hintText: l(
+                    context,
+                    '/owner/repo.git 或 /owner',
+                    '/owner/repo.git or /owner',
+                  ),
+                ),
+              ),
+              const SizedBox(height: 12),
+              TextField(
+                controller: _usernameController,
+                decoration: InputDecoration(
+                  labelText: l(context, '用户名', 'Username'),
+                  hintText: widget.type == 'sshKey' ? 'git' : '',
+                ),
+              ),
+              if (widget.type == 'sshKey') ...[
+                const SizedBox(height: 12),
+                DropdownButtonFormField<String>(
+                  value: _selectedSshKeyId,
+                  items: widget.gitSettings.sshKeys
+                      .map(
+                        (key) => DropdownMenuItem<String>(
+                          value: key.id,
+                          child: Text(key.name),
+                        ),
+                      )
+                      .toList(),
+                  onChanged: (value) {
+                    setState(() {
+                      _selectedSshKeyId = value;
+                    });
+                  },
+                  decoration: InputDecoration(
+                    labelText: l(context, 'SSH Key', 'SSH key'),
+                  ),
+                ),
+              ] else ...[
+                const SizedBox(height: 12),
+                TextField(
+                  controller: _secretController,
+                  obscureText: true,
+                  decoration: InputDecoration(
+                    labelText: widget.type == 'httpsBasic'
+                        ? l(context, '密码', 'Password')
+                        : l(context, 'Token', 'Token'),
+                  ),
+                ),
+              ],
+            ],
+          ),
+        ),
+      ),
+      actions: [
+        TextButton(
+          onPressed: () => Navigator.of(context).pop(),
+          child: Text(l(context, '取消', 'Cancel')),
+        ),
+        FilledButton(
+          onPressed: () {
+            Navigator.of(context).pop(
+              _RemoteCredentialDraft(
+                name: _nameController.text,
+                host: _hostController.text,
+                pathPrefix: _pathController.text,
+                username: _usernameController.text,
+                secret: _secretController.text,
+                sshKeyId: _selectedSshKeyId,
+              ),
+            );
+          },
+          child: Text(l(context, '保存', 'Save')),
+        ),
+      ],
     );
   }
 }

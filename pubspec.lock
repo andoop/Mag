@@ -25,14 +25,6 @@ packages:
       url: "https://pub.dev"
     source: hosted
     version: "2.10.0"
-  basic_utils:
-    dependency: "direct main"
-    description:
-      name: basic_utils
-      sha256: "8815477fcf58499e42326bd858e391442425fa57db9a45e48e15224c62049262"
-      url: "https://pub.dev"
-    source: hosted
-    version: "5.5.4"
   boolean_selector:
     dependency: transitive
     description:
@@ -97,6 +89,14 @@ packages:
       url: "https://pub.dev"
     source: hosted
     version: "3.0.3"
+  cryptography:
+    dependency: "direct main"
+    description:
+      name: cryptography
+      sha256: df156c5109286340817d21fa7b62f9140f17915077127dd70f8bd7a2a0997a35
+      url: "https://pub.dev"
+    source: hosted
+    version: "2.5.0"
   cupertino_icons:
     dependency: "direct main"
     description:
@@ -293,22 +293,6 @@ packages:
       url: "https://pub.dev"
     source: hosted
     version: "0.7.0"
-  http:
-    dependency: transitive
-    description:
-      name: http
-      sha256: "5895291c13fa8a3bd82e76d5627f69e0d85ca6a30dcac95c4ea19a5d555879c2"
-      url: "https://pub.dev"
-    source: hosted
-    version: "0.13.6"
-  http_parser:
-    dependency: transitive
-    description:
-      name: http_parser
-      sha256: "2aa08ce0341cc9b354a498388e30986515406668dbcc4f7c950c3e715496693b"
-      url: "https://pub.dev"
-    source: hosted
-    version: "4.0.2"
   image:
     dependency: transitive
     description:
@@ -349,14 +333,6 @@ packages:
       url: "https://pub.dev"
     source: hosted
     version: "2.0.1"
-  logging:
-    dependency: transitive
-    description:
-      name: logging
-      sha256: "623a88c9594aa774443aa3eb2d41807a48486b5613e67599fb4c41c0ad47c340"
-      url: "https://pub.dev"
-    source: hosted
-    version: "1.2.0"
   markdown:
     dependency: "direct main"
     description:
@@ -389,6 +365,14 @@ packages:
       url: "https://pub.dev"
     source: hosted
     version: "1.8.0"
+  openssh_ed25519:
+    dependency: "direct main"
+    description:
+      name: openssh_ed25519
+      sha256: eb65bfb9158c05c294d653f639bb9b4b18aca6dfd010986e4f325e439a93655f
+      url: "https://pub.dev"
+    source: hosted
+    version: "1.1.0"
   path:
     dependency: "direct main"
     description:
@@ -486,7 +470,7 @@ packages:
     source: hosted
     version: "2.1.6"
   pointycastle:
-    dependency: "direct main"
+    dependency: transitive
     description:
       name: pointycastle
       sha256: "7c1e5f0d23c9016c5bbd8b1473d0d3fb3fc851b876046039509e18e0c7485f2c"

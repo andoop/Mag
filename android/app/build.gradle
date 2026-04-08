@@ -57,6 +57,7 @@ android {
     packagingOptions {
         resources {
             excludes += ['plugin.properties']
+            excludes += ['META-INF/DEPENDENCIES']
         }
     }
 
@@ -78,5 +79,7 @@ dependencies {
     implementation "androidx.multidex:multidex:2.0.1"
     implementation "androidx.documentfile:documentfile:1.0.1"
     implementation "org.eclipse.jgit:org.eclipse.jgit:5.13.1.202206130422-r"
-    implementation "org.eclipse.jgit:org.eclipse.jgit.ssh.jsch:5.13.1.202206130422-r"
+    implementation("org.eclipse.jgit:org.eclipse.jgit.ssh.apache:5.13.1.202206130422-r") {
+        exclude group: "org.apache.sshd", module: "sshd-osgi"
+    }
 }

@@ -147,6 +147,148 @@ class AppDatabase {
         .toList();
   }
 
+  Future<void> deleteWorkspaceCascade(String workspaceId) async {
+    final db = await database;
+    await db.transaction((txn) async {
+      final sessionRows = await txn.query(
+        'sessions',
+        columns: ['id'],
+        where: 'workspace_id = ?',
+        whereArgs: [workspaceId],
+      );
+      final sessionIds = sessionRows
+          .map((row) => row['id'] as String?)
+          .whereType<String>()
+          .toList();
+      for (final sessionId in sessionIds) {
+        await txn.delete('parts', where: 'session_id = ?', whereArgs: [sessionId]);
+        await txn.delete('messages', where: 'session_id = ?', whereArgs: [sessionId]);
+        await txn.delete(
+          'permission_requests',
+          where: 'session_id = ?',
+          whereArgs: [sessionId],
+        );
+        await txn.delete(
+          'question_requests',
+          where: 'session_id = ?',
+          whereArgs: [sessionId],
+        );
+        await txn.delete('todos', where: 'session_id = ?', whereArgs: [sessionId]);
+      }
+      await txn.delete('sessions', where: 'workspace_id = ?', whereArgs: [workspaceId]);
+      await txn.delete('projects', where: 'workspace_id = ?', whereArgs: [workspaceId]);
+      await txn.delete(
+        'tool_permissions',
+        where: 'workspace_id = ?',
+        whereArgs: [workspaceId],
+      );
+      await txn.delete(
+        'workspace_index',
+        where: 'workspace_id = ?',
+        whereArgs: [workspaceId],
+      );
+      await txn.delete(
+        'workspace_search_index',
+        where: 'workspace_id = ?',
+        whereArgs: [workspaceId],
+      );
+      await txn.delete('workspaces', where: 'id = ?', whereArgs: [workspaceId]);
+    });
+  }
+
+  Future<void> migrateWorkspace(
+    WorkspaceInfo previous,
+    WorkspaceInfo next,
+  ) async {
+    final db = await database;
+    await db.transaction((txn) async {
+      await txn.delete('workspaces', where: 'id = ?', whereArgs: [previous.id]);
+      await txn.insert(
+        'workspaces',
+        {'id': next.id, 'data': jsonEncode(next.toJson())},
+        conflictAlgorithm: ConflictAlgorithm.replace,
+      );
+
+      final projectRows = await txn.query(
+        'projects',
+        where: 'workspace_id = ?',
+        whereArgs: [previous.id],
+      );
+      for (final row in projectRows) {
+        final project = ProjectInfo.fromJson(
+          jsonDecode(row['data'] as String) as JsonMap,
+        );
+        final updated = ProjectInfo(
+          id: project.id,
+          workspaceId: next.id,
+          name: project.name,
+          createdAt: project.createdAt,
+        );
+        await txn.update(
+          'projects',
+          {
+            'workspace_id': next.id,
+            'data': jsonEncode(updated.toJson()),
+          },
+          where: 'id = ?',
+          whereArgs: [project.id],
+        );
+      }
+
+      final sessionRows = await txn.query(
+        'sessions',
+        where: 'workspace_id = ?',
+        whereArgs: [previous.id],
+      );
+      for (final row in sessionRows) {
+        final session = SessionInfo.fromJson(
+          jsonDecode(row['data'] as String) as JsonMap,
+        );
+        final updated = SessionInfo(
+          id: session.id,
+          projectId: session.projectId,
+          workspaceId: next.id,
+          title: session.title,
+          agent: session.agent,
+          createdAt: session.createdAt,
+          updatedAt: session.updatedAt,
+          promptTokens: session.promptTokens,
+          completionTokens: session.completionTokens,
+          cost: session.cost,
+          summaryMessageId: session.summaryMessageId,
+        );
+        await txn.update(
+          'sessions',
+          {
+            'workspace_id': next.id,
+            'data': jsonEncode(updated.toJson()),
+          },
+          where: 'id = ?',
+          whereArgs: [session.id],
+        );
+      }
+
+      await txn.update(
+        'tool_permissions',
+        {'workspace_id': next.id},
+        where: 'workspace_id = ?',
+        whereArgs: [previous.id],
+      );
+      await txn.update(
+        'workspace_index',
+        {'workspace_id': next.id},
+        where: 'workspace_id = ?',
+        whereArgs: [previous.id],
+      );
+      await txn.update(
+        'workspace_search_index',
+        {'workspace_id': next.id},
+        where: 'workspace_id = ?',
+        whereArgs: [previous.id],
+      );
+    });
+  }
+
   Future<void> saveProject(ProjectInfo project) async {
     final db = await database;
     await db.insert(

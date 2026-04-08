@@ -84,7 +84,7 @@ class GitSshKey {
   factory GitSshKey.fromJson(JsonMap json) => GitSshKey(
         id: (json['id'] as String?) ?? '',
         name: (json['name'] as String?) ?? '',
-        algorithm: (json['algorithm'] as String?) ?? 'rsa',
+        algorithm: (json['algorithm'] as String?) ?? 'ed25519',
         publicKeyOpenSsh: (json['publicKeyOpenSsh'] as String?) ?? '',
         comment: (json['comment'] as String?) ?? '',
         fingerprint: (json['fingerprint'] as String?) ?? '',

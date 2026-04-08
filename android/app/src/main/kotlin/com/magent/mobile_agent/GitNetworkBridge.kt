@@ -1,26 +1,31 @@
 package com.magent.mobile_agent
 
-import com.jcraft.jsch.JSch
-import com.jcraft.jsch.Session
 import io.flutter.embedding.android.FlutterActivity
 import io.flutter.embedding.engine.FlutterEngine
 import io.flutter.plugin.common.MethodCall
 import io.flutter.plugin.common.MethodChannel
+import java.io.ByteArrayInputStream
 import java.io.File
 import java.nio.charset.StandardCharsets
+import java.security.PublicKey
+import java.net.InetSocketAddress
 import java.util.concurrent.ExecutorService
+import org.apache.sshd.common.NamedResource
+import org.apache.sshd.common.util.security.SecurityUtils
 import org.eclipse.jgit.api.CloneCommand
 import org.eclipse.jgit.api.FetchCommand
 import org.eclipse.jgit.api.Git
 import org.eclipse.jgit.api.PullCommand
 import org.eclipse.jgit.api.PushCommand
+import org.eclipse.jgit.transport.CredentialsProvider
 import org.eclipse.jgit.api.TransportCommand
-import org.eclipse.jgit.transport.OpenSshConfig
+import org.eclipse.jgit.transport.sshd.ServerKeyDatabase
+import org.eclipse.jgit.transport.sshd.SshdSessionFactory
+import org.eclipse.jgit.transport.sshd.SshdSessionFactoryBuilder
 import org.eclipse.jgit.transport.PushResult
 import org.eclipse.jgit.transport.RefSpec
 import org.eclipse.jgit.transport.SshTransport
 import org.eclipse.jgit.transport.UsernamePasswordCredentialsProvider
-import org.eclipse.jgit.transport.JschConfigSessionFactory
 import org.eclipse.jgit.util.FS
 
 class GitNetworkBridge(
@@ -54,7 +59,7 @@ class GitNetworkBridge(
                 }
             } catch (error: Throwable) {
                 activity.runOnUiThread {
-                    result.error("git_network_error", error.message, null)
+                    result.error("git_network_error", describeError(error), null)
                 }
             }
         }
@@ -93,7 +98,7 @@ class GitNetworkBridge(
             cleanupDirectory(targetDir)
             return mapOf(
                 "success" to false,
-                "error" to (error.message ?: error.toString()),
+                "error" to describeError(error),
             )
         } finally {
             git?.close()
@@ -232,20 +237,51 @@ class GitNetworkBridge(
         }
     }
 
-    private fun createSshSessionFactory(auth: GitAuth): JschConfigSessionFactory {
-        val privateKeyBytes = auth.privateKeyPem!!.toByteArray(StandardCharsets.UTF_8)
-        val passphraseBytes = auth.secret?.toByteArray(StandardCharsets.UTF_8)
-        return object : JschConfigSessionFactory() {
-            override fun configure(host: OpenSshConfig.Host?, session: Session) {
-                session.setConfig("StrictHostKeyChecking", "no")
-            }
+    private fun createSshSessionFactory(auth: GitAuth): SshdSessionFactory {
+        val sshHome = File(activity.cacheDir, "git-ssh-home").apply { mkdirs() }
+        val sshDir = File(sshHome, ".ssh").apply { mkdirs() }
+        return SshdSessionFactoryBuilder()
+            .setHomeDirectory(sshHome)
+            .setSshDirectory(sshDir)
+            .setPreferredAuthentications("publickey")
+            .setConfigFile { null }
+            .setDefaultIdentities { emptyList() }
+            .setDefaultKnownHostsFiles { emptyList() }
+            .setDefaultKeysProvider { loadSshKeyPairs(auth) }
+            .setServerKeyDatabase { _, _ ->
+                object : ServerKeyDatabase {
+                    override fun lookup(
+                        connectAddress: String,
+                        remoteAddress: InetSocketAddress,
+                        config: ServerKeyDatabase.Configuration,
+                    ): List<PublicKey> = emptyList()
 
-            override fun createDefaultJSch(fs: FS): JSch {
-                val jsch = super.createDefaultJSch(fs)
-                jsch.removeAllIdentity()
-                jsch.addIdentity("mag-key", privateKeyBytes, null, passphraseBytes)
-                return jsch
+                    override fun accept(
+                        connectAddress: String,
+                        remoteAddress: InetSocketAddress,
+                        serverKey: PublicKey,
+                        config: ServerKeyDatabase.Configuration,
+                        provider: CredentialsProvider?,
+                    ): Boolean = true
+                }
             }
+            .build(null)
+    }
+
+    private fun loadSshKeyPairs(auth: GitAuth): Iterable<java.security.KeyPair> {
+        val privateKeyPem = auth.privateKeyPem?.trim()
+        if (privateKeyPem.isNullOrEmpty()) {
+            throw IllegalArgumentException("SSH private key is missing")
+        }
+        ByteArrayInputStream(privateKeyPem.toByteArray(StandardCharsets.UTF_8)).use { input ->
+            return SecurityUtils.loadKeyPairIdentities(
+                null,
+                object : NamedResource {
+                    override fun getName(): String = "mag-key"
+                },
+                input,
+                null,
+            )
         }
     }
 
@@ -305,6 +341,28 @@ class GitNetworkBridge(
             }
         } catch (_: Throwable) {
         }
+    }
+
+    private fun describeError(error: Throwable): String {
+        val parts = linkedSetOf<String>()
+        var current: Throwable? = error
+        while (current != null) {
+            val message = current.message?.trim().orEmpty()
+            if (message.isNotEmpty()) {
+                parts.add(message)
+            } else {
+                parts.add(current.javaClass.simpleName)
+            }
+            current = current.cause
+        }
+        if (parts.isEmpty()) {
+            return error.toString()
+        }
+        val message = parts.joinToString(" | ")
+        if (message.contains("Auth fail", ignoreCase = true)) {
+            return "$message | SSH authentication failed. Check that the remote username is correct and the generated Ed25519 public key has been added to the git server."
+        }
+        return message
     }
 }
 

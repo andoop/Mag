@@ -1,4 +1,5 @@
 import 'package:flutter_test/flutter_test.dart';
+import 'package:mobile_agent/core/git/exceptions/git_exceptions.dart';
 import 'package:mobile_agent/core/git/git_settings_store.dart';
 import 'package:mobile_agent/core/models.dart';
 
@@ -23,7 +24,7 @@ void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
 
   group('git settings store', () {
-    test('generate import and delete ssh keys updates settings', () async {
+    test('generate import and delete ed25519 ssh keys updates settings', () async {
       final settings = <String, JsonMap>{};
       final secretStore = _MemorySecretStore();
       final store = GitSettingsStore(
@@ -44,10 +45,11 @@ void main() {
       );
       expect(current.sshKeys, hasLength(1));
       expect(current.defaultSshKey?.name, 'Primary key');
-      expect(current.sshKeys.first.publicKeyOpenSsh, startsWith('ssh-rsa '));
+      expect(current.sshKeys.first.algorithm, 'ed25519');
+      expect(current.sshKeys.first.publicKeyOpenSsh, startsWith('ssh-ed25519 '));
       expect(
         await store.readPrivateKeyPem(current.sshKeys.first.id),
-        contains('BEGIN RSA PRIVATE KEY'),
+        contains('BEGIN OPENSSH PRIVATE KEY'),
       );
 
       final generatedPrivate = await store.readPrivateKeyPem(current.sshKeys.first.id);
@@ -64,6 +66,38 @@ void main() {
       current = await store.deleteSshKey(current.sshKeys.last.id);
       expect(current.sshKeys, hasLength(1));
       expect(current.defaultSshKey?.id, current.sshKeys.first.id);
+    });
+
+    test('rejects non-ed25519 ssh key imports', () async {
+      final settings = <String, JsonMap>{};
+      final secretStore = _MemorySecretStore();
+      final store = GitSettingsStore(
+        secretStore: secretStore,
+        readSetting: (key) async => settings[key],
+        writeSetting: (key, value) async => settings[key] = value,
+      );
+
+      await store.updateIdentity(
+        name: 'Andoop',
+        email: 'andoop@example.com',
+      );
+      await expectLater(
+        () => store.importSshKey(
+          name: 'Legacy RSA key',
+          privateKeyPem: '''
+-----BEGIN RSA PRIVATE KEY-----
+MIIBOgIBAAJBALegacy
+-----END RSA PRIVATE KEY-----
+''',
+        ),
+        throwsA(
+          isA<GitException>().having(
+            (error) => error.message,
+            'message',
+            contains('Ed25519 OpenSSH'),
+          ),
+        ),
+      );
     });
 
     test('resolve remote credentials by host path and protocol', () async {
@@ -115,7 +149,7 @@ void main() {
       expect(sshAuth, isNotNull);
       expect(sshAuth!.isSsh, isTrue);
       expect(sshAuth.username, 'git');
-      expect(sshAuth.privateKeyPem, contains('BEGIN RSA PRIVATE KEY'));
+      expect(sshAuth.privateKeyPem, contains('BEGIN OPENSSH PRIVATE KEY'));
 
       final fallbackSshAuth = await store.resolveAuthForRemoteUrl(
         'ssh://git@example.com/demo/repo.git',

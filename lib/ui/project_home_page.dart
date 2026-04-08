@@ -41,12 +41,71 @@ class _ProjectHomePageState extends State<ProjectHomePage> {
   Future<void> _showCreateProjectDialog() async {
     final result = await showDialog<String>(
       context: context,
-      builder: (context) => const _CreateProjectDialog(),
+      builder: (context) => _ProjectNameDialog(
+        title: l(context, '新建项目', 'New project'),
+        hintText: l(context, '输入项目名称', 'Enter project name'),
+        confirmText: l(context, '创建', 'Create'),
+      ),
     );
     if (!mounted || result == null) {
       return;
     }
     await widget.controller.createAndOpenProject(result);
+  }
+
+  Future<void> _refreshProjects() async {
+    if (!mounted) return;
+    setState(() {
+      _recentFuture = _loadRecents();
+    });
+  }
+
+  Future<void> _showRenameProjectDialog(WorkspaceInfo workspace) async {
+    final result = await showDialog<String>(
+      context: context,
+      builder: (context) => _ProjectNameDialog(
+        title: l(context, '重命名项目', 'Rename project'),
+        hintText: l(context, '输入新的项目名称', 'Enter a new project name'),
+        confirmText: l(context, '保存', 'Save'),
+        initialValue: workspace.name,
+      ),
+    );
+    if (!mounted || result == null) {
+      return;
+    }
+    await widget.controller.renameProject(workspace, result);
+    await _refreshProjects();
+  }
+
+  Future<void> _confirmDeleteProject(WorkspaceInfo workspace) async {
+    final ok = await showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: Text(l(context, '删除项目', 'Delete project')),
+        content: Text(
+          l(
+            context,
+            '确定删除 `${workspace.name}` 吗？项目目录和对应会话都会被删除。',
+            'Delete `${workspace.name}`? The project folder and related sessions will be removed.',
+          ),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(context).pop(false),
+            child: Text(l(context, '取消', 'Cancel')),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.of(context).pop(true),
+            child: Text(l(context, '删除', 'Delete')),
+          ),
+        ],
+      ),
+    );
+    if (ok != true || !mounted) {
+      return;
+    }
+    await widget.controller.deleteProject(workspace);
+    await _refreshProjects();
   }
 
   @override
@@ -223,6 +282,30 @@ class _ProjectHomePageState extends State<ProjectHomePage> {
                                             color: oc.muted,
                                           ),
                                         ),
+                                        PopupMenuButton<String>(
+                                          tooltip: l(context, '项目操作', 'Project actions'),
+                                          onSelected: (value) async {
+                                            if (value == 'rename') {
+                                              await _showRenameProjectDialog(w);
+                                            } else if (value == 'delete') {
+                                              await _confirmDeleteProject(w);
+                                            }
+                                          },
+                                          itemBuilder: (context) => [
+                                            PopupMenuItem<String>(
+                                              value: 'rename',
+                                              child: Text(
+                                                l(context, '重命名', 'Rename'),
+                                              ),
+                                            ),
+                                            PopupMenuItem<String>(
+                                              value: 'delete',
+                                              child: Text(
+                                                l(context, '删除', 'Delete'),
+                                              ),
+                                            ),
+                                          ],
+                                        ),
                                       ],
                                     ),
                                   ),
@@ -286,20 +369,30 @@ class _ProjectHomePageState extends State<ProjectHomePage> {
   }
 }
 
-class _CreateProjectDialog extends StatefulWidget {
-  const _CreateProjectDialog();
+class _ProjectNameDialog extends StatefulWidget {
+  const _ProjectNameDialog({
+    required this.title,
+    required this.hintText,
+    required this.confirmText,
+    this.initialValue = '',
+  });
+
+  final String title;
+  final String hintText;
+  final String confirmText;
+  final String initialValue;
 
   @override
-  State<_CreateProjectDialog> createState() => _CreateProjectDialogState();
+  State<_ProjectNameDialog> createState() => _ProjectNameDialogState();
 }
 
-class _CreateProjectDialogState extends State<_CreateProjectDialog> {
+class _ProjectNameDialogState extends State<_ProjectNameDialog> {
   late final TextEditingController _controller;
 
   @override
   void initState() {
     super.initState();
-    _controller = TextEditingController();
+    _controller = TextEditingController(text: widget.initialValue);
   }
 
   @override
@@ -311,12 +404,12 @@ class _CreateProjectDialogState extends State<_CreateProjectDialog> {
   @override
   Widget build(BuildContext context) {
     return AlertDialog(
-      title: Text(l(context, '新建项目', 'New project')),
+      title: Text(widget.title),
       content: TextField(
         controller: _controller,
         autofocus: true,
         decoration: InputDecoration(
-          hintText: l(context, '输入项目名称', 'Enter project name'),
+          hintText: widget.hintText,
         ),
         onSubmitted: (value) => Navigator.of(context).pop(value.trim()),
       ),
@@ -327,7 +420,7 @@ class _CreateProjectDialogState extends State<_CreateProjectDialog> {
         ),
         FilledButton(
           onPressed: () => Navigator.of(context).pop(_controller.text.trim()),
-          child: Text(l(context, '创建', 'Create')),
+          child: Text(widget.confirmText),
         ),
       ],
     );

@@ -99,6 +99,62 @@ class WorkspaceBridge {
     );
   }
 
+  Future<WorkspaceInfo> renameSandboxProject({
+    required WorkspaceInfo workspace,
+    required String newName,
+  }) async {
+    final root = await getSandboxRootPath();
+    final currentPath = _treeUriToPath(workspace.treeUri);
+    if (currentPath == null) {
+      throw Exception('Unsupported workspace path: ${workspace.treeUri}');
+    }
+    final normalizedCurrent = p.normalize(currentPath);
+    final normalizedRoot = p.normalize(root);
+    if (!p.isWithin(normalizedRoot, normalizedCurrent)) {
+      throw Exception('Workspace is outside sandbox: ${workspace.treeUri}');
+    }
+    final safeName = _sanitizeProjectName(newName);
+    final currentName = p.basename(normalizedCurrent);
+    if (safeName == currentName) {
+      return WorkspaceInfo(
+        id: workspace.id,
+        name: currentName,
+        treeUri: normalizedCurrent,
+        createdAt: workspace.createdAt,
+      );
+    }
+    final targetPath = p.join(normalizedRoot, safeName);
+    if (await Directory(targetPath).exists()) {
+      throw Exception('Project already exists: $safeName');
+    }
+    final renamed = await Directory(normalizedCurrent).rename(targetPath);
+    invalidateCaches(treeUri: normalizedCurrent);
+    invalidateCaches(treeUri: renamed.path);
+    return _workspaceInfoForPath(
+      renamed.path,
+      name: p.basename(renamed.path),
+      createdAt: workspace.createdAt,
+    );
+  }
+
+  Future<void> deleteSandboxProject(WorkspaceInfo workspace) async {
+    final root = await getSandboxRootPath();
+    final currentPath = _treeUriToPath(workspace.treeUri);
+    if (currentPath == null) {
+      throw Exception('Unsupported workspace path: ${workspace.treeUri}');
+    }
+    final normalizedCurrent = p.normalize(currentPath);
+    final normalizedRoot = p.normalize(root);
+    if (!p.isWithin(normalizedRoot, normalizedCurrent)) {
+      throw Exception('Workspace is outside sandbox: ${workspace.treeUri}');
+    }
+    final dir = Directory(normalizedCurrent);
+    if (await dir.exists()) {
+      await dir.delete(recursive: true);
+    }
+    invalidateCaches(treeUri: normalizedCurrent);
+  }
+
   bool isSandboxWorkspace(String treeUri) {
     final root = _sandboxRootPath;
     final path = _treeUriToPath(treeUri);

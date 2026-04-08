@@ -138,6 +138,56 @@ extension AppControllerSession on AppController {
     }
   }
 
+  Future<WorkspaceInfo?> renameProject(
+    WorkspaceInfo workspace,
+    String newName,
+  ) async {
+    try {
+      await initialize();
+      final renamed = await _workspaceBridge.renameSandboxProject(
+        workspace: workspace,
+        newName: newName,
+      );
+      if (renamed.id != workspace.id) {
+        await _db.migrateWorkspace(workspace, renamed);
+        await ProjectRecentsStore.replaceWorkspaceId(
+          oldWorkspaceId: workspace.id,
+          newWorkspaceId: renamed.id,
+          displayName: renamed.name,
+        );
+      } else {
+        await _client!.saveWorkspace(renamed);
+        await ProjectRecentsStore.touch(renamed.id, renamed.name);
+      }
+      if (state.workspace?.id == workspace.id) {
+        final sessions = await _client!.listSessions(renamed.id);
+        state = state.copyWith(
+          workspace: renamed,
+          sessions: sessions,
+        );
+        notifyListeners();
+      }
+      return renamed;
+    } catch (error) {
+      _setError(error);
+      return null;
+    }
+  }
+
+  Future<void> deleteProject(WorkspaceInfo workspace) async {
+    try {
+      await initialize();
+      if (state.workspace?.id == workspace.id) {
+        await leaveProject();
+      }
+      await _workspaceBridge.deleteSandboxProject(workspace);
+      await _db.deleteWorkspaceCascade(workspace.id);
+      await ProjectRecentsStore.remove(workspace.id);
+    } catch (error) {
+      _setError(error);
+    }
+  }
+
   Future<void> enterNewSessionLanding() async {
     final workspace = state.workspace;
     if (workspace == null) return;

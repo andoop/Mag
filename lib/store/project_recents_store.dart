@@ -43,6 +43,50 @@ class ProjectRecentsStore {
     return out;
   }
 
+  static Future<void> remove(String workspaceId) async {
+    final trimmedId = workspaceId.trim();
+    if (trimmedId.isEmpty) return;
+    final prefs = await SharedPreferences.getInstance();
+    final list = _decode(prefs.getString(_key));
+    list.removeWhere((e) => e['workspaceId'] == trimmedId);
+    await prefs.setString(_key, jsonEncode(list));
+  }
+
+  static Future<void> replaceWorkspaceId({
+    required String oldWorkspaceId,
+    required String newWorkspaceId,
+    required String displayName,
+  }) async {
+    final oldId = oldWorkspaceId.trim();
+    final newId = newWorkspaceId.trim();
+    if (oldId.isEmpty || newId.isEmpty) return;
+    final prefs = await SharedPreferences.getInstance();
+    final list = _decode(prefs.getString(_key));
+    int? lastOpenedAt;
+    list.removeWhere((e) {
+      final hit = e['workspaceId'] == oldId;
+      if (hit) {
+        final raw = e['lastOpenedAt'];
+        if (raw is int) {
+          lastOpenedAt = raw;
+        } else if (raw is num) {
+          lastOpenedAt = raw.toInt();
+        }
+      }
+      return hit;
+    });
+    list.removeWhere((e) => e['workspaceId'] == newId);
+    list.insert(0, {
+      'workspaceId': newId,
+      'displayName': displayName.trim().isEmpty ? 'Project' : displayName.trim(),
+      'lastOpenedAt': lastOpenedAt ?? DateTime.now().millisecondsSinceEpoch,
+    });
+    while (list.length > 48) {
+      list.removeLast();
+    }
+    await prefs.setString(_key, jsonEncode(list));
+  }
+
   static List<Map<String, dynamic>> _decode(String? raw) {
     if (raw == null || raw.isEmpty) return [];
     try {
