@@ -48,3 +48,4 @@ logs
 .env
 .env.*
 *.pem
+opencode/
