@@ -1,0 +1,2 @@
+Hello, this is a test file created by Mag agent.
+Just testing the git workflow.
