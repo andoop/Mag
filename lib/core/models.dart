@@ -15,4 +15,5 @@ part 'models/provider_auth.dart';
 part 'models/provider_config.dart';
 part 'models/git_settings.dart';
 part 'models/token_limits.dart';
+part 'models/session_run_status.dart';
 part 'models/server_event.dart';

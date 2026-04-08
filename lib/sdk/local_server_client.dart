@@ -23,20 +23,23 @@ class LocalServerClient {
   Future<List<WorkspaceInfo>> listWorkspaces() async {
     final data = await _get('/workspace');
     return (data as List)
-        .map((item) => WorkspaceInfo.fromJson(Map<String, dynamic>.from(item as Map)))
+        .map((item) =>
+            WorkspaceInfo.fromJson(Map<String, dynamic>.from(item as Map)))
         .toList();
   }
 
   Future<List<AgentDefinition>> listAgents() async {
     final data = await _get('/agent');
     return (data as List)
-        .map((item) => AgentDefinition.fromJson(Map<String, dynamic>.from(item as Map)))
+        .map((item) =>
+            AgentDefinition.fromJson(Map<String, dynamic>.from(item as Map)))
         .toList();
   }
 
   Future<ProviderListResponse> listProviders() async {
     final data = await _get('/provider');
-    return ProviderListResponse.fromJson(Map<String, dynamic>.from(data as Map));
+    return ProviderListResponse.fromJson(
+        Map<String, dynamic>.from(data as Map));
   }
 
   Future<Map<String, List<ProviderAuthMethod>>> listProviderAuth() async {
@@ -78,11 +81,25 @@ class LocalServerClient {
   Future<List<SessionInfo>> listSessions(String workspaceId) async {
     final data = await _get('/session?workspaceId=$workspaceId');
     return (data as List)
-        .map((item) => SessionInfo.fromJson(Map<String, dynamic>.from(item as Map)))
+        .map((item) =>
+            SessionInfo.fromJson(Map<String, dynamic>.from(item as Map)))
         .toList();
   }
 
-  Future<SessionInfo> createSession(WorkspaceInfo workspace, {String agent = 'build'}) async {
+  Future<Map<String, SessionRunStatus>> listSessionStatuses(
+    String workspaceId,
+  ) async {
+    final data = await _get('/session/status?workspaceId=$workspaceId');
+    return Map<String, dynamic>.from(data as Map).map(
+      (key, value) => MapEntry(
+        key,
+        SessionRunStatus.fromJson(Map<String, dynamic>.from(value as Map)),
+      ),
+    );
+  }
+
+  Future<SessionInfo> createSession(WorkspaceInfo workspace,
+      {String agent = 'build'}) async {
     final data = await _post('/session', {
       'workspace': workspace.toJson(),
       'agent': agent,
@@ -90,14 +107,17 @@ class LocalServerClient {
     return SessionInfo.fromJson(Map<String, dynamic>.from(data as Map));
   }
 
-  Future<List<SessionMessageBundle>> listSessionMessages(String sessionId) async {
+  Future<List<SessionMessageBundle>> listSessionMessages(
+      String sessionId) async {
     final data = await _get('/session/$sessionId/message');
     return (data as List).map((item) {
       final map = Map<String, dynamic>.from(item as Map);
       return SessionMessageBundle(
-        message: MessageInfo.fromJson(Map<String, dynamic>.from(map['info'] as Map)),
+        message:
+            MessageInfo.fromJson(Map<String, dynamic>.from(map['info'] as Map)),
         parts: (map['parts'] as List)
-            .map((part) => MessagePart.fromJson(Map<String, dynamic>.from(part as Map)))
+            .map((part) =>
+                MessagePart.fromJson(Map<String, dynamic>.from(part as Map)))
             .toList(),
       );
     }).toList();
@@ -142,7 +162,8 @@ class LocalServerClient {
   Future<List<PermissionRequest>> listPermissions() async {
     final data = await _get('/permission');
     return (data as List)
-        .map((item) => PermissionRequest.fromJson(Map<String, dynamic>.from(item as Map)))
+        .map((item) =>
+            PermissionRequest.fromJson(Map<String, dynamic>.from(item as Map)))
         .toList();
   }
 
@@ -153,11 +174,13 @@ class LocalServerClient {
   Future<List<QuestionRequest>> listQuestions() async {
     final data = await _get('/question');
     return (data as List)
-        .map((item) => QuestionRequest.fromJson(Map<String, dynamic>.from(item as Map)))
+        .map((item) =>
+            QuestionRequest.fromJson(Map<String, dynamic>.from(item as Map)))
         .toList();
   }
 
-  Future<void> replyQuestion(String requestId, List<List<String>> answers) async {
+  Future<void> replyQuestion(
+      String requestId, List<List<String>> answers) async {
     await _post('/question/$requestId/reply', {'answers': answers});
   }
 
@@ -188,7 +211,8 @@ class LocalServerClient {
     );
     final request = await _client.getUrl(uri);
     final response = await request.close();
-    await for (final line in response.transform(utf8.decoder).transform(const LineSplitter())) {
+    await for (final line
+        in response.transform(utf8.decoder).transform(const LineSplitter())) {
       if (!line.startsWith('data: ')) continue;
       final payload = jsonDecode(line.substring(6)) as Map<String, dynamic>;
       yield ServerEvent.fromJson(payload);

@@ -151,7 +151,8 @@ extension _HomePageLanding on _HomePageState {
               leading: Icon(Icons.edit_note_outlined, color: oc.accent),
               title: Text(l(context, '新建空白页', 'New chat (blank)')),
               subtitle: Text(
-                l(context, '仅输入区，首条消息再建会话', 'Composer only; first send creates session'),
+                l(context, '仅输入区，首条消息再建会话',
+                    'Composer only; first send creates session'),
                 style: const TextStyle(fontSize: 11),
               ),
               onTap: () {
@@ -160,8 +161,7 @@ extension _HomePageLanding on _HomePageState {
               },
             ),
             ListTile(
-              leading:
-                  Icon(Icons.add_comment_outlined, color: oc.accentMuted),
+              leading: Icon(Icons.add_comment_outlined, color: oc.accentMuted),
               title: Text(l(context, '新建会话', 'New session')),
               subtitle: Text(
                 l(context, '立即创建新对话', 'Create a new thread now'),
@@ -193,8 +193,8 @@ extension _HomePageLanding on _HomePageState {
                       itemBuilder: (context, i) {
                         final s = state.sessions[i];
                         final selected = s.id == state.session?.id;
-                        final menuLocked =
-                            state.isBusy && selected;
+                        final status = state.statusForSession(s.id);
+                        final menuLocked = state.isSessionBusy(s.id);
                         return ListTile(
                           leading: Icon(
                             Icons.chat_bubble_outline_rounded,
@@ -227,6 +227,11 @@ extension _HomePageLanding on _HomePageState {
                           trailing: Row(
                             mainAxisSize: MainAxisSize.min,
                             children: [
+                              if (status.isBusy)
+                                Padding(
+                                  padding: const EdgeInsets.only(right: 6),
+                                  child: _SessionStatusBadge(status: status),
+                                ),
                               if (selected)
                                 Padding(
                                   padding: const EdgeInsets.only(right: 2),
@@ -321,7 +326,7 @@ extension _HomePageLanding on _HomePageState {
     AppState state,
     SessionInfo s,
   ) async {
-    if (state.isBusy && s.id == state.session?.id) return;
+    if (state.isSessionBusy(s.id)) return;
     final controller = TextEditingController(text: s.title);
     final newTitle = await showDialog<String>(
       context: context,
@@ -357,7 +362,7 @@ extension _HomePageLanding on _HomePageState {
     AppState state,
     SessionInfo s,
   ) async {
-    if (state.isBusy && s.id == state.session?.id) return;
+    if (state.isSessionBusy(s.id)) return;
     final ok = await showDialog<bool>(
       context: context,
       builder: (ctx) => AlertDialog(
@@ -387,5 +392,41 @@ extension _HomePageLanding on _HomePageState {
     if (ok != true) return;
     if (context.mounted) Navigator.pop(context);
     await widget.controller.removeSession(s);
+  }
+}
+
+class _SessionStatusBadge extends StatelessWidget {
+  const _SessionStatusBadge({required this.status});
+
+  final SessionRunStatus status;
+
+  @override
+  Widget build(BuildContext context) {
+    final oc = context.oc;
+    final label = status.isCompacting
+        ? l(context, '压缩中', 'Compacting')
+        : status.isRetrying
+            ? l(context, '重试中', 'Retrying')
+            : l(context, '运行中', 'Running');
+    final color = status.isCompacting
+        ? oc.orange
+        : status.isRetrying
+            ? oc.accentMuted
+            : oc.accent;
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+      decoration: BoxDecoration(
+        color: color.withOpacity(0.12),
+        borderRadius: BorderRadius.circular(999),
+      ),
+      child: Text(
+        label,
+        style: TextStyle(
+          fontSize: 10.5,
+          fontWeight: FontWeight.w700,
+          color: color,
+        ),
+      ),
+    );
   }
 }

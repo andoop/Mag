@@ -23,6 +23,7 @@ class SessionEngine {
 
   final Map<String, bool> _busy = {};
   final Map<String, CancelToken> _cancelTokens = {};
+  final Map<String, SessionRunStatus> _sessionStatuses = {};
 
   AgentDefinition agentDefinition(String name) => AgentRegistry.resolve(name);
 
@@ -79,6 +80,43 @@ class SessionEngine {
     );
   }
 
+  void _emitSessionStatus({
+    required String sessionId,
+    required SessionRunStatus status,
+    String? directory,
+  }) {
+    if (status.phase == SessionRunPhase.idle) {
+      _sessionStatuses.remove(sessionId);
+    } else {
+      _sessionStatuses[sessionId] = status;
+    }
+    events.emit(ServerEvent(
+      type: 'session.status',
+      properties: {
+        'sessionID': sessionId,
+        ...status.toJson(),
+      },
+      directory: directory,
+    ));
+  }
+
+  Future<Map<String, SessionRunStatus>> listSessionStatuses({
+    required String workspaceId,
+  }) async {
+    final sessions = await database.listSessions(workspaceId);
+    if (sessions.isEmpty) {
+      return const {};
+    }
+    final allowed = sessions.map((item) => item.id).toSet();
+    final result = <String, SessionRunStatus>{};
+    for (final entry in _sessionStatuses.entries) {
+      if (allowed.contains(entry.key)) {
+        result[entry.key] = entry.value;
+      }
+    }
+    return result;
+  }
+
   /// Mirrors mag's `SessionPrompt.cancel()`.
   /// Aborts the cancel token, cleans up pending permissions/questions,
   /// and forces idle status.
@@ -89,11 +127,11 @@ class SessionEngine {
     permissionCenter.cancelSession(sessionId);
     questionCenter.cancelSession(sessionId);
     _busy.remove(sessionId);
-    events.emit(ServerEvent(
-      type: 'session.status',
-      properties: {'sessionID': sessionId, 'status': 'idle'},
+    _emitSessionStatus(
+      sessionId: sessionId,
+      status: const SessionRunStatus.idle(),
       directory: directory,
-    ));
+    );
   }
 
   Future<WorkspaceInfo> _workspaceForSession(SessionInfo session) async {
@@ -173,11 +211,11 @@ class SessionEngine {
     final cancelToken = CancelToken();
     _cancelTokens[session.id] = cancelToken;
     _busy[session.id] = true;
-    events.emit(ServerEvent(
-      type: 'session.status',
-      properties: {'sessionID': session.id, 'status': 'compacting'},
+    _emitSessionStatus(
+      sessionId: session.id,
+      status: const SessionRunStatus(phase: SessionRunPhase.compacting),
       directory: workspace.treeUri,
-    ));
+    );
     try {
       return await summarize(
         workspace: workspace,
@@ -198,11 +236,11 @@ class SessionEngine {
     } finally {
       _cancelTokens.remove(session.id);
       _busy.remove(session.id);
-      events.emit(ServerEvent(
-        type: 'session.status',
-        properties: {'sessionID': session.id, 'status': 'idle'},
+      _emitSessionStatus(
+        sessionId: session.id,
+        status: const SessionRunStatus.idle(),
         directory: workspace.treeUri,
-      ));
+      );
     }
   }
 }

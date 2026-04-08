@@ -38,11 +38,11 @@ extension SessionEnginePrompt on SessionEngine {
     final cancelToken = CancelToken();
     _cancelTokens[session.id] = cancelToken;
     _busy[session.id] = true;
-    events.emit(ServerEvent(
-      type: 'session.status',
-      properties: {'sessionID': session.id, 'status': 'busy'},
+    _emitSessionStatus(
+      sessionId: session.id,
+      status: const SessionRunStatus(phase: SessionRunPhase.busy),
       directory: workspace.treeUri,
-    ));
+    );
     try {
       final modelConfig = ModelConfig.fromJson(
         await database.getSetting('model_config') ??
@@ -211,11 +211,11 @@ extension SessionEnginePrompt on SessionEngine {
       for (var step = 1; maxSteps == null || step <= maxSteps; step++) {
         cancelToken.throwIfCancelled();
         await ensureWithinContextBeforeStep(step);
-        events.emit(ServerEvent(
-          type: 'session.status',
-          properties: {'sessionID': session.id, 'status': 'busy'},
+        _emitSessionStatus(
+          sessionId: session.id,
+          status: const SessionRunStatus(phase: SessionRunPhase.busy),
           directory: workspace.treeUri,
-        ));
+        );
         final buildConversationStartedAt =
             DateTime.now().millisecondsSinceEpoch;
         var conversation = await _buildConversation(
@@ -230,7 +230,9 @@ extension SessionEnginePrompt on SessionEngine {
         );
         const maxPreSendCompact = 8;
         final inputBudget = usableInputTokensForModel(modelConfig.model);
-        for (var preSendRound = 0; preSendRound < maxPreSendCompact; preSendRound++) {
+        for (var preSendRound = 0;
+            preSendRound < maxPreSendCompact;
+            preSendRound++) {
           var est = estimateSerializedMessagesTokens(conversation);
           if (est < inputBudget) break;
           final summaryBefore = activeSession.summaryMessageId;
@@ -432,17 +434,16 @@ extension SessionEnginePrompt on SessionEngine {
             final delay = _retryDelay(attempt);
             _debugLog(
                 'retry', 'attempt=$attempt delay=${delay}ms error=$error');
-            events.emit(ServerEvent(
-              type: 'session.status',
-              properties: {
-                'sessionID': session.id,
-                'status': 'retry',
-                'attempt': attempt,
-                'message': _retryMessage(error),
-                'next': DateTime.now().millisecondsSinceEpoch + delay,
-              },
+            _emitSessionStatus(
+              sessionId: session.id,
+              status: SessionRunStatus(
+                phase: SessionRunPhase.retry,
+                attempt: attempt,
+                message: _retryMessage(error),
+                next: DateTime.now().millisecondsSinceEpoch + delay,
+              ),
               directory: workspace.treeUri,
-            ));
+            );
             // Sleep with cancellation support (like mag's SessionRetry.sleep)
             try {
               await cancelToken
@@ -691,11 +692,11 @@ extension SessionEnginePrompt on SessionEngine {
       // Guarantees idle status is always set regardless of how the function exits.
       _cancelTokens.remove(session.id);
       _busy.remove(session.id);
-      events.emit(ServerEvent(
-        type: 'session.status',
-        properties: {'sessionID': session.id, 'status': 'idle'},
+      _emitSessionStatus(
+        sessionId: session.id,
+        status: const SessionRunStatus.idle(),
         directory: workspace.treeUri,
-      ));
+      );
     }
   }
 

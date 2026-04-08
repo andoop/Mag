@@ -66,7 +66,7 @@ class AppState {
     this.providerList,
     this.providerAuth = const {},
     this.recentModelKeys = const [],
-    this.isBusy = false,
+    this.sessionStatuses = const {},
     this.error,
   });
 
@@ -86,8 +86,19 @@ class AppState {
   final ProviderListResponse? providerList;
   final Map<String, List<ProviderAuthMethod>> providerAuth;
   final List<String> recentModelKeys;
-  final bool isBusy;
+  final Map<String, SessionRunStatus> sessionStatuses;
   final String? error;
+
+  SessionRunStatus statusForSession(String? sessionId) {
+    if (sessionId == null || sessionId.isEmpty) {
+      return const SessionRunStatus.idle();
+    }
+    return sessionStatuses[sessionId] ?? const SessionRunStatus.idle();
+  }
+
+  SessionRunStatus get currentSessionStatus => statusForSession(session?.id);
+  bool get isBusy => currentSessionStatus.isBusy;
+  bool isSessionBusy(String? sessionId) => statusForSession(sessionId).isBusy;
 
   AppState copyWith({
     Uri? serverUri,
@@ -104,7 +115,7 @@ class AppState {
     ProviderListResponse? providerList,
     Map<String, List<ProviderAuthMethod>>? providerAuth,
     List<String>? recentModelKeys,
-    bool? isBusy,
+    Map<String, SessionRunStatus>? sessionStatuses,
     Object? error = _noChange,
   }) {
     return AppState(
@@ -126,7 +137,7 @@ class AppState {
       providerList: providerList ?? this.providerList,
       providerAuth: providerAuth ?? this.providerAuth,
       recentModelKeys: recentModelKeys ?? this.recentModelKeys,
-      isBusy: isBusy ?? this.isBusy,
+      sessionStatuses: sessionStatuses ?? this.sessionStatuses,
       error: identical(error, _noChange) ? this.error : error as String?,
     );
   }
@@ -200,7 +211,8 @@ class AppController extends ChangeNotifier {
   }
 
   void toggleThemeMode() {
-    setThemeMode(_themeMode == ThemeMode.dark ? ThemeMode.light : ThemeMode.dark);
+    setThemeMode(
+        _themeMode == ThemeMode.dark ? ThemeMode.light : ThemeMode.dark);
   }
 
   Future<void> _runInitialize() async {
@@ -279,30 +291,34 @@ class AppController extends ChangeNotifier {
           todos: wasCurrent ? const [] : state.todos,
           permissions: wasCurrent ? const [] : state.permissions,
           questions: wasCurrent ? const [] : state.questions,
-          isBusy: wasCurrent ? false : state.isBusy,
           error: wasCurrent ? null : state.error,
         );
+        _removeSessionStatus(removedId);
         notifyListeners();
         return;
       case 'session.status':
-        if (!_isCurrentSession(event.properties['sessionID'] as String?)) {
+        final sessionId = event.properties['sessionID'] as String?;
+        if (sessionId == null || sessionId.isEmpty) {
           return;
         }
-        final status = event.properties['status'] as String?;
-        state = state.copyWith(
-          isBusy:
-              status == 'busy' || status == 'retry' || status == 'compacting',
+        final status = SessionRunStatus.fromJson(
+          Map<String, dynamic>.from(event.properties),
         );
+        _setSessionStatus(sessionId, status);
+        if (_isCurrentSession(sessionId) &&
+            status.phase != SessionRunPhase.error) {
+          state = state.copyWith(error: null);
+        }
         notifyListeners();
         return;
       case 'session.error':
-        if (!_isCurrentSession(event.properties['sessionID'] as String?)) {
+        final sessionId = event.properties['sessionID'] as String?;
+        if (sessionId == null || sessionId.isEmpty) {
           return;
         }
-        state = state.copyWith(
-          isBusy: false,
-          error:
-              event.properties['message'] as String? ?? 'Unknown session error',
+        _setSessionError(
+          sessionId,
+          event.properties['message'] as String? ?? 'Unknown session error',
         );
         notifyListeners();
         return;

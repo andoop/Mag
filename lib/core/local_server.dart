@@ -132,6 +132,23 @@ class LocalServer {
             request.response, sessions.map((item) => item.toJson()).toList());
         return;
       }
+      if (path == '/session/status' && request.method == 'GET') {
+        final workspaceId = request.uri.queryParameters['workspaceId'] ?? '';
+        if (workspaceId.isEmpty) {
+          request.response.statusCode = 400;
+          await _json(request.response, {'error': 'workspaceId required'});
+          return;
+        }
+        final statuses =
+            await engine.listSessionStatuses(workspaceId: workspaceId);
+        await _json(
+          request.response,
+          statuses.map(
+            (key, value) => MapEntry(key, value.toJson()),
+          ),
+        );
+        return;
+      }
       if (path == '/session' && request.method == 'POST') {
         final body = await _readJson(request);
         final workspace = WorkspaceInfo.fromJson(
@@ -179,7 +196,8 @@ class LocalServer {
         final method = (body['method'] as num?)?.toInt() ?? 0;
         final inputs = Map<String, String>.from(
           (body['inputs'] as Map?)?.map(
-                (key, value) => MapEntry(key.toString(), value?.toString() ?? ''),
+                (key, value) =>
+                    MapEntry(key.toString(), value?.toString() ?? ''),
               ) ??
               const <String, String>{},
         );
@@ -502,9 +520,11 @@ class LocalServer {
     }
   }
 
-  Future<List<ProviderInfo>> _loadModelsDevCatalog({bool refresh = false}) async {
+  Future<List<ProviderInfo>> _loadModelsDevCatalog(
+      {bool refresh = false}) async {
     if (!refresh && _modelsDevCatalogCache != null) {
-      final age = DateTime.now().millisecondsSinceEpoch - _modelsDevCatalogFetchedAt;
+      final age =
+          DateTime.now().millisecondsSinceEpoch - _modelsDevCatalogFetchedAt;
       if (age > _modelsDevRefreshMs) {
         unawaited(_loadModelsDevCatalog(refresh: true));
       }
@@ -526,18 +546,21 @@ class LocalServer {
     }
   }
 
-  Future<List<ProviderInfo>> _loadModelsDevCatalogImpl({bool refresh = false}) async {
+  Future<List<ProviderInfo>> _loadModelsDevCatalogImpl(
+      {bool refresh = false}) async {
     if (!refresh) {
       final cached = await database.getSetting(_modelsDevCacheKey);
       if (cached != null) {
         final providers = (cached['all'] as List? ?? const [])
-            .map((item) => ProviderInfo.fromJson(Map<String, dynamic>.from(item as Map)))
+            .map((item) =>
+                ProviderInfo.fromJson(Map<String, dynamic>.from(item as Map)))
             .toList();
         if (providers.isNotEmpty) {
           _modelsDevCatalogCache = normalizeProviderCatalog(providers);
-          _modelsDevCatalogFetchedAt = (cached['fetchedAt'] as num?)?.toInt() ?? 0;
-          final age =
-              DateTime.now().millisecondsSinceEpoch - _modelsDevCatalogFetchedAt;
+          _modelsDevCatalogFetchedAt =
+              (cached['fetchedAt'] as num?)?.toInt() ?? 0;
+          final age = DateTime.now().millisecondsSinceEpoch -
+              _modelsDevCatalogFetchedAt;
           if (age > _modelsDevRefreshMs) {
             unawaited(_loadModelsDevCatalog(refresh: true));
           }
@@ -546,7 +569,8 @@ class LocalServer {
       }
     }
 
-    final client = HttpClient()..connectionTimeout = const Duration(seconds: 15);
+    final client = HttpClient()
+      ..connectionTimeout = const Duration(seconds: 15);
     try {
       final request = await client.getUrl(Uri.parse(_modelsDevUrl));
       final response = await request.close();
@@ -559,7 +583,8 @@ class LocalServer {
         throw const FormatException('Invalid models.dev payload');
       }
       final providers = normalizeProviderCatalog(
-        Map<String, dynamic>.from(decoded).entries
+        Map<String, dynamic>.from(decoded)
+            .entries
             .map(
               (entry) => ProviderInfo.fromModelsDevJson(
                 entry.key,
@@ -582,7 +607,8 @@ class LocalServer {
       final cached = await database.getSetting(_modelsDevCacheKey);
       if (cached != null) {
         final providers = (cached['all'] as List? ?? const [])
-            .map((item) => ProviderInfo.fromJson(Map<String, dynamic>.from(item as Map)))
+            .map((item) =>
+                ProviderInfo.fromJson(Map<String, dynamic>.from(item as Map)))
             .toList();
         if (providers.isNotEmpty) {
           _modelsDevCatalogCache = normalizeProviderCatalog(providers);
@@ -721,8 +747,9 @@ class LocalServer {
     required int method,
     required Map<String, String> inputs,
   }) async {
-    final methods = _buildProviderAuthResponse(await _loadModelsDevCatalog())[providerId] ??
-        const <ProviderAuthMethod>[];
+    final methods =
+        _buildProviderAuthResponse(await _loadModelsDevCatalog())[providerId] ??
+            const <ProviderAuthMethod>[];
     if (method < 0 || method >= methods.length) return null;
     final selected = methods[method];
     if (!selected.isOauth) return null;
@@ -734,8 +761,9 @@ class LocalServer {
     required int method,
     required String? code,
   }) async {
-    final methods = _buildProviderAuthResponse(await _loadModelsDevCatalog())[providerId] ??
-        const <ProviderAuthMethod>[];
+    final methods =
+        _buildProviderAuthResponse(await _loadModelsDevCatalog())[providerId] ??
+            const <ProviderAuthMethod>[];
     if (method < 0 || method >= methods.length) return false;
     final selected = methods[method];
     if (!selected.isOauth) return false;

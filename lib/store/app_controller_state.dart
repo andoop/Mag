@@ -3,8 +3,32 @@ part of 'app_controller.dart';
 
 extension AppControllerState on AppController {
   void _setError(Object error) {
-    state = state.copyWith(isBusy: false, error: error.toString());
+    state = state.copyWith(error: error.toString());
     notifyListeners();
+  }
+
+  void _setSessionStatus(String sessionId, SessionRunStatus status) {
+    final next = Map<String, SessionRunStatus>.from(state.sessionStatuses);
+    if (status.phase == SessionRunPhase.idle) {
+      next.remove(sessionId);
+    } else {
+      next[sessionId] = status;
+    }
+    state = state.copyWith(sessionStatuses: next);
+  }
+
+  void _setSessionError(String sessionId, String message) {
+    final next = Map<String, SessionRunStatus>.from(state.sessionStatuses);
+    next[sessionId] = SessionRunStatus.error(message);
+    state = state.copyWith(
+        sessionStatuses: next,
+        error: _isCurrentSession(sessionId) ? message : state.error);
+  }
+
+  void _removeSessionStatus(String sessionId) {
+    final next = Map<String, SessionRunStatus>.from(state.sessionStatuses);
+    next.remove(sessionId);
+    state = state.copyWith(sessionStatuses: next);
   }
 
   bool _isCurrentSession(String? sessionId) {
@@ -54,7 +78,8 @@ extension AppControllerState on AppController {
     List<SessionMessageBundle> bundles,
     MessagePart part,
   ) {
-    final index = bundles.indexWhere((item) => item.message.id == part.messageId);
+    final index =
+        bundles.indexWhere((item) => item.message.id == part.messageId);
     if (index < 0) return bundles;
     final oldParts = bundles[index].parts;
     final partIndex = oldParts.indexWhere((item) => item.id == part.id);

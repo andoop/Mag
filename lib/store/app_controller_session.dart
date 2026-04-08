@@ -32,7 +32,7 @@ extension AppControllerSession on AppController {
       permissions: const [],
       questions: const [],
       todos: const [],
-      isBusy: false,
+      sessionStatuses: const {},
       error: null,
     );
     notifyListeners();
@@ -56,6 +56,7 @@ extension AppControllerSession on AppController {
       final resolved = await _resolveWorkspace(picked);
       await ProjectRecentsStore.touch(resolved.id, resolved.name);
       final sessions = await _client!.listSessions(resolved.id);
+      final statuses = await _loadSessionStatuses(resolved.id);
       if (openSession != null) {
         SessionInfo? resolvedSession;
         for (final s in sessions) {
@@ -73,6 +74,7 @@ extension AppControllerSession on AppController {
             permissions: const [],
             questions: const [],
             todos: const [],
+            sessionStatuses: statuses,
             error: null,
           );
           notifyListeners();
@@ -81,6 +83,7 @@ extension AppControllerSession on AppController {
             workspace: resolved,
             sessions: sessions,
             session: resolvedSession,
+            sessionStatuses: statuses,
             error: null,
           );
           notifyListeners();
@@ -93,6 +96,7 @@ extension AppControllerSession on AppController {
             workspace: resolved,
             sessions: sessions,
             session: latest,
+            sessionStatuses: statuses,
             error: null,
           );
           notifyListeners();
@@ -106,6 +110,7 @@ extension AppControllerSession on AppController {
             permissions: const [],
             questions: const [],
             todos: const [],
+            sessionStatuses: statuses,
             error: null,
           );
           notifyListeners();
@@ -195,6 +200,7 @@ extension AppControllerSession on AppController {
       _cancelPendingPartDeltas();
       _clearWorkspacePreviewCaches();
       final sessions = await _client!.listSessions(workspace.id);
+      final statuses = await _loadSessionStatuses(workspace.id);
       state = state.copyWith(
         session: null,
         sessions: sessions,
@@ -202,6 +208,7 @@ extension AppControllerSession on AppController {
         permissions: const [],
         questions: const [],
         todos: const [],
+        sessionStatuses: statuses,
         error: null,
       );
       notifyListeners();
@@ -213,7 +220,8 @@ extension AppControllerSession on AppController {
   Future<WorkspaceInfo> _resolveWorkspace(WorkspaceInfo picked) async {
     await _workspaceBridge.getSandboxRootPath();
     if (!_workspaceBridge.isSandboxWorkspace(picked.treeUri)) {
-      throw Exception('Unsupported workspace outside sandbox: ${picked.treeUri}');
+      throw Exception(
+          'Unsupported workspace outside sandbox: ${picked.treeUri}');
     }
     await _client!.saveWorkspace(picked);
     return picked;
@@ -266,13 +274,15 @@ extension AppControllerSession on AppController {
       _clearWorkspacePreviewCaches();
       final session = await _client!.createSession(workspace, agent: agent);
       final sessions = await _client!.listSessions(workspace.id);
+      final statuses = await _loadSessionStatuses(workspace.id);
       state = state.copyWith(
           session: session,
           sessions: sessions,
           messages: const [],
           todos: const [],
           permissions: const [],
-          questions: const []);
+          questions: const [],
+          sessionStatuses: statuses);
       notifyListeners();
       await refreshSession();
     } catch (error) {
@@ -310,6 +320,7 @@ extension AppControllerSession on AppController {
     final startedAt = DateTime.now().millisecondsSinceEpoch;
     final messages = await _client!.listSessionMessages(session.id);
     final sessions = await _client!.listSessions(workspace.id);
+    final statuses = await _loadSessionStatuses(workspace.id);
     final permissions = await _client!.listPermissions();
     final questions = await _client!.listQuestions();
     final todos = await _db.listTodos(session.id);
@@ -321,6 +332,7 @@ extension AppControllerSession on AppController {
       questions:
           questions.where((item) => item.sessionId == session.id).toList(),
       todos: todos,
+      sessionStatuses: statuses,
     );
     notifyListeners();
     // #region agent log
@@ -354,6 +366,13 @@ extension AppControllerSession on AppController {
       session = state.session;
       if (session == null) return;
     }
+    if (state.isSessionBusy(session.id)) {
+      state = state.copyWith(
+        error: 'Session is already running. 当前会话仍在执行，请稍后再发送。',
+      );
+      notifyListeners();
+      return;
+    }
     final modelConfig = state.modelConfig ?? ModelConfig.defaults();
     _debugLog('sendPrompt',
         'provider=${modelConfig.provider} model=${modelConfig.model}');
@@ -363,16 +382,14 @@ extension AppControllerSession on AppController {
     final needsKey = mag ? (!freeMag && !hasKey) : !hasKey;
     if (needsKey) {
       state = state.copyWith(
-        isBusy: false,
         error: 'Missing API key. 请先在设置里配置模型 API Key。',
       );
       notifyListeners();
       return;
     }
-    state = state.copyWith(
-      isBusy: true,
-      error: null,
-    );
+    _setSessionStatus(
+        session.id, const SessionRunStatus(phase: SessionRunPhase.busy));
+    state = state.copyWith(error: null);
     notifyListeners();
     try {
       await _client!
@@ -388,7 +405,7 @@ extension AppControllerSession on AppController {
 
   Future<void> initializeProjectMemory() async {
     final session = state.session;
-    if (session == null || state.isBusy) return;
+    if (session == null || state.isSessionBusy(session.id)) return;
     await sendPrompt(
       magMemoryInitializationPrompt,
       agent: session.agent,
@@ -397,8 +414,12 @@ extension AppControllerSession on AppController {
 
   Future<void> compactSession() async {
     final session = state.session;
-    if (session == null || state.isBusy) return;
-    state = state.copyWith(isBusy: true, error: null);
+    if (session == null || state.isSessionBusy(session.id)) return;
+    _setSessionStatus(
+      session.id,
+      const SessionRunStatus(phase: SessionRunPhase.compacting),
+    );
+    state = state.copyWith(error: null);
     notifyListeners();
     try {
       final updated = await _client!.compactSession(session.id);
@@ -417,7 +438,8 @@ extension AppControllerSession on AppController {
     if (session == null) return;
     try {
       await _client!.cancelSession(session.id);
-      state = state.copyWith(isBusy: false, error: null);
+      _removeSessionStatus(session.id);
+      state = state.copyWith(error: null);
       notifyListeners();
     } catch (error) {
       _setError(error);
@@ -445,5 +467,15 @@ extension AppControllerSession on AppController {
     );
     notifyListeners();
     await refreshSession();
+  }
+
+  Future<Map<String, SessionRunStatus>> _loadSessionStatuses(
+    String workspaceId,
+  ) async {
+    final client = _client;
+    if (client == null) {
+      return const {};
+    }
+    return client.listSessionStatuses(workspaceId);
   }
 }
