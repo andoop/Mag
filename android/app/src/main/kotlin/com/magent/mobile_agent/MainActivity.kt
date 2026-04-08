@@ -28,11 +28,15 @@ class MainActivity : FlutterActivity() {
     private val workspaceExecutor: ExecutorService by lazy {
         Executors.newFixedThreadPool(2)
     }
+    private val gitNetworkBridge: GitNetworkBridge by lazy {
+        GitNetworkBridge(this, workspaceExecutor)
+    }
 
     override fun configureFlutterEngine(flutterEngine: FlutterEngine) {
         super.configureFlutterEngine(flutterEngine)
         MethodChannel(flutterEngine.dartExecutor.binaryMessenger, "mobile_agent/workspace")
             .setMethodCallHandler(::handleWorkspaceCall)
+        gitNetworkBridge.attach(flutterEngine)
     }
 
     override fun onDestroy() {

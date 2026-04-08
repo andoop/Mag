@@ -49,6 +49,10 @@ class MergeOperation {
 
   /// Merge a branch into current branch
   Future<MergeResult> merge(String branch) async {
+    return mergeRef(branch, targetLabel: branch);
+  }
+
+  Future<MergeResult> mergeRef(String targetRef, {String? targetLabel}) async {
     final status = await StatusOperation(repo).status();
     if (!status.isClean) {
       throw const GitException(
@@ -63,7 +67,8 @@ class MergeOperation {
     }
 
     final ourCommitHash = await repo.refs.resolveHead();
-    final theirCommitHash = await repo.refs.readBranch(branch);
+    final theirCommitHash = await repo.resolveCommitish(targetRef);
+    final mergeLabel = targetLabel ?? targetRef;
 
     // Check if already up-to-date
     if (ourCommitHash == theirCommitHash) {
@@ -97,7 +102,7 @@ class MergeOperation {
       baseHash,
       ourCommitHash,
       theirCommitHash,
-      branch,
+      mergeLabel,
     );
 
     return mergeResult;

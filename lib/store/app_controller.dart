@@ -10,6 +10,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 
 import '../core/database.dart';
 import '../core/debug_trace.dart';
+import '../core/git/git_settings_store.dart';
 import '../core/local_server.dart';
 import '../core/models.dart';
 import '../core/prompt_system.dart';
@@ -22,6 +23,7 @@ import 'project_recents_store.dart';
 part 'app_controller_events.dart';
 part 'app_controller_session.dart';
 part 'app_controller_provider.dart';
+part 'app_controller_git.dart';
 part 'app_controller_workspace.dart';
 part 'app_controller_state.dart';
 
@@ -60,6 +62,7 @@ class AppState {
     this.questions = const [],
     this.todos = const [],
     this.modelConfig,
+    this.gitSettings,
     this.providerList,
     this.providerAuth = const {},
     this.recentModelKeys = const [],
@@ -79,6 +82,7 @@ class AppState {
   final List<QuestionRequest> questions;
   final List<TodoItem> todos;
   final ModelConfig? modelConfig;
+  final GitSettings? gitSettings;
   final ProviderListResponse? providerList;
   final Map<String, List<ProviderAuthMethod>> providerAuth;
   final List<String> recentModelKeys;
@@ -96,6 +100,7 @@ class AppState {
     List<QuestionRequest>? questions,
     List<TodoItem>? todos,
     ModelConfig? modelConfig,
+    GitSettings? gitSettings,
     ProviderListResponse? providerList,
     Map<String, List<ProviderAuthMethod>>? providerAuth,
     List<String>? recentModelKeys,
@@ -117,6 +122,7 @@ class AppState {
       questions: questions ?? this.questions,
       todos: todos ?? this.todos,
       modelConfig: modelConfig ?? this.modelConfig,
+      gitSettings: gitSettings ?? this.gitSettings,
       providerList: providerList ?? this.providerList,
       providerAuth: providerAuth ?? this.providerAuth,
       recentModelKeys: recentModelKeys ?? this.recentModelKeys,
@@ -130,7 +136,8 @@ class AppController extends ChangeNotifier {
   AppController()
       : _db = AppDatabase.instance,
         _workspaceBridge = WorkspaceBridge.instance,
-        _events = LocalEventBus() {
+        _events = LocalEventBus(),
+        _gitSettingsStore = GitSettingsStore(database: AppDatabase.instance) {
     _engine = SessionEngine(
       database: _db,
       events: _events,
@@ -152,6 +159,7 @@ class AppController extends ChangeNotifier {
   final AppDatabase _db;
   final WorkspaceBridge _workspaceBridge;
   final LocalEventBus _events;
+  final GitSettingsStore _gitSettingsStore;
   late final SessionEngine _engine;
   late final LocalServer _server;
   LocalServerClient? _client;
@@ -205,10 +213,12 @@ class AppController extends ChangeNotifier {
     final modelConfig = await _client!.loadModelConfig();
     final providerList = await _client!.listProviders();
     final providerAuth = await _client!.listProviderAuth();
+    final gitSettings = await _gitSettingsStore.load();
     final recentModelKeys = await _loadRecentModelKeys();
     state = state.copyWith(
       serverUri: serverUri,
       modelConfig: modelConfig,
+      gitSettings: gitSettings,
       providerList: providerList,
       providerAuth: providerAuth,
       agents: agents,

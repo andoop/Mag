@@ -203,60 +203,15 @@ extension _HomePageAgentPicker on _HomePageState {
   }
 
   Future<void> _openSettings(BuildContext context, ModelConfig? config) async {
-    final current = config ?? ModelConfig.defaults();
-    final connection = current.currentConnection;
-    if (connection == null) return;
-    final baseUrl = TextEditingController(text: connection.baseUrl);
-    final apiKey = TextEditingController(text: connection.apiKey);
-    final model = TextEditingController(text: current.model);
     await showModalBottomSheet<void>(
       context: context,
       isScrollControlled: true,
-      builder: (context) {
-        return Padding(
-          padding: EdgeInsets.fromLTRB(
-              16, 16, 16, MediaQuery.of(context).viewInsets.bottom + 16),
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              TextField(
-                  controller: baseUrl,
-                  decoration: InputDecoration(
-                      labelText: l(context, 'Base URL', 'Base URL'))),
-              const SizedBox(height: 12),
-              TextField(
-                  controller: apiKey,
-                  decoration: InputDecoration(
-                      labelText: l(context, 'API Key', 'API Key'))),
-              const SizedBox(height: 12),
-              TextField(
-                  controller: model,
-                  decoration:
-                      InputDecoration(labelText: l(context, '模型', 'Model'))),
-              const SizedBox(height: 16),
-              FilledButton(
-                onPressed: () async {
-                  await widget.controller.connectProvider(
-                    connection.copyWith(
-                      baseUrl: baseUrl.text.trim(),
-                      apiKey: apiKey.text.trim(),
-                      models: model.text.trim().isEmpty
-                          ? connection.models
-                          : [model.text.trim(), ...connection.models],
-                    ),
-                    currentModelId: model.text.trim().isEmpty
-                        ? current.model
-                        : model.text.trim(),
-                    select: true,
-                  );
-                  if (mounted) Navigator.of(context).pop();
-                },
-                child: Text(l(context, '保存', 'Save')),
-              ),
-            ],
-          ),
-        );
-      },
+      backgroundColor: context.oc.pageBackground,
+      barrierColor: Colors.transparent,
+      builder: (context) => _AppSettingsSheet(
+        controller: widget.controller,
+        modelConfig: config ?? ModelConfig.defaults(),
+      ),
     );
   }
 }

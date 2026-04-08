@@ -10,7 +10,7 @@ Future<ToolExecutionResult> _gitTool(
       title: 'git',
       output: 'Missing required parameter: command.  '
           'Supported: status, add, commit, log, diff, branch, checkout, '
-          'merge, init, show.',
+          'merge, init, show, clone, fetch, pull, push, rebase.',
     );
   }
 
@@ -34,7 +34,7 @@ Future<ToolExecutionResult> _gitTool(
   }
 
   late final GitService git;
-  if (command != 'init') {
+  if (command != 'init' && command != 'clone') {
     try {
       git = await GitService.open(workDir);
     } catch (e) {
@@ -50,10 +50,67 @@ Future<ToolExecutionResult> _gitTool(
     // ------------------------------------------------------------------
     case 'init':
       final svc = await GitService.init(workDir);
+      final identity = await _loadSavedGitIdentity(ctx.database);
+      if (identity != null) {
+        await svc.setConfigValue('user', 'name', identity.name);
+        await svc.setConfigValue('user', 'email', identity.email);
+      }
       return ToolExecutionResult(
         title: 'git init',
         output: 'Initialized empty git repository at ${svc.workDir}',
         metadata: {'workDir': svc.workDir},
+      );
+
+    case 'clone':
+      final url = (args['url'] as String? ?? '').trim();
+      if (url.isEmpty) {
+        return ToolExecutionResult(
+          title: 'git clone',
+          output: 'Missing required parameter: url.',
+        );
+      }
+      final relativePath = (args['path'] as String? ?? '').trim();
+      final targetPath = relativePath.isEmpty
+          ? workDir
+          : p.normalize(p.join(workDir, relativePath));
+      if (!p.isWithin(workDir, targetPath) && targetPath != workDir) {
+        return ToolExecutionResult(
+          title: 'git clone',
+          output: 'Clone path must stay inside the current workspace.',
+        );
+      }
+      final remoteName = (args['remote'] as String? ?? 'origin').trim();
+      final branch = (args['branch'] as String?)?.trim();
+      final auth = await _loadSavedGitAuth(ctx.database, url);
+      if (_looksLikeSshRemoteUrl(url) && auth == null) {
+        return ToolExecutionResult(
+          title: 'git clone',
+          output: 'No SSH credential matched this remote URL. '
+              'Add an SSH binding in Settings, or set a default SSH key first.',
+        );
+      }
+      final result = await GitService.clone(
+        url: url,
+        path: targetPath,
+        remoteName: remoteName.isEmpty ? 'origin' : remoteName,
+        branch: branch != null && branch.isNotEmpty ? branch : null,
+        auth: auth,
+      );
+      if (!result.success) {
+        return ToolExecutionResult(
+          title: 'git clone',
+          output: result.error ?? 'Clone failed.',
+        );
+      }
+      return ToolExecutionResult(
+        title: 'git clone',
+        output: 'Cloned into $targetPath'
+            '${result.defaultBranch != null ? ' on ${result.defaultBranch}' : ''}.',
+        metadata: {
+          'path': targetPath,
+          'defaultBranch': result.defaultBranch,
+          'objectsReceived': result.objectsReceived,
+        },
       );
 
     // ------------------------------------------------------------------
@@ -112,8 +169,16 @@ Future<ToolExecutionResult> _gitTool(
         );
       }
       final amend = args['amend'] == true;
-      final authorName = args['authorName'] as String?;
-      final authorEmail = args['authorEmail'] as String?;
+      var authorName = args['authorName'] as String?;
+      var authorEmail = args['authorEmail'] as String?;
+      if ((authorName == null || authorName.trim().isEmpty) &&
+          (authorEmail == null || authorEmail.trim().isEmpty)) {
+        final identity = await _loadSavedGitIdentity(ctx.database);
+        if (identity != null) {
+          authorName = identity.name;
+          authorEmail = identity.email;
+        }
+      }
       final result = amend
           ? await git.amendCommit(message,
               authorName: authorName, authorEmail: authorEmail)
@@ -270,6 +335,150 @@ Future<ToolExecutionResult> _gitTool(
         metadata: {'success': true, 'mergeCommit': mr.mergeCommit},
       );
 
+    case 'fetch':
+      final remote = (args['remote'] as String? ?? 'origin').trim();
+      final branch = (args['branch'] as String?)?.trim();
+      final remoteDef = await RemoteManager(git.repository.gitDir)
+          .getRemote(remote.isEmpty ? 'origin' : remote);
+      final auth = remoteDef == null
+          ? null
+          : await _loadSavedGitAuth(ctx.database, remoteDef.url);
+      if (remoteDef != null && remoteDef.isSsh && auth == null) {
+        return ToolExecutionResult(
+          title: 'git fetch',
+          output: 'No SSH credential matched this remote URL. '
+              'Add an SSH binding in Settings, or set a default SSH key first.',
+        );
+      }
+      final fetched = await git.fetch(
+        remote.isEmpty ? 'origin' : remote,
+        branch: branch != null && branch.isNotEmpty ? branch : null,
+        auth: auth,
+      );
+      if (!fetched.success) {
+        return ToolExecutionResult(
+          title: 'git fetch',
+          output: fetched.error ?? 'Fetch failed.',
+        );
+      }
+      return ToolExecutionResult(
+        title: 'git fetch',
+        output: fetched.updatedRefs.isEmpty
+            ? 'Fetched successfully, no refs updated.'
+            : 'Fetched ${fetched.updatedRefs.length} ref(s).',
+        metadata: {
+          'updatedRefs': fetched.updatedRefs,
+          'objectsReceived': fetched.objectsReceived,
+        },
+      );
+
+    case 'pull':
+      final remote = (args['remote'] as String? ?? 'origin').trim();
+      final branch = (args['branch'] as String?)?.trim();
+      final useRebase = args['rebase'] == true;
+      final remoteDef = await RemoteManager(git.repository.gitDir)
+          .getRemote(remote.isEmpty ? 'origin' : remote);
+      final auth = remoteDef == null
+          ? null
+          : await _loadSavedGitAuth(ctx.database, remoteDef.url);
+      if (remoteDef != null && remoteDef.isSsh && auth == null) {
+        return ToolExecutionResult(
+          title: 'git pull',
+          output: 'No SSH credential matched this remote URL. '
+              'Add an SSH binding in Settings, or set a default SSH key first.',
+        );
+      }
+      final pulled = await git.pull(
+        remote.isEmpty ? 'origin' : remote,
+        branch: branch != null && branch.isNotEmpty ? branch : null,
+        rebase: useRebase,
+        auth: auth,
+      );
+      if (!pulled.success) {
+        return ToolExecutionResult(
+          title: 'git pull',
+          output: pulled.error ?? 'Pull failed.',
+          metadata: {
+            'updatedRefs': pulled.fetchResult.updatedRefs,
+            'objectsReceived': pulled.fetchResult.objectsReceived,
+          },
+        );
+      }
+      return ToolExecutionResult(
+        title: 'git pull',
+        output: useRebase
+            ? 'Pulled and rebased successfully.'
+            : 'Pulled and merged successfully.',
+        metadata: {
+          'updatedRefs': pulled.fetchResult.updatedRefs,
+          'objectsReceived': pulled.fetchResult.objectsReceived,
+          'mergeCommit': pulled.mergeResult?.mergeCommit,
+          'newHead': pulled.rebaseResult?.newHead,
+        },
+      );
+
+    case 'push':
+      final remote = (args['remote'] as String? ?? 'origin').trim();
+      final refspec = (args['refspec'] as String?)?.trim();
+      final force = args['force'] == true;
+      final remoteDef = await RemoteManager(git.repository.gitDir)
+          .getRemote(remote.isEmpty ? 'origin' : remote);
+      final auth = remoteDef == null
+          ? null
+          : await _loadSavedGitAuth(ctx.database, remoteDef.url);
+      if (remoteDef != null && remoteDef.isSsh && auth == null) {
+        return ToolExecutionResult(
+          title: 'git push',
+          output: 'No SSH credential matched this remote URL. '
+              'Add an SSH binding in Settings, or set a default SSH key first.',
+        );
+      }
+      final pushed = await git.push(
+        remote.isEmpty ? 'origin' : remote,
+        refspec: refspec != null && refspec.isNotEmpty ? refspec : null,
+        force: force,
+        auth: auth,
+      );
+      if (!pushed.success) {
+        return ToolExecutionResult(
+          title: 'git push',
+          output: pushed.error ?? 'Push failed.',
+        );
+      }
+      return ToolExecutionResult(
+        title: 'git push',
+        output: pushed.pushedRefs.isEmpty
+            ? 'Pushed successfully.'
+            : 'Pushed ${pushed.pushedRefs.join(', ')}.',
+        metadata: {'pushedRefs': pushed.pushedRefs},
+      );
+
+    case 'rebase':
+      final ref = (args['ref'] as String? ?? '').trim();
+      if (ref.isEmpty) {
+        return ToolExecutionResult(
+          title: 'git rebase',
+          output: 'Missing required parameter: ref.',
+        );
+      }
+      final rebased = await git.rebase(ref);
+      if (!rebased.success) {
+        return ToolExecutionResult(
+          title: 'git rebase',
+          output:
+              'Rebase stopped with conflicts in ${rebased.conflicts.length} file(s):\n${rebased.conflicts.join('\n')}',
+          metadata: {
+            'conflicts': rebased.conflicts,
+            'newHead': rebased.newHead,
+          },
+        );
+      }
+      return ToolExecutionResult(
+        title: 'git rebase',
+        output: 'Rebased successfully onto $ref.',
+        metadata: {'newHead': rebased.newHead},
+      );
+
     // ------------------------------------------------------------------
     case 'show':
       final ref = (args['ref'] as String? ?? 'HEAD').trim();
@@ -292,7 +501,7 @@ Future<ToolExecutionResult> _gitTool(
           title: 'git',
           output: 'Unknown git command: $command.  '
               'Supported: status, add, commit, log, diff, branch, '
-              'checkout, merge, init, show.',
+              'checkout, merge, init, show, clone, fetch, pull, push, rebase.',
         );
     }
   } on GitException catch (e) {
@@ -363,4 +572,22 @@ bool _isProtectedAndroidPath(String path) {
   return normalized == '/storage/emulated/0/Android' ||
       normalized.startsWith('/storage/emulated/0/Android/') ||
       androidRoot.hasMatch(normalized);
+}
+
+Future<GitIdentity?> _loadSavedGitIdentity(AppDatabase database) async {
+  final settings = await GitSettingsStore(database: database).load();
+  return settings.identity.isComplete ? settings.identity : null;
+}
+
+Future<ResolvedGitAuth?> _loadSavedGitAuth(
+  AppDatabase database,
+  String remoteUrl,
+) {
+  return GitSettingsStore(database: database).resolveAuthForRemoteUrl(remoteUrl);
+}
+
+bool _looksLikeSshRemoteUrl(String url) {
+  final trimmed = url.trim();
+  return trimmed.startsWith('ssh://') ||
+      RegExp(r'^[^@/\s]+@[^:/\s]+:.+$').hasMatch(trimmed);
 }

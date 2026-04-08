@@ -3,9 +3,13 @@ library tool_runtime;
 import 'dart:convert';
 import 'dart:io';
 
+import 'package:path/path.dart' as p;
+
 import 'database.dart';
 import 'git/exceptions/git_exceptions.dart';
 import 'git/git_service.dart';
+import 'git/git_settings_store.dart';
+import 'git/remote/remote_manager.dart';
 import 'json_coerce.dart';
 import 'models.dart';
 import 'tools/builtin_tool_descriptions.dart';
@@ -457,7 +461,7 @@ class ToolRegistry {
         description:
             'Run git operations on the workspace repository (pure-Dart, no CLI needed). '
             'Set `command` to one of: status, add, commit, log, diff, branch, '
-            'checkout, merge, init, show. '
+            'checkout, merge, init, show, clone, fetch, pull, push, rebase. '
             'Each command accepts additional parameters — see per-command docs in the schema.',
         parameters: {
           'type': 'object',
@@ -466,7 +470,7 @@ class ToolRegistry {
               'type': 'string',
               'description':
                   'Git sub-command: status | add | commit | log | diff | '
-                      'branch | checkout | merge | init | show',
+                      'branch | checkout | merge | init | show | clone | fetch | pull | push | rebase',
             },
             'paths': {
               'type': 'array',
@@ -512,7 +516,7 @@ class ToolRegistry {
             },
             'force': {
               'type': 'boolean',
-              'description': 'Force the operation when supported (currently branch delete)',
+              'description': 'Force the operation when supported (branch delete, push)',
             },
             'startPoint': {
               'type': 'string',
@@ -529,11 +533,31 @@ class ToolRegistry {
             },
             'branch': {
               'type': 'string',
-              'description': 'Branch to merge (for merge)',
+              'description': 'Branch to merge or fetch/pull from (for merge/fetch/pull)',
+            },
+            'remote': {
+              'type': 'string',
+              'description': 'Remote name (for fetch/pull/push, default origin)',
+            },
+            'url': {
+              'type': 'string',
+              'description': 'Remote URL or local repo path (for clone)',
+            },
+            'path': {
+              'type': 'string',
+              'description': 'Destination path for clone, relative to the workspace root',
+            },
+            'rebase': {
+              'type': 'boolean',
+              'description': 'Use rebase instead of merge when pulling',
+            },
+            'refspec': {
+              'type': 'string',
+              'description': 'Explicit push refspec, for example refs/heads/main:refs/heads/main',
             },
             'ref': {
               'type': 'string',
-              'description': 'Commit ref to show (for show, default HEAD)',
+              'description': 'Commit or branch ref to show/rebase onto (for show/rebase, default HEAD)',
             },
             'authorName': {
               'type': 'string',

@@ -303,83 +303,98 @@ class _MarkdownCodeBlock extends StatelessWidget {
         context.isDarkMode ? const Color(0xFF151821) : const Color(0xFFF8FAFC);
     final headerBackground =
         context.isDarkMode ? const Color(0xFF202431) : const Color(0xFFEFF3F8);
-    final inner = Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      mainAxisSize: MainAxisSize.min,
-      children: [
-        Container(
-          padding: const EdgeInsets.fromLTRB(10, 6, 6, 6),
-          decoration: BoxDecoration(
-            color: headerBackground,
-            border: Border(
-              bottom: BorderSide(color: context.oc.borderColor),
-            ),
-          ),
-          child: Row(
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        final fallbackWidth = MediaQuery.of(context).size.width;
+        final frameWidth =
+            constraints.maxWidth.isFinite ? constraints.maxWidth : fallbackWidth;
+        final inner = SizedBox(
+          width: frameWidth,
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            mainAxisSize: MainAxisSize.min,
             children: [
               Container(
-                padding:
-                    const EdgeInsets.symmetric(horizontal: 7, vertical: 3),
+                padding: const EdgeInsets.fromLTRB(10, 6, 6, 6),
                 decoration: BoxDecoration(
-                  color: context.isDarkMode
-                      ? const Color(0xFF2D3748)
-                      : const Color(0xFFE2E8F0),
-                  borderRadius: BorderRadius.circular(999),
+                  color: headerBackground,
+                  border: Border(
+                    bottom: BorderSide(color: context.oc.borderColor),
+                  ),
                 ),
-                child: Text(
-                  language.isEmpty ? 'text' : language,
-                  style: Theme.of(context).textTheme.labelSmall?.copyWith(
-                        fontWeight: FontWeight.w600,
-                        fontSize: 10.5,
-                        color: context.oc.foreground,
+                child: Row(
+                  children: [
+                    Container(
+                      padding:
+                          const EdgeInsets.symmetric(horizontal: 7, vertical: 3),
+                      decoration: BoxDecoration(
+                        color: context.isDarkMode
+                            ? const Color(0xFF2D3748)
+                            : const Color(0xFFE2E8F0),
+                        borderRadius: BorderRadius.circular(999),
                       ),
+                      child: Text(
+                        language.isEmpty ? 'text' : language,
+                        style: Theme.of(context).textTheme.labelSmall?.copyWith(
+                              fontWeight: FontWeight.w600,
+                              fontSize: 10.5,
+                              color: context.oc.foreground,
+                            ),
+                      ),
+                    ),
+                    const Spacer(),
+                    _CompactIconButton(
+                      tooltip: l(context, '复制代码', 'Copy code'),
+                      onPressed: () => _copyText(
+                        context,
+                        code,
+                        l(context, '代码已复制', 'Code copied'),
+                      ),
+                      icon: Icons.content_copy_outlined,
+                    ),
+                  ],
                 ),
               ),
-              const Spacer(),
-              _CompactIconButton(
-                tooltip: l(context, '复制代码', 'Copy code'),
-                onPressed: () => _copyText(
-                  context,
-                  code,
-                  l(context, '代码已复制', 'Code copied'),
+              SingleChildScrollView(
+                scrollDirection: Axis.horizontal,
+                child: ConstrainedBox(
+                  constraints: BoxConstraints(minWidth: frameWidth),
+                  child: ColoredBox(
+                    color: codeBackground,
+                    child: Padding(
+                      padding: const EdgeInsets.all(10),
+                      child: HighlightView(
+                        code,
+                        language: language,
+                        theme: _codeHighlightTheme(context),
+                        padding: EdgeInsets.zero,
+                        textStyle: const TextStyle(
+                          fontFamily: 'monospace',
+                          fontSize: 13,
+                          height: 1.45,
+                        ),
+                      ),
+                    ),
+                  ),
                 ),
-                icon: Icons.content_copy_outlined,
               ),
             ],
           ),
-        ),
-        SingleChildScrollView(
-          scrollDirection: Axis.horizontal,
-          child: Container(
-            width: double.infinity,
+        );
+        if (wrappedByMarkdownPre) {
+          return inner;
+        }
+        return Container(
+          width: frameWidth,
+          decoration: BoxDecoration(
             color: codeBackground,
-            padding: const EdgeInsets.all(10),
-            child: HighlightView(
-              code,
-              language: language,
-              theme: _codeHighlightTheme(context),
-              padding: EdgeInsets.zero,
-              textStyle: const TextStyle(
-                fontFamily: 'monospace',
-                fontSize: 13,
-                height: 1.45,
-              ),
-            ),
+            borderRadius: BorderRadius.circular(10),
+            border:
+                Border.fromBorderSide(BorderSide(color: context.oc.borderColor)),
           ),
-        ),
-      ],
-    );
-    if (wrappedByMarkdownPre) {
-      return SizedBox(width: double.infinity, child: inner);
-    }
-    return Container(
-      width: double.infinity,
-      decoration: BoxDecoration(
-        color: codeBackground,
-        borderRadius: BorderRadius.circular(10),
-        border: Border.fromBorderSide(BorderSide(color: context.oc.borderColor)),
-      ),
-      child: inner,
+          child: inner,
+        );
+      },
     );
   }
 }

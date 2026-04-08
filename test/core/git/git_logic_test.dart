@@ -307,5 +307,143 @@ void main() {
         isTrue,
       );
     });
+
+    test('clone copies a local repository into a new directory', () async {
+      final sourceDir = Directory('${tempDir.path}/source');
+      final targetDir = Directory('${tempDir.path}/clone');
+      await sourceDir.create(recursive: true);
+
+      final source = await GitService.init(sourceDir.path);
+      final readme = File('${sourceDir.path}/README.md');
+      await readme.writeAsString('# demo\n');
+      await source.add(['README.md']);
+      await source.commit('initial');
+
+      final result = await GitService.clone(
+        url: sourceDir.path,
+        path: targetDir.path,
+      );
+
+      expect(result.success, isTrue);
+      expect(result.defaultBranch, 'main');
+
+      final cloned = await GitService.open(targetDir.path);
+      expect(await cloned.currentBranch(), 'main');
+      expect(await File('${targetDir.path}/README.md').readAsString(), '# demo\n');
+    });
+
+    test('fetch updates remote tracking refs from a local remote', () async {
+      final sourceDir = Directory('${tempDir.path}/source');
+      final targetDir = Directory('${tempDir.path}/clone');
+      await sourceDir.create(recursive: true);
+
+      final source = await GitService.init(sourceDir.path);
+      final file = File('${sourceDir.path}/tracked.txt');
+      await file.writeAsString('v1\n');
+      await source.add(['tracked.txt']);
+      await source.commit('initial');
+
+      await GitService.clone(url: sourceDir.path, path: targetDir.path);
+      await file.writeAsString('v2\n');
+      await source.add(['tracked.txt']);
+      final updated = await source.commit('update from source');
+
+      final cloned = await GitService.open(targetDir.path);
+      final fetchResult = await cloned.fetch('origin');
+
+      expect(fetchResult.success, isTrue);
+      expect(fetchResult.updatedRefs, contains('refs/remotes/origin/main'));
+      expect(
+        await cloned.repository.resolveCommitish('refs/remotes/origin/main'),
+        updated.hash,
+      );
+    });
+
+    test('push updates a local remote branch', () async {
+      final sourceDir = Directory('${tempDir.path}/source');
+      final targetDir = Directory('${tempDir.path}/clone');
+      await sourceDir.create(recursive: true);
+
+      final source = await GitService.init(sourceDir.path);
+      final file = File('${sourceDir.path}/tracked.txt');
+      await file.writeAsString('v1\n');
+      await source.add(['tracked.txt']);
+      await source.commit('initial');
+
+      await GitService.clone(url: sourceDir.path, path: targetDir.path);
+      final cloned = await GitService.open(targetDir.path);
+      final clonedFile = File('${targetDir.path}/tracked.txt');
+      await clonedFile.writeAsString('v2\n');
+      await cloned.add(['tracked.txt']);
+      final localHead = await cloned.commit('clone update');
+
+      final pushResult = await cloned.push(
+        'origin',
+        refspec: 'refs/heads/main:refs/heads/sync',
+      );
+
+      expect(pushResult.success, isTrue);
+      expect(pushResult.pushedRefs, isNotEmpty);
+      expect(await source.repository.resolveCommitish('refs/heads/main'), isNot(localHead.hash));
+      expect(await source.repository.resolveCommitish('refs/heads/sync'), localHead.hash);
+    });
+
+    test('pull fast-forwards to fetched remote commits', () async {
+      final sourceDir = Directory('${tempDir.path}/source');
+      final targetDir = Directory('${tempDir.path}/clone');
+      await sourceDir.create(recursive: true);
+
+      final source = await GitService.init(sourceDir.path);
+      final file = File('${sourceDir.path}/tracked.txt');
+      await file.writeAsString('v1\n');
+      await source.add(['tracked.txt']);
+      await source.commit('initial');
+
+      await GitService.clone(url: sourceDir.path, path: targetDir.path);
+      await file.writeAsString('v2\n');
+      await source.add(['tracked.txt']);
+      final sourceHead = await source.commit('source update');
+
+      final cloned = await GitService.open(targetDir.path);
+      final pullResult = await cloned.pull('origin');
+
+      expect(pullResult.success, isTrue);
+      expect(await File('${targetDir.path}/tracked.txt').readAsString(), 'v2\n');
+      expect(await cloned.repository.getCurrentCommit(), sourceHead.hash);
+    });
+
+    test('pull with rebase replays local commits on top of remote', () async {
+      final sourceDir = Directory('${tempDir.path}/source');
+      final targetDir = Directory('${tempDir.path}/clone');
+      await sourceDir.create(recursive: true);
+
+      final source = await GitService.init(sourceDir.path);
+      final base = File('${sourceDir.path}/base.txt');
+      await base.writeAsString('base\n');
+      await source.add(['base.txt']);
+      await source.commit('initial');
+
+      await GitService.clone(url: sourceDir.path, path: targetDir.path);
+      final cloned = await GitService.open(targetDir.path);
+
+      final localOnly = File('${targetDir.path}/local.txt');
+      await localOnly.writeAsString('local change\n');
+      await cloned.add(['local.txt']);
+      await cloned.commit('local commit');
+
+      final remoteOnly = File('${sourceDir.path}/remote.txt');
+      await remoteOnly.writeAsString('remote change\n');
+      await source.add(['remote.txt']);
+      await source.commit('remote commit');
+
+      final pullResult = await cloned.pull('origin', rebase: true);
+      final history = await cloned.log(maxCount: 3);
+
+      expect(pullResult.success, isTrue);
+      expect(await File('${targetDir.path}/local.txt').exists(), isTrue);
+      expect(await File('${targetDir.path}/remote.txt').exists(), isTrue);
+      expect(history.first.shortMessage, 'local commit');
+      expect(history[1].shortMessage, 'remote commit');
+    });
   });
 }

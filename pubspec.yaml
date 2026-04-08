@@ -47,6 +47,9 @@ dependencies:
   webview_flutter: ^4.4.2
   flutter_markdown: ^0.6.15
   markdown: ^7.1.1
+  basic_utils: ^5.5.4
+  flutter_secure_storage: ^8.1.0
+  pointycastle: ^3.7.3
 
 dev_dependencies:
   flutter_test:

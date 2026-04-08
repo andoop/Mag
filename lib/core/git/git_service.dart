@@ -8,6 +8,7 @@ library;
 import 'dart:io';
 
 import 'core/repository.dart';
+import 'exceptions/git_exceptions.dart';
 import 'models/commit.dart';
 import 'models/git_author.dart';
 import 'models/tree.dart';
@@ -16,10 +17,20 @@ import 'operations/commit_operations.dart';
 import 'operations/status_operations.dart';
 import 'operations/log_operations.dart';
 import 'operations/checkout_operations.dart';
+import 'operations/clone_operations.dart';
+import 'operations/fetch_operations.dart';
 import 'operations/merge_operations.dart';
+import 'operations/pull_operations.dart';
+import 'operations/push_operations.dart';
+import 'operations/rebase_operations.dart';
+import 'remote/remote_manager.dart';
+import 'git_settings_store.dart';
+import 'network_git_bridge.dart';
 
 class GitService {
   GitService._(this._repo);
+
+  static const GitNetworkBridge _networkBridge = GitNetworkBridge();
 
   final GitRepository _repo;
 
@@ -41,6 +52,65 @@ class GitService {
   static Future<GitService> init(String path) async {
     final repo = await GitRepository.init(path);
     return GitService._(repo);
+  }
+
+  static Future<CloneResult> clone({
+    required String url,
+    required String path,
+    String remoteName = 'origin',
+    String? branch,
+    ResolvedGitAuth? auth,
+  }) {
+    if (_looksLikeNetworkRemote(url)) {
+      return _cloneOverNetwork(
+        url: url,
+        path: path,
+        remoteName: remoteName,
+        branch: branch,
+        auth: auth,
+      );
+    }
+    return CloneOperation().clone(
+      url: url,
+      path: path,
+      remoteName: remoteName,
+      branch: branch,
+    );
+  }
+
+  static Future<CloneResult> _cloneOverNetwork({
+    required String url,
+    required String path,
+    required String remoteName,
+    String? branch,
+    ResolvedGitAuth? auth,
+  }) async {
+    if (!_networkBridge.isSupported) {
+      return const CloneResult(
+        success: false,
+        error: 'Network git clone is currently supported on Android only.',
+      );
+    }
+    try {
+      final result = await _networkBridge.clone(
+        url: url,
+        path: path,
+        remoteName: remoteName,
+        branch: branch,
+        auth: auth,
+      );
+      return CloneResult(
+        success: (result['success'] as bool?) ?? true,
+        defaultBranch: result['defaultBranch'] as String?,
+        objectsReceived: (result['objectsReceived'] as int?) ?? 0,
+        error: result['error'] as String?,
+      );
+    } catch (error) {
+      return CloneResult(
+        success: false,
+        error: error.toString(),
+      );
+    }
   }
 
   /// Returns `true` if [path] is inside a git repository.
@@ -156,6 +226,168 @@ class GitService {
 
   Future<MergeResult> merge(String branch) =>
       MergeOperation(_repo).merge(branch);
+
+  Future<MergeResult> mergeRef(String ref, {String? targetLabel}) =>
+      MergeOperation(_repo).mergeRef(ref, targetLabel: targetLabel);
+
+  Future<FetchResult> fetch(
+    String remoteName, {
+    String? branch,
+    ResolvedGitAuth? auth,
+  }) async {
+    final remote = await RemoteManager(_repo.gitDir).getRemote(remoteName);
+    if (remote == null) {
+      throw GitException('Remote not found: $remoteName');
+    }
+    if (remote.isLocal) {
+      return FetchOperation(_repo).fetch(remoteName, branch: branch);
+    }
+    if (!_networkBridge.isSupported) {
+      return const FetchResult(
+        success: false,
+        updatedRefs: [],
+        objectsReceived: 0,
+        error: 'Network git fetch is currently supported on Android only.',
+      );
+    }
+    try {
+      final result = await _networkBridge.fetch(
+        workDir: workDir,
+        remoteName: remoteName,
+        branch: branch,
+        auth: auth,
+      );
+      return FetchResult(
+        success: (result['success'] as bool?) ?? true,
+        updatedRefs: ((result['updatedRefs'] as List?) ?? const [])
+            .map((item) => item.toString())
+            .toList(),
+        objectsReceived: (result['objectsReceived'] as int?) ?? 0,
+        error: result['error'] as String?,
+      );
+    } catch (error) {
+      return FetchResult(
+        success: false,
+        updatedRefs: const [],
+        objectsReceived: 0,
+        error: error.toString(),
+      );
+    }
+  }
+
+  Future<PullResult> pull(
+    String remoteName, {
+    String? branch,
+    bool rebase = false,
+    ResolvedGitAuth? auth,
+  }) async {
+    final remote = await RemoteManager(_repo.gitDir).getRemote(remoteName);
+    if (remote == null) {
+      throw GitException('Remote not found: $remoteName');
+    }
+    if (remote.isLocal) {
+      return PullOperation(_repo).pull(
+        remoteName,
+        branch: branch,
+        rebase: rebase,
+      );
+    }
+    if (!_networkBridge.isSupported) {
+      return const PullResult(
+        success: false,
+        fetchResult: FetchResult(
+          success: false,
+          updatedRefs: [],
+          objectsReceived: 0,
+          error: 'Network git pull is currently supported on Android only.',
+        ),
+        error: 'Network git pull is currently supported on Android only.',
+      );
+    }
+    try {
+      final result = await _networkBridge.pull(
+        workDir: workDir,
+        remoteName: remoteName,
+        branch: branch,
+        rebase: rebase,
+        auth: auth,
+      );
+      final fetchResult = FetchResult(
+        success: (result['fetchSuccess'] as bool?) ?? ((result['success'] as bool?) ?? true),
+        updatedRefs: ((result['updatedRefs'] as List?) ?? const [])
+            .map((item) => item.toString())
+            .toList(),
+        objectsReceived: (result['objectsReceived'] as int?) ?? 0,
+        error: result['fetchError'] as String?,
+      );
+      return PullResult(
+        success: (result['success'] as bool?) ?? true,
+        fetchResult: fetchResult,
+        error: result['error'] as String?,
+      );
+    } catch (error) {
+      return PullResult(
+        success: false,
+        fetchResult: const FetchResult(
+          success: false,
+          updatedRefs: [],
+          objectsReceived: 0,
+        ),
+        error: error.toString(),
+      );
+    }
+  }
+
+  Future<PushResult> push(
+    String remoteName, {
+    String? refspec,
+    bool force = false,
+    ResolvedGitAuth? auth,
+  }) async {
+    final remote = await RemoteManager(_repo.gitDir).getRemote(remoteName);
+    if (remote == null) {
+      throw GitException('Remote not found: $remoteName');
+    }
+    if (remote.isLocal) {
+      return PushOperation(_repo).push(
+        remoteName,
+        refspec: refspec,
+        force: force,
+      );
+    }
+    if (!_networkBridge.isSupported) {
+      return const PushResult(
+        success: false,
+        pushedRefs: [],
+        error: 'Network git push is currently supported on Android only.',
+      );
+    }
+    try {
+      final result = await _networkBridge.push(
+        workDir: workDir,
+        remoteName: remoteName,
+        refspec: refspec,
+        force: force,
+        auth: auth,
+      );
+      return PushResult(
+        success: (result['success'] as bool?) ?? true,
+        pushedRefs: ((result['pushedRefs'] as List?) ?? const [])
+            .map((item) => item.toString())
+            .toList(),
+        error: result['error'] as String?,
+      );
+    } catch (error) {
+      return PushResult(
+        success: false,
+        pushedRefs: const [],
+        error: error.toString(),
+      );
+    }
+  }
+
+  Future<RebaseResult> rebase(String targetRef) =>
+      RebaseOperation(_repo).rebase(targetRef);
 
   // ---------------------------------------------------------------------------
   // Diff  (working tree vs HEAD)
@@ -292,6 +524,14 @@ class GitService {
         out[p] = entry.hash;
       }
     }
+  }
+
+  static bool _looksLikeNetworkRemote(String url) {
+    final trimmed = url.trim();
+    return trimmed.startsWith('ssh://') ||
+        trimmed.startsWith('http://') ||
+        trimmed.startsWith('https://') ||
+        RegExp(r'^[^@/\s]+@[^:/\s]+:.+$').hasMatch(trimmed);
   }
 
   List<StatusEntry> _filterEntries(List<StatusEntry> entries, Set<String>? filter) {

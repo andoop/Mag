@@ -84,6 +84,20 @@ class ObjectDatabase {
     return hash;
   }
 
+  /// Write a fully-formed raw object payload including its git header.
+  Future<String> writeRawObject(Uint8List raw) async {
+    final hash = computeHash(raw);
+    if (await hasObject(hash)) {
+      return hash;
+    }
+    final compressed = _compress(raw);
+    final path = _getLooseObjectPath(hash);
+    final file = File(path);
+    await file.parent.create(recursive: true);
+    await file.writeAsBytes(compressed);
+    return hash;
+  }
+
   /// Compute the blob hash without persisting a new object.
   String hashBlob(Uint8List data) => computeHash(buildBlobContent(data));
 

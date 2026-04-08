@@ -50,6 +50,7 @@ part 'home/pickers/oauth_sheet.dart';
 part 'home/pickers/provider_picker.dart';
 part 'home/pickers/model_picker.dart';
 part 'home/pickers/agent_picker.dart';
+part 'home/pickers/settings_sheet.dart';
 part 'home/pickers/presets.dart';
 
 class HomePage extends StatefulWidget {

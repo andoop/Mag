@@ -51,6 +51,13 @@ android {
         targetSdkVersion flutter.targetSdkVersion
         versionCode flutterVersionCode.toInteger()
         versionName flutterVersionName
+        multiDexEnabled true
+    }
+
+    packagingOptions {
+        resources {
+            excludes += ['plugin.properties']
+        }
     }
 
     buildTypes {
@@ -68,5 +75,8 @@ flutter {
 
 dependencies {
     implementation "org.jetbrains.kotlin:kotlin-stdlib-jdk7:$kotlin_version"
+    implementation "androidx.multidex:multidex:2.0.1"
     implementation "androidx.documentfile:documentfile:1.0.1"
+    implementation "org.eclipse.jgit:org.eclipse.jgit:5.13.1.202206130422-r"
+    implementation "org.eclipse.jgit:org.eclipse.jgit.ssh.jsch:5.13.1.202206130422-r"
 }
