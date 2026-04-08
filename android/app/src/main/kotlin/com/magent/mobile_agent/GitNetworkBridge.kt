@@ -13,10 +13,12 @@ import java.util.concurrent.ExecutorService
 import org.apache.sshd.common.NamedResource
 import org.apache.sshd.common.util.security.SecurityUtils
 import org.eclipse.jgit.api.CloneCommand
+import org.eclipse.jgit.api.CommitCommand
 import org.eclipse.jgit.api.FetchCommand
 import org.eclipse.jgit.api.Git
 import org.eclipse.jgit.api.PullCommand
 import org.eclipse.jgit.api.PushCommand
+import org.eclipse.jgit.lib.PersonIdent
 import org.eclipse.jgit.transport.CredentialsProvider
 import org.eclipse.jgit.api.TransportCommand
 import org.eclipse.jgit.transport.sshd.ServerKeyDatabase
@@ -26,12 +28,14 @@ import org.eclipse.jgit.transport.PushResult
 import org.eclipse.jgit.transport.RefSpec
 import org.eclipse.jgit.transport.SshTransport
 import org.eclipse.jgit.transport.UsernamePasswordCredentialsProvider
-import org.eclipse.jgit.util.FS
 
 class GitNetworkBridge(
     private val activity: FlutterActivity,
     private val executor: ExecutorService,
 ) {
+    @Volatile
+    private var jGitEnvironmentInitialized = false
+
     fun attach(flutterEngine: FlutterEngine) {
         MethodChannel(flutterEngine.dartExecutor.binaryMessenger, "mobile_agent/git_network")
             .setMethodCallHandler(::handleMethodCall)
@@ -40,6 +44,8 @@ class GitNetworkBridge(
     private fun handleMethodCall(call: MethodCall, result: MethodChannel.Result) {
         when (call.method) {
             "cloneRepository" -> runGitCall(result) { handleCloneRepository(call) }
+            "commitRepository" -> runGitCall(result) { handleCommitRepository(call, amend = false) }
+            "amendCommitRepository" -> runGitCall(result) { handleCommitRepository(call, amend = true) }
             "fetchRepository" -> runGitCall(result) { handleFetchRepository(call) }
             "pullRepository" -> runGitCall(result) { handlePullRepository(call) }
             "pushRepository" -> runGitCall(result) { handlePushRepository(call) }
@@ -53,6 +59,7 @@ class GitNetworkBridge(
     ) {
         executor.execute {
             try {
+                ensureJGitEnvironment()
                 val value = action()
                 activity.runOnUiThread {
                     result.success(value)
@@ -62,6 +69,22 @@ class GitNetworkBridge(
                     result.error("git_network_error", describeError(error), null)
                 }
             }
+        }
+    }
+
+    private fun ensureJGitEnvironment() {
+        if (jGitEnvironmentInitialized) {
+            return
+        }
+        synchronized(this) {
+            if (jGitEnvironmentInitialized) {
+                return
+            }
+            val homeDir = File(activity.filesDir, "jgit-home").apply { mkdirs() }
+            File(homeDir, ".ssh").apply { mkdirs() }
+            System.setProperty("user.home", homeDir.absolutePath)
+            System.setProperty("java.io.tmpdir", activity.cacheDir.absolutePath)
+            jGitEnvironmentInitialized = true
         }
     }
 
@@ -125,6 +148,40 @@ class GitNetworkBridge(
                 "success" to true,
                 "updatedRefs" to updatedRefs,
                 "objectsReceived" to 0,
+            )
+        }
+    }
+
+    private fun handleCommitRepository(
+        call: MethodCall,
+        amend: Boolean,
+    ): Map<String, Any?> {
+        val workDir = requireString(call, "workDir")
+        val message = requireString(call, "message")
+        val authorName = call.argument<String>("authorName")?.trim().orEmpty().ifEmpty { null }
+        val authorEmail = call.argument<String>("authorEmail")?.trim().orEmpty().ifEmpty { null }
+        Git.open(File(workDir)).use { git ->
+            val command = git.commit()
+                .setMessage(message)
+                .setAmend(amend)
+            configureCommitIdentity(command, authorName, authorEmail)
+            val commit = command.call()
+            val author = commit.authorIdent
+            val committer = commit.committerIdent
+            return mapOf(
+                "success" to true,
+                "hash" to commit.name,
+                "tree" to commit.tree.name,
+                "parents" to commit.parents.map { it.name },
+                "message" to commit.fullMessage,
+                "authorName" to author.name,
+                "authorEmail" to author.emailAddress,
+                "authorTimestampMs" to author.`when`.time,
+                "authorTimezone" to formatTimezoneOffset(author.timeZoneOffset),
+                "committerName" to committer.name,
+                "committerEmail" to committer.emailAddress,
+                "committerTimestampMs" to committer.`when`.time,
+                "committerTimezone" to formatTimezoneOffset(committer.timeZoneOffset),
             )
         }
     }
@@ -235,6 +292,19 @@ class GitNetworkBridge(
                 }
             }
         }
+    }
+
+    private fun configureCommitIdentity(
+        command: CommitCommand,
+        authorName: String?,
+        authorEmail: String?,
+    ) {
+        if (authorName.isNullOrBlank() || authorEmail.isNullOrBlank()) {
+            return
+        }
+        val identity = PersonIdent(authorName, authorEmail)
+        command.setAuthor(identity)
+        command.setCommitter(identity)
     }
 
     private fun createSshSessionFactory(auth: GitAuth): SshdSessionFactory {
@@ -363,6 +433,14 @@ class GitNetworkBridge(
             return "$message | SSH authentication failed. Check that the remote username is correct and the generated Ed25519 public key has been added to the git server."
         }
         return message
+    }
+
+    private fun formatTimezoneOffset(offsetMinutes: Int): String {
+        val sign = if (offsetMinutes < 0) "-" else "+"
+        val absolute = kotlin.math.abs(offsetMinutes)
+        val hours = absolute / 60
+        val minutes = absolute % 60
+        return "%s%02d%02d".format(sign, hours, minutes)
     }
 }
 

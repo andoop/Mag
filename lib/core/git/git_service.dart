@@ -145,10 +145,18 @@ class GitService {
     String message, {
     String? authorName,
     String? authorEmail,
-  }) {
+  }) async {
     final author = (authorName != null && authorEmail != null)
         ? GitAuthor(name: authorName, email: authorEmail)
         : null;
+    if (_networkBridge.isSupported) {
+      return _commitOverNativeBridge(
+        message: message,
+        authorName: authorName,
+        authorEmail: authorEmail,
+        amend: false,
+      );
+    }
     return CommitOperation(_repo).commit(message, author: author);
   }
 
@@ -156,11 +164,71 @@ class GitService {
     String message, {
     String? authorName,
     String? authorEmail,
-  }) {
+  }) async {
     final author = (authorName != null && authorEmail != null)
         ? GitAuthor(name: authorName, email: authorEmail)
         : null;
+    if (_networkBridge.isSupported) {
+      return _commitOverNativeBridge(
+        message: message,
+        authorName: authorName,
+        authorEmail: authorEmail,
+        amend: true,
+      );
+    }
     return CommitOperation(_repo).amend(message, author: author);
+  }
+
+  Future<GitCommit> _commitOverNativeBridge({
+    required String message,
+    required bool amend,
+    String? authorName,
+    String? authorEmail,
+  }) async {
+    try {
+      final result = amend
+          ? await _networkBridge.amendCommit(
+              workDir: workDir,
+              message: message,
+              authorName: authorName,
+              authorEmail: authorEmail,
+            )
+          : await _networkBridge.commit(
+              workDir: workDir,
+              message: message,
+              authorName: authorName,
+              authorEmail: authorEmail,
+            );
+      if ((result['success'] as bool?) == false) {
+        throw GitException(result['error'] as String? ?? 'Commit failed.');
+      }
+      return GitCommit(
+        hash: result['hash'] as String? ?? '',
+        tree: result['tree'] as String? ?? '',
+        parents: ((result['parents'] as List?) ?? const [])
+            .map((item) => item.toString())
+            .toList(),
+        author: GitAuthor(
+          name: result['authorName'] as String? ?? (authorName ?? 'Unknown'),
+          email: result['authorEmail'] as String? ?? (authorEmail ?? 'unknown@example.com'),
+          timestamp: DateTime.fromMillisecondsSinceEpoch(
+            (result['authorTimestampMs'] as int?) ?? DateTime.now().millisecondsSinceEpoch,
+          ),
+          timezone: result['authorTimezone'] as String?,
+        ),
+        committer: GitAuthor(
+          name: result['committerName'] as String? ?? (authorName ?? 'Unknown'),
+          email: result['committerEmail'] as String? ?? (authorEmail ?? 'unknown@example.com'),
+          timestamp: DateTime.fromMillisecondsSinceEpoch(
+            (result['committerTimestampMs'] as int?) ?? DateTime.now().millisecondsSinceEpoch,
+          ),
+          timezone: result['committerTimezone'] as String?,
+        ),
+        message: result['message'] as String? ?? message,
+      );
+    } catch (error) {
+      throw GitException(error.toString());
+    }
   }
 
   // ---------------------------------------------------------------------------

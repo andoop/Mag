@@ -29,6 +29,34 @@ class GitNetworkBridge {
     });
   }
 
+  Future<Map<String, dynamic>> commit({
+    required String workDir,
+    required String message,
+    String? authorName,
+    String? authorEmail,
+  }) {
+    return _invoke('commitRepository', {
+      'workDir': workDir,
+      'message': message,
+      'authorName': authorName,
+      'authorEmail': authorEmail,
+    });
+  }
+
+  Future<Map<String, dynamic>> amendCommit({
+    required String workDir,
+    required String message,
+    String? authorName,
+    String? authorEmail,
+  }) {
+    return _invoke('amendCommitRepository', {
+      'workDir': workDir,
+      'message': message,
+      'authorName': authorName,
+      'authorEmail': authorEmail,
+    });
+  }
+
   Future<Map<String, dynamic>> fetch({
     required String workDir,
     required String remoteName,
