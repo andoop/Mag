@@ -20,7 +20,6 @@ import '../store/app_controller.dart';
 import 'i18n.dart';
 import 'oc_theme.dart';
 
-
 part 'home/constants.dart';
 part 'home/timeline.dart';
 part 'home/composer.dart';
@@ -80,6 +79,7 @@ class _HomePageState extends State<HomePage> {
   final ValueNotifier<bool> _stickToBottom = ValueNotifier<bool>(true);
   final ValueNotifier<int> _messageVersion = ValueNotifier<int>(0);
   bool _isAutoScrolling = false;
+  bool _pendingTimelineSync = false;
   String _lastTimelineAnchor = '';
   String _historySessionId = '';
   int _historyStartIndex = 0;
@@ -89,6 +89,7 @@ class _HomePageState extends State<HomePage> {
   int _lastTimelineSyncAt = 0;
   String _lastStateRenderKey = '';
   String _lastStructuralKey = '';
+
   /// 会话切换时必须重建时间线；不能仅依赖 [_stateRenderKey]，否则新建/切换会话后可能与旧 key 碰撞而不调用 setState，界面仍显示旧消息。
   String? _lastObservedSessionId;
 
@@ -323,7 +324,8 @@ class _HomePageState extends State<HomePage> {
     required String apiKey,
     String? overrideBaseUrl,
   }) async {
-    final current = widget.controller.state.modelConfig ?? ModelConfig.defaults();
+    final current =
+        widget.controller.state.modelConfig ?? ModelConfig.defaults();
     final baseUrl = (overrideBaseUrl ?? preset.baseUrl).trim();
     final models = await _discoverModelsForProvider(
       providerId: preset.id,
@@ -333,7 +335,9 @@ class _HomePageState extends State<HomePage> {
     );
     final selectedModel = models.isNotEmpty
         ? models.first
-        : (current.provider == preset.id ? current.model : ModelConfig.defaults().model);
+        : (current.provider == preset.id
+            ? current.model
+            : ModelConfig.defaults().model);
     await widget.controller.connectProvider(
       ProviderConnection(
         id: preset.id,
@@ -369,8 +373,9 @@ class _HomePageState extends State<HomePage> {
         models: filteredModels,
         custom: true,
       ),
-      currentModelId:
-          filteredModels.isNotEmpty ? filteredModels.first : ModelConfig.defaults().model,
+      currentModelId: filteredModels.isNotEmpty
+          ? filteredModels.first
+          : ModelConfig.defaults().model,
       select: true,
     );
   }
@@ -390,17 +395,22 @@ class _HomePageState extends State<HomePage> {
   }) {
     final source = config != null
         ? _connectedModelChoices(config, state: state)
-        : _providerInfoById(providerId, state: state)?.models.values
+        : _providerInfoById(providerId, state: state)
+                ?.models
+                .values
                 .map(
-                  (item) => _modelChoiceFromProviderModel(
+                  (item) =>
+                      _modelChoiceFromProviderModel(
                         providerId: providerId,
                         id: item.id,
                         info: item,
-                        latestIds: _providerInfoById(providerId, state: state) != null
-                            ? _latestModelIdsForProvider(
-                                _providerInfoById(providerId, state: state)!,
-                              )
-                            : const <String>{},
+                        latestIds:
+                            _providerInfoById(providerId, state: state) != null
+                                ? _latestModelIdsForProvider(
+                                    _providerInfoById(providerId,
+                                        state: state)!,
+                                  )
+                                : const <String>{},
                       ) ??
                       _ModelChoice(
                         providerId: providerId,
@@ -484,36 +494,56 @@ class _HomePageState extends State<HomePage> {
     await _openModelPicker(context);
   }
 
+  Widget _buildAppBarAction({
+    required String tooltip,
+    required IconData icon,
+    required VoidCallback? onPressed,
+  }) {
+    return IconButton(
+      tooltip: tooltip,
+      onPressed: onPressed,
+      visualDensity: VisualDensity.compact,
+      padding: const EdgeInsets.all(7),
+      constraints: const BoxConstraints(minWidth: 34, minHeight: 34),
+      splashRadius: 18,
+      iconSize: 20,
+      style: IconButton.styleFrom(
+        tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+      ),
+      icon: Icon(icon),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     final state = widget.controller.state;
     final mediaQuery = MediaQuery.of(context);
     final isKeyboardOpen = mediaQuery.viewInsets.bottom > 0;
     final modelConfig = state.modelConfig ?? ModelConfig.defaults();
-    final currentModelChoice =
-        _findModelChoice(
+    final currentModelChoice = _findModelChoice(
       modelConfig.provider,
       modelConfig.model,
       config: modelConfig,
       state: state,
     );
-    final showModelFreeTag = currentModelChoice != null &&
-        _modelChoiceIsFree(currentModelChoice);
-    final showModelLatestTag = currentModelChoice != null &&
-        _modelChoiceIsLatest(currentModelChoice);
+    final showModelFreeTag =
+        currentModelChoice != null && _modelChoiceIsFree(currentModelChoice);
+    final showModelLatestTag =
+        currentModelChoice != null && _modelChoiceIsLatest(currentModelChoice);
     return Scaffold(
       key: _scaffoldKey,
       drawer: _buildSessionDrawer(context, state),
       appBar: AppBar(
-        leadingWidth: 40,
+        leadingWidth: 36,
         leading: IconButton(
           tooltip: l(context, '项目', 'Projects'),
-          padding: EdgeInsets.zero,
-          constraints: const BoxConstraints(minWidth: 40, minHeight: 40),
+          visualDensity: VisualDensity.compact,
+          padding: const EdgeInsets.all(6),
+          constraints: const BoxConstraints(minWidth: 34, minHeight: 34),
           onPressed: () => widget.controller.leaveProject(),
-          icon: const Icon(Icons.arrow_back_rounded, size: 22),
+          icon: const Icon(Icons.arrow_back_rounded, size: 21),
         ),
-        titleSpacing: 4,
+        titleSpacing: 2,
         title: _SessionAppBarTitle(
           title: state.session?.title.isNotEmpty == true
               ? state.session!.title
@@ -524,16 +554,14 @@ class _HomePageState extends State<HomePage> {
           running: state.isBusy,
         ),
         actions: [
-          IconButton(
+          _buildAppBarAction(
             tooltip: l(context, '切换主题', 'Toggle theme'),
             onPressed: () => widget.controller.toggleThemeMode(),
-            icon: Icon(
-              context.isDarkMode
-                  ? Icons.light_mode_outlined
-                  : Icons.dark_mode_outlined,
-            ),
+            icon: context.isDarkMode
+                ? Icons.light_mode_outlined
+                : Icons.dark_mode_outlined,
           ),
-          IconButton(
+          _buildAppBarAction(
             tooltip: l(context, '工作区文件', 'Workspace files'),
             onPressed: state.workspace == null
                 ? null
@@ -542,18 +570,19 @@ class _HomePageState extends State<HomePage> {
                       workspace: state.workspace!,
                       controller: widget.controller,
                     ),
-            icon: const Icon(Icons.folder_open_outlined),
+            icon: Icons.folder_open_outlined,
           ),
-          IconButton(
+          _buildAppBarAction(
             tooltip: l(context, '设置', 'Settings'),
             onPressed: () => _openSettings(context, state.modelConfig),
-            icon: const Icon(Icons.settings_outlined),
+            icon: Icons.settings_outlined,
           ),
-          IconButton(
+          _buildAppBarAction(
             tooltip: l(context, '会话记录', 'Sessions'),
             onPressed: () => _scaffoldKey.currentState?.openDrawer(),
-            icon: const Icon(Icons.chat_bubble_outline_rounded),
+            icon: Icons.chat_bubble_outline_rounded,
           ),
+          const SizedBox(width: 2),
         ],
       ),
       body: SafeArea(
@@ -658,7 +687,6 @@ class _HomePageState extends State<HomePage> {
     );
   }
 
-
   void _handleTimelineScroll() {
     if (!_timelineController.hasClients || _isAutoScrolling) return;
     final distance = _timelineController.position.maxScrollExtent -
@@ -701,7 +729,10 @@ class _HomePageState extends State<HomePage> {
     final anchor = _timelineAnchor(state);
     if (anchor == _lastTimelineAnchor) return;
     _lastTimelineAnchor = anchor;
-    if (_isAutoScrolling) return;
+    if (_isAutoScrolling) {
+      _pendingTimelineSync = true;
+      return;
+    }
     final now = DateTime.now().millisecondsSinceEpoch;
     final canAnimate = !state.isBusy;
     if (!canAnimate && now - _lastTimelineSyncAt < 64) {
@@ -709,7 +740,12 @@ class _HomePageState extends State<HomePage> {
     }
     _lastTimelineSyncAt = now;
     WidgetsBinding.instance.addPostFrameCallback((_) {
-      if (!mounted || !_stickToBottom.value || _isAutoScrolling) return;
+      if (!mounted || !_stickToBottom.value) return;
+      if (_isAutoScrolling) {
+        _pendingTimelineSync = true;
+        return;
+      }
+      _pendingTimelineSync = false;
       _scrollTimelineToBottom(animate: canAnimate);
     });
   }
@@ -719,23 +755,42 @@ class _HomePageState extends State<HomePage> {
     final offset = _timelineController.position.maxScrollExtent;
     if (animate) {
       _isAutoScrolling = true;
+      _pendingTimelineSync = false;
       _timelineController
           .animateTo(
-            offset,
-            duration: const Duration(milliseconds: 220),
-            curve: Curves.easeOutCubic,
-          )
+        offset,
+        duration: const Duration(milliseconds: 220),
+        curve: Curves.easeOutCubic,
+      )
           .whenComplete(() {
         _isAutoScrolling = false;
         if (_timelineController.hasClients) {
           final dist = _timelineController.position.maxScrollExtent -
               _timelineController.offset;
+          final shouldPin = _stickToBottom.value;
+          if ((shouldPin && dist > 1) || _pendingTimelineSync) {
+            _pendingTimelineSync = false;
+            WidgetsBinding.instance.addPostFrameCallback((_) {
+              if (!mounted ||
+                  !_timelineController.hasClients ||
+                  !_stickToBottom.value) {
+                return;
+              }
+              _scrollTimelineToBottom(animate: false);
+            });
+            return;
+          }
           _stickToBottom.value = dist < 24;
         }
       });
       return;
     }
     _timelineController.jumpTo(offset);
+    if (_timelineController.hasClients) {
+      final dist = _timelineController.position.maxScrollExtent -
+          _timelineController.offset;
+      _stickToBottom.value = dist < 24;
+    }
   }
 
   String _timelineAnchor(AppState state) {
@@ -815,5 +870,4 @@ class _HomePageState extends State<HomePage> {
         return '${part.type.name}:${part.createdAt}';
     }
   }
-
 }

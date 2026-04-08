@@ -24,12 +24,14 @@ class _AppSettingsSheetState extends State<_AppSettingsSheet> {
   void initState() {
     super.initState();
     final connection = widget.modelConfig.currentConnection;
-    final gitSettings = widget.controller.state.gitSettings ?? GitSettings.defaults();
+    final gitSettings =
+        widget.controller.state.gitSettings ?? GitSettings.defaults();
     _baseUrlController = TextEditingController(text: connection?.baseUrl ?? '');
     _apiKeyController = TextEditingController(text: connection?.apiKey ?? '');
     _modelController = TextEditingController(text: widget.modelConfig.model);
     _gitNameController = TextEditingController(text: gitSettings.identity.name);
-    _gitEmailController = TextEditingController(text: gitSettings.identity.email);
+    _gitEmailController =
+        TextEditingController(text: gitSettings.identity.email);
   }
 
   @override
@@ -56,8 +58,9 @@ class _AppSettingsSheetState extends State<_AppSettingsSheet> {
             ? connection.models
             : [_modelController.text.trim(), ...connection.models],
       ),
-      currentModelId:
-          _modelController.text.trim().isEmpty ? current.model : _modelController.text.trim(),
+      currentModelId: _modelController.text.trim().isEmpty
+          ? current.model
+          : _modelController.text.trim(),
       select: true,
     );
   }
@@ -75,7 +78,8 @@ class _AppSettingsSheetState extends State<_AppSettingsSheet> {
 
   Future<void> _showGenerateKeyDialog() async {
     final nameController = TextEditingController();
-    final commentController = TextEditingController(text: _gitEmailController.text.trim());
+    final commentController =
+        TextEditingController(text: _gitEmailController.text.trim());
     try {
       final result = await showDialog<bool>(
         context: context,
@@ -101,7 +105,8 @@ class _AppSettingsSheetState extends State<_AppSettingsSheet> {
                   controller: nameController,
                   decoration: InputDecoration(
                     labelText: l(context, '名称', 'Name'),
-                    hintText: l(context, '例如：GitHub Key', 'Example: GitHub Key'),
+                    hintText:
+                        l(context, '例如：GitHub Key', 'Example: GitHub Key'),
                   ),
                 ),
                 const SizedBox(height: 12),
@@ -251,11 +256,13 @@ class _AppSettingsSheetState extends State<_AppSettingsSheet> {
           actions: [
             TextButton(
               onPressed: () async {
-                await Clipboard.setData(ClipboardData(text: key.publicKeyOpenSsh));
+                await Clipboard.setData(
+                    ClipboardData(text: key.publicKeyOpenSsh));
                 if (!mounted) return;
                 Navigator.of(context).pop();
                 ScaffoldMessenger.of(this.context).showSnackBar(
-                  SnackBar(content: Text(l(context, '公钥已复制', 'Public key copied'))),
+                  SnackBar(
+                      content: Text(l(context, '公钥已复制', 'Public key copied'))),
                 );
               },
               child: Text(l(context, '复制', 'Copy')),
@@ -303,7 +310,8 @@ class _AppSettingsSheetState extends State<_AppSettingsSheet> {
   }
 
   Future<void> _showRemoteCredentialDialog(String type) async {
-    final gitSettings = widget.controller.state.gitSettings ?? GitSettings.defaults();
+    final gitSettings =
+        widget.controller.state.gitSettings ?? GitSettings.defaults();
     final result = await showDialog<_RemoteCredentialDraft>(
       context: context,
       builder: (context) => _RemoteCredentialDialog(
@@ -379,7 +387,11 @@ class _AppSettingsSheetState extends State<_AppSettingsSheet> {
         final oc = context.oc;
         final current = widget.modelConfig;
         final connection = current.currentConnection;
-        final gitSettings = widget.controller.state.gitSettings ?? GitSettings.defaults();
+        final gitSettings =
+            widget.controller.state.gitSettings ?? GitSettings.defaults();
+        final themeLabel = context.isDarkMode
+            ? l(context, '夜间模式', 'Dark mode')
+            : l(context, '日间模式', 'Light mode');
         return SafeArea(
           child: Padding(
             padding: EdgeInsets.fromLTRB(
@@ -403,7 +415,7 @@ class _AppSettingsSheetState extends State<_AppSettingsSheet> {
               ),
               child: SingleChildScrollView(
                 child: Padding(
-                  padding: const EdgeInsets.fromLTRB(16, 0, 16, 16),
+                  padding: const EdgeInsets.fromLTRB(14, 0, 14, 14),
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.stretch,
                     children: [
@@ -427,313 +439,474 @@ class _AppSettingsSheetState extends State<_AppSettingsSheet> {
                           ),
                         ],
                       ),
-                      if (connection != null) ...[
-                        _SettingsSectionTitle(
-                          title: l(context, '模型连接', 'Model connection'),
+                      const SizedBox(height: 6),
+                      Text(
+                        l(
+                          context,
+                          '模型连接、Git 身份和远程认证集中在这里管理。',
+                          'Manage model connection, Git identity, and remote credentials here.',
                         ),
-                        TextField(
-                          controller: _baseUrlController,
-                          decoration: InputDecoration(
-                            labelText: l(context, 'Base URL', 'Base URL'),
-                          ),
-                        ),
-                        const SizedBox(height: 12),
-                        TextField(
-                          controller: _apiKeyController,
-                          obscureText: true,
-                          decoration: InputDecoration(
-                            labelText: l(context, 'API Key', 'API Key'),
-                          ),
-                        ),
-                        const SizedBox(height: 12),
-                        TextField(
-                          controller: _modelController,
-                          decoration: InputDecoration(
-                            labelText: l(context, '模型', 'Model'),
-                          ),
-                        ),
-                        const SizedBox(height: 12),
-                        Align(
-                          alignment: Alignment.centerRight,
-                          child: FilledButton(
-                            onPressed: _saveProviderSettings,
-                            child: Text(l(context, '保存模型设置', 'Save model settings')),
-                          ),
-                        ),
-                        const SizedBox(height: 18),
-                      ],
-                      _SettingsSectionTitle(
-                        title: l(context, 'Git 身份', 'Git identity'),
-                      ),
-                      TextField(
-                        controller: _gitNameController,
-                        decoration: InputDecoration(
-                          labelText: l(context, 'Git 用户名', 'Git user name'),
+                        style: TextStyle(
+                          fontSize: 12.5,
+                          height: 1.35,
+                          color: oc.muted,
                         ),
                       ),
                       const SizedBox(height: 12),
-                      TextField(
-                        controller: _gitEmailController,
-                        decoration: InputDecoration(
-                          labelText: l(context, 'Git 邮箱', 'Git email'),
-                        ),
-                      ),
-                      const SizedBox(height: 12),
-                      Align(
-                        alignment: Alignment.centerRight,
-                        child: FilledButton(
-                          onPressed: _saveGitIdentity,
-                          child: Text(l(context, '保存 Git 身份', 'Save Git identity')),
-                        ),
-                      ),
-                      const SizedBox(height: 18),
-                      Row(
+                      Wrap(
+                        spacing: 8,
+                        runSpacing: 8,
                         children: [
-                          Expanded(
-                            child: _SettingsSectionTitle(
-                              title: l(context, 'SSH Keys', 'SSH keys'),
+                          _SettingsMetaChip(
+                            icon: context.isDarkMode
+                                ? Icons.dark_mode_outlined
+                                : Icons.light_mode_outlined,
+                            label: themeLabel,
+                          ),
+                          _SettingsMetaChip(
+                            icon: Icons.tune_rounded,
+                            label: current.model,
+                          ),
+                          if (connection != null)
+                            _SettingsMetaChip(
+                              icon: Icons.link_rounded,
+                              label: connection.name,
                             ),
-                          ),
-                          TextButton.icon(
-                            onPressed: _showImportKeyDialog,
-                            icon: const Icon(Icons.file_upload_outlined, size: 18),
-                            label: Text(l(context, '导入', 'Import')),
-                          ),
-                          TextButton.icon(
-                            onPressed: _showGenerateKeyDialog,
-                            icon: const Icon(Icons.vpn_key_outlined, size: 18),
-                            label: Text(l(context, '生成', 'Generate')),
-                          ),
                         ],
                       ),
-                      if (gitSettings.sshKeys.isEmpty)
-                        Padding(
-                          padding: const EdgeInsets.only(top: 4),
-                          child: Text(
-                            l(
-                              context,
-                              '还没有 SSH Key。当前仅支持 Ed25519 OpenSSH，可直接生成或导入现有私钥。',
-                              'No SSH keys yet. Only Ed25519 OpenSSH is supported now.',
-                            ),
-                            style: TextStyle(fontSize: 12.5, color: oc.muted),
+                      const SizedBox(height: 16),
+                      if (connection != null) ...[
+                        _SettingsSectionCard(
+                          icon: Icons.hub_outlined,
+                          title: l(context, '模型连接', 'Model connection'),
+                          subtitle: l(
+                            context,
+                            '当前 provider、接口地址和默认模型。',
+                            'Current provider, endpoint, and default model.',
                           ),
-                        )
-                      else
-                        ...gitSettings.sshKeys.map((key) {
-                          final isDefault = gitSettings.defaultSshKey?.id == key.id;
-                          return Container(
-                            margin: const EdgeInsets.only(top: 10),
-                            decoration: BoxDecoration(
-                              border: Border.all(color: oc.border),
-                              borderRadius: BorderRadius.circular(14),
-                              color: oc.panelBackground,
-                            ),
-                            child: Padding(
-                              padding: const EdgeInsets.all(12),
-                              child: Column(
-                                crossAxisAlignment: CrossAxisAlignment.start,
-                                children: [
-                                  Row(
-                                    children: [
-                                      Expanded(
-                                        child: Text(
-                                          key.name,
-                                          style: TextStyle(
-                                            fontSize: 14,
-                                            fontWeight: FontWeight.w600,
-                                            color: oc.text,
-                                          ),
-                                        ),
-                                      ),
-                                      if (isDefault)
-                                        Container(
-                                          padding: const EdgeInsets.symmetric(
-                                            horizontal: 8,
-                                            vertical: 4,
-                                          ),
-                                          decoration: BoxDecoration(
-                                            color: oc.tagGreen.withOpacity(0.12),
-                                            borderRadius: BorderRadius.circular(999),
-                                          ),
-                                          child: Text(
-                                            l(context, '默认', 'Default'),
-                                            style: TextStyle(
-                                              fontSize: 11,
-                                              color: oc.tagGreen,
-                                            ),
-                                          ),
-                                        ),
-                                    ],
-                                  ),
-                                  const SizedBox(height: 6),
-                                  Text(
-                                    '${key.algorithm}  ${key.fingerprint}',
-                                    style: TextStyle(fontSize: 12, color: oc.muted),
-                                  ),
-                                  if (key.comment.trim().isNotEmpty) ...[
-                                    const SizedBox(height: 4),
-                                    Text(
-                                      key.comment,
-                                      style: TextStyle(fontSize: 12, color: oc.muted),
-                                    ),
-                                  ],
-                                  const SizedBox(height: 10),
-                                  Wrap(
-                                    spacing: 8,
-                                    runSpacing: 8,
-                                    children: [
-                                      OutlinedButton(
-                                        onPressed: isDefault
-                                            ? null
-                                            : () => widget.controller.setDefaultGitSshKey(key.id),
-                                        child: Text(l(context, '设为默认', 'Set default')),
-                                      ),
-                                      OutlinedButton(
-                                        onPressed: () => _showPublicKeyDialog(key),
-                                        child: Text(l(context, '查看公钥', 'View public key')),
-                                      ),
-                                      OutlinedButton(
-                                        onPressed: () => _confirmDeleteKey(key),
-                                        child: Text(l(context, '删除', 'Delete')),
-                                      ),
-                                    ],
-                                  ),
-                                ],
-                              ),
-                            ),
-                          );
-                        }),
-                      const SizedBox(height: 18),
-                      Row(
-                        children: [
-                          Expanded(
-                            child: _SettingsSectionTitle(
-                              title: l(context, '远程认证', 'Remote credentials'),
-                            ),
-                          ),
-                          PopupMenuButton<String>(
-                            onSelected: _showRemoteCredentialDialog,
-                            itemBuilder: (context) => [
-                              PopupMenuItem<String>(
-                                value: 'httpsToken',
-                                child: Text(
-                                  l(context, '新增 HTTPS Token', 'Add HTTPS token'),
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.stretch,
+                            children: [
+                              TextField(
+                                controller: _baseUrlController,
+                                decoration: InputDecoration(
+                                  labelText: l(context, 'Base URL', 'Base URL'),
                                 ),
                               ),
-                              PopupMenuItem<String>(
-                                value: 'httpsBasic',
-                                child: Text(
-                                  l(
-                                    context,
-                                    '新增 HTTPS 账号密码',
-                                    'Add HTTPS user/password',
-                                  ),
+                              const SizedBox(height: 12),
+                              TextField(
+                                controller: _apiKeyController,
+                                obscureText: true,
+                                decoration: InputDecoration(
+                                  labelText: l(context, 'API Key', 'API Key'),
                                 ),
                               ),
-                              PopupMenuItem<String>(
-                                value: 'sshKey',
-                                child: Text(
-                                  l(context, '新增 SSH 绑定', 'Add SSH binding'),
+                              const SizedBox(height: 12),
+                              TextField(
+                                controller: _modelController,
+                                decoration: InputDecoration(
+                                  labelText: l(context, '模型', 'Model'),
+                                ),
+                              ),
+                              const SizedBox(height: 12),
+                              Align(
+                                alignment: Alignment.centerRight,
+                                child: FilledButton(
+                                  onPressed: _saveProviderSettings,
+                                  child: Text(
+                                    l(context, '保存模型设置', 'Save model settings'),
+                                  ),
                                 ),
                               ),
                             ],
-                            child: const Padding(
-                              padding: EdgeInsets.symmetric(
-                                horizontal: 8,
-                                vertical: 4,
+                          ),
+                        ),
+                        const SizedBox(height: 14),
+                      ],
+                      _SettingsSectionCard(
+                        icon: Icons.badge_outlined,
+                        title: l(context, 'Git 身份', 'Git identity'),
+                        subtitle: l(
+                          context,
+                          '提交作者信息会用于本地 Git 操作。',
+                          'Commit author details used for local Git operations.',
+                        ),
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.stretch,
+                          children: [
+                            TextField(
+                              controller: _gitNameController,
+                              decoration: InputDecoration(
+                                labelText:
+                                    l(context, 'Git 用户名', 'Git user name'),
                               ),
-                              child: Icon(Icons.add_circle_outline, size: 20),
                             ),
-                          ),
-                        ],
+                            const SizedBox(height: 12),
+                            TextField(
+                              controller: _gitEmailController,
+                              decoration: InputDecoration(
+                                labelText: l(context, 'Git 邮箱', 'Git email'),
+                              ),
+                            ),
+                            const SizedBox(height: 12),
+                            Align(
+                              alignment: Alignment.centerRight,
+                              child: FilledButton(
+                                onPressed: _saveGitIdentity,
+                                child: Text(
+                                  l(context, '保存 Git 身份', 'Save Git identity'),
+                                ),
+                              ),
+                            ),
+                          ],
+                        ),
                       ),
-                      if (gitSettings.remoteCredentials.isEmpty)
-                        Padding(
-                          padding: const EdgeInsets.only(top: 4),
-                          child: Text(
-                            l(
-                              context,
-                              '按主机和路径前缀自动匹配远程认证。SSH 远程如果没有单独配置，会回退到默认 SSH Key。',
-                              'Remote credentials auto-match by host and path prefix. SSH remotes fall back to the default SSH key when no explicit binding exists.',
+                      const SizedBox(height: 14),
+                      _SettingsSectionCard(
+                        icon: Icons.vpn_key_outlined,
+                        title: l(context, 'SSH Keys', 'SSH keys'),
+                        subtitle: l(
+                          context,
+                          '支持生成、导入和设置默认 SSH Key。',
+                          'Generate, import, and manage your default SSH key.',
+                        ),
+                        action: Wrap(
+                          spacing: 8,
+                          runSpacing: 8,
+                          children: [
+                            OutlinedButton.icon(
+                              onPressed: _showImportKeyDialog,
+                              icon: const Icon(Icons.file_upload_outlined,
+                                  size: 18),
+                              label: Text(l(context, '导入', 'Import')),
                             ),
-                            style: TextStyle(fontSize: 12.5, color: oc.muted),
-                          ),
-                        )
-                      else
-                        ...gitSettings.remoteCredentials.map((credential) {
-                          final sshKey = credential.sshKeyId == null
-                              ? null
-                              : gitSettings.sshKeys
-                                  .where((item) => item.id == credential.sshKeyId)
-                                  .cast<GitSshKey?>()
-                                  .firstWhere(
-                                    (item) => item != null,
-                                    orElse: () => null,
-                                  );
-                          final typeLabel = credential.type == 'sshKey'
-                              ? 'SSH'
-                              : credential.type == 'httpsBasic'
-                                  ? 'HTTPS Password'
-                                  : 'HTTPS Token';
-                          final pathLabel = credential.pathPrefix.trim().isEmpty
-                              ? '/'
-                              : credential.pathPrefix;
-                          return Container(
-                            margin: const EdgeInsets.only(top: 10),
-                            decoration: BoxDecoration(
-                              border: Border.all(color: oc.border),
-                              borderRadius: BorderRadius.circular(14),
-                              color: oc.panelBackground,
+                            FilledButton.tonalIcon(
+                              onPressed: _showGenerateKeyDialog,
+                              icon: const Icon(Icons.auto_awesome_outlined,
+                                  size: 18),
+                              label: Text(l(context, '生成', 'Generate')),
                             ),
-                            child: Padding(
-                              padding: const EdgeInsets.all(12),
-                              child: Column(
-                                crossAxisAlignment: CrossAxisAlignment.start,
+                          ],
+                        ),
+                        child: gitSettings.sshKeys.isEmpty
+                            ? Text(
+                                l(
+                                  context,
+                                  '还没有 SSH Key。当前仅支持 Ed25519 OpenSSH，可直接生成或导入现有私钥。',
+                                  'No SSH keys yet. Only Ed25519 OpenSSH is supported now.',
+                                ),
+                                style:
+                                    TextStyle(fontSize: 12.5, color: oc.muted),
+                              )
+                            : Column(
                                 children: [
-                                  Text(
-                                    credential.name,
-                                    style: TextStyle(
-                                      fontSize: 14,
-                                      fontWeight: FontWeight.w600,
-                                      color: oc.text,
-                                    ),
-                                  ),
-                                  const SizedBox(height: 6),
-                                  Text(
-                                    '$typeLabel  ${credential.host}$pathLabel',
-                                    style: TextStyle(fontSize: 12, color: oc.muted),
-                                  ),
-                                  if (credential.username.trim().isNotEmpty) ...[
-                                    const SizedBox(height: 4),
-                                    Text(
-                                      '${l(context, '用户名', 'Username')}: ${credential.username}',
-                                      style: TextStyle(fontSize: 12, color: oc.muted),
-                                    ),
-                                  ],
-                                  if (sshKey != null) ...[
-                                    const SizedBox(height: 4),
-                                    Text(
-                                      '${l(context, 'SSH Key', 'SSH key')}: ${sshKey.name}',
-                                      style: TextStyle(fontSize: 12, color: oc.muted),
-                                    ),
-                                  ],
-                                  const SizedBox(height: 10),
-                                  Wrap(
-                                    spacing: 8,
-                                    runSpacing: 8,
-                                    children: [
-                                      OutlinedButton(
-                                        onPressed: () =>
-                                            _confirmDeleteRemoteCredential(credential),
-                                        child: Text(l(context, '删除', 'Delete')),
+                                  for (final key in gitSettings.sshKeys) ...[
+                                    Container(
+                                      width: double.infinity,
+                                      margin: const EdgeInsets.only(bottom: 10),
+                                      decoration: BoxDecoration(
+                                        border: Border.all(color: oc.border),
+                                        borderRadius: BorderRadius.circular(14),
+                                        color: oc.surface.withOpacity(0.55),
                                       ),
-                                    ],
-                                  ),
+                                      child: Padding(
+                                        padding: const EdgeInsets.all(12),
+                                        child: Column(
+                                          crossAxisAlignment:
+                                              CrossAxisAlignment.start,
+                                          children: [
+                                            Row(
+                                              children: [
+                                                Expanded(
+                                                  child: Text(
+                                                    key.name,
+                                                    style: TextStyle(
+                                                      fontSize: 14,
+                                                      fontWeight:
+                                                          FontWeight.w600,
+                                                      color: oc.text,
+                                                    ),
+                                                  ),
+                                                ),
+                                                if (gitSettings
+                                                        .defaultSshKey?.id ==
+                                                    key.id)
+                                                  Container(
+                                                    padding: const EdgeInsets
+                                                        .symmetric(
+                                                      horizontal: 8,
+                                                      vertical: 4,
+                                                    ),
+                                                    decoration: BoxDecoration(
+                                                      color: oc.tagGreen
+                                                          .withOpacity(0.12),
+                                                      borderRadius:
+                                                          BorderRadius.circular(
+                                                              999),
+                                                    ),
+                                                    child: Text(
+                                                      l(context, '默认',
+                                                          'Default'),
+                                                      style: TextStyle(
+                                                        fontSize: 11,
+                                                        color: oc.tagGreen,
+                                                      ),
+                                                    ),
+                                                  ),
+                                              ],
+                                            ),
+                                            const SizedBox(height: 6),
+                                            Text(
+                                              '${key.algorithm}  ${key.fingerprint}',
+                                              style: TextStyle(
+                                                fontSize: 12,
+                                                color: oc.muted,
+                                              ),
+                                            ),
+                                            if (key.comment
+                                                .trim()
+                                                .isNotEmpty) ...[
+                                              const SizedBox(height: 4),
+                                              Text(
+                                                key.comment,
+                                                style: TextStyle(
+                                                  fontSize: 12,
+                                                  color: oc.muted,
+                                                ),
+                                              ),
+                                            ],
+                                            const SizedBox(height: 10),
+                                            Wrap(
+                                              spacing: 8,
+                                              runSpacing: 8,
+                                              children: [
+                                                OutlinedButton(
+                                                  onPressed: gitSettings
+                                                              .defaultSshKey
+                                                              ?.id ==
+                                                          key.id
+                                                      ? null
+                                                      : () => widget.controller
+                                                              .setDefaultGitSshKey(
+                                                            key.id,
+                                                          ),
+                                                  child: Text(
+                                                    l(
+                                                      context,
+                                                      '设为默认',
+                                                      'Set default',
+                                                    ),
+                                                  ),
+                                                ),
+                                                OutlinedButton(
+                                                  onPressed: () =>
+                                                      _showPublicKeyDialog(key),
+                                                  child: Text(
+                                                    l(
+                                                      context,
+                                                      '查看公钥',
+                                                      'View public key',
+                                                    ),
+                                                  ),
+                                                ),
+                                                OutlinedButton(
+                                                  onPressed: () =>
+                                                      _confirmDeleteKey(key),
+                                                  child: Text(
+                                                    l(context, '删除', 'Delete'),
+                                                  ),
+                                                ),
+                                              ],
+                                            ),
+                                          ],
+                                        ),
+                                      ),
+                                    ),
+                                  ],
                                 ],
                               ),
+                      ),
+                      const SizedBox(height: 14),
+                      _SettingsSectionCard(
+                        icon: Icons.shield_outlined,
+                        title: l(context, '远程认证', 'Remote credentials'),
+                        subtitle: l(
+                          context,
+                          '按主机和路径前缀自动匹配远程仓库认证。',
+                          'Credentials are matched automatically by host and path prefix.',
+                        ),
+                        action: PopupMenuButton<String>(
+                          onSelected: _showRemoteCredentialDialog,
+                          itemBuilder: (context) => [
+                            PopupMenuItem<String>(
+                              value: 'httpsToken',
+                              child: Text(
+                                l(context, '新增 HTTPS Token', 'Add HTTPS token'),
+                              ),
                             ),
-                          );
-                        }),
+                            PopupMenuItem<String>(
+                              value: 'httpsBasic',
+                              child: Text(
+                                l(
+                                  context,
+                                  '新增 HTTPS 账号密码',
+                                  'Add HTTPS user/password',
+                                ),
+                              ),
+                            ),
+                            PopupMenuItem<String>(
+                              value: 'sshKey',
+                              child: Text(
+                                l(context, '新增 SSH 绑定', 'Add SSH binding'),
+                              ),
+                            ),
+                          ],
+                          child: Container(
+                            decoration: BoxDecoration(
+                              color: oc.surface.withOpacity(0.9),
+                              borderRadius: BorderRadius.circular(12),
+                              border: Border.all(color: oc.border),
+                            ),
+                            padding: const EdgeInsets.symmetric(
+                              horizontal: 12,
+                              vertical: 9,
+                            ),
+                            child: Row(
+                              mainAxisSize: MainAxisSize.min,
+                              children: [
+                                Icon(
+                                  Icons.add_circle_outline,
+                                  size: 18,
+                                  color: oc.text,
+                                ),
+                                const SizedBox(width: 8),
+                                Text(
+                                  l(context, '新增认证', 'Add credential'),
+                                  style: TextStyle(
+                                    fontSize: 13,
+                                    fontWeight: FontWeight.w600,
+                                    color: oc.text,
+                                  ),
+                                ),
+                              ],
+                            ),
+                          ),
+                        ),
+                        child: gitSettings.remoteCredentials.isEmpty
+                            ? Text(
+                                l(
+                                  context,
+                                  'SSH 远程如果没有单独配置，会回退到默认 SSH Key。',
+                                  'SSH remotes fall back to the default SSH key when no explicit binding exists.',
+                                ),
+                                style:
+                                    TextStyle(fontSize: 12.5, color: oc.muted),
+                              )
+                            : Column(
+                                children: [
+                                  for (final credential
+                                      in gitSettings.remoteCredentials) ...[
+                                    Builder(
+                                      builder: (context) {
+                                        final sshKey =
+                                            credential.sshKeyId == null
+                                                ? null
+                                                : gitSettings.sshKeys
+                                                    .where(
+                                                      (item) =>
+                                                          item.id ==
+                                                          credential.sshKeyId,
+                                                    )
+                                                    .cast<GitSshKey?>()
+                                                    .firstWhere(
+                                                      (item) => item != null,
+                                                      orElse: () => null,
+                                                    );
+                                        final typeLabel = credential.type ==
+                                                'sshKey'
+                                            ? 'SSH'
+                                            : credential.type == 'httpsBasic'
+                                                ? 'HTTPS Password'
+                                                : 'HTTPS Token';
+                                        final pathLabel =
+                                            credential.pathPrefix.trim().isEmpty
+                                                ? '/'
+                                                : credential.pathPrefix;
+                                        return Container(
+                                          width: double.infinity,
+                                          margin:
+                                              const EdgeInsets.only(bottom: 10),
+                                          decoration: BoxDecoration(
+                                            border:
+                                                Border.all(color: oc.border),
+                                            borderRadius:
+                                                BorderRadius.circular(14),
+                                            color: oc.surface.withOpacity(0.55),
+                                          ),
+                                          child: Padding(
+                                            padding: const EdgeInsets.all(12),
+                                            child: Column(
+                                              crossAxisAlignment:
+                                                  CrossAxisAlignment.start,
+                                              children: [
+                                                Text(
+                                                  credential.name,
+                                                  style: TextStyle(
+                                                    fontSize: 14,
+                                                    fontWeight: FontWeight.w600,
+                                                    color: oc.text,
+                                                  ),
+                                                ),
+                                                const SizedBox(height: 6),
+                                                Text(
+                                                  '$typeLabel  ${credential.host}$pathLabel',
+                                                  style: TextStyle(
+                                                    fontSize: 12,
+                                                    color: oc.muted,
+                                                  ),
+                                                ),
+                                                if (credential.username
+                                                    .trim()
+                                                    .isNotEmpty) ...[
+                                                  const SizedBox(height: 4),
+                                                  Text(
+                                                    '${l(context, '用户名', 'Username')}: ${credential.username}',
+                                                    style: TextStyle(
+                                                      fontSize: 12,
+                                                      color: oc.muted,
+                                                    ),
+                                                  ),
+                                                ],
+                                                if (sshKey != null) ...[
+                                                  const SizedBox(height: 4),
+                                                  Text(
+                                                    '${l(context, 'SSH Key', 'SSH key')}: ${sshKey.name}',
+                                                    style: TextStyle(
+                                                      fontSize: 12,
+                                                      color: oc.muted,
+                                                    ),
+                                                  ),
+                                                ],
+                                                const SizedBox(height: 10),
+                                                OutlinedButton(
+                                                  onPressed: () =>
+                                                      _confirmDeleteRemoteCredential(
+                                                    credential,
+                                                  ),
+                                                  child: Text(
+                                                    l(context, '删除', 'Delete'),
+                                                  ),
+                                                ),
+                                              ],
+                                            ),
+                                          ),
+                                        );
+                                      },
+                                    ),
+                                  ],
+                                ],
+                              ),
+                      ),
                     ],
                   ),
                 ),
@@ -746,22 +919,123 @@ class _AppSettingsSheetState extends State<_AppSettingsSheet> {
   }
 }
 
-class _SettingsSectionTitle extends StatelessWidget {
-  const _SettingsSectionTitle({required this.title});
+class _SettingsMetaChip extends StatelessWidget {
+  const _SettingsMetaChip({
+    required this.icon,
+    required this.label,
+  });
 
-  final String title;
+  final IconData icon;
+  final String label;
 
   @override
   Widget build(BuildContext context) {
-    return Padding(
-      padding: const EdgeInsets.only(bottom: 10),
-      child: Text(
-        title,
-        style: TextStyle(
-          fontSize: 13,
-          fontWeight: FontWeight.w700,
-          color: context.oc.text,
+    final oc = context.oc;
+    return DecoratedBox(
+      decoration: BoxDecoration(
+        color: oc.panelBackground,
+        borderRadius: BorderRadius.circular(999),
+        border: Border.all(color: oc.border),
+      ),
+      child: Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 7),
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Icon(icon, size: 15, color: oc.muted),
+            const SizedBox(width: 6),
+            Text(
+              label,
+              style: TextStyle(
+                fontSize: 12,
+                fontWeight: FontWeight.w500,
+                color: oc.text,
+              ),
+            ),
+          ],
         ),
+      ),
+    );
+  }
+}
+
+class _SettingsSectionCard extends StatelessWidget {
+  const _SettingsSectionCard({
+    required this.icon,
+    required this.title,
+    required this.child,
+    this.subtitle,
+    this.action,
+  });
+
+  final IconData icon;
+  final String title;
+  final String? subtitle;
+  final Widget child;
+  final Widget? action;
+
+  @override
+  Widget build(BuildContext context) {
+    final oc = context.oc;
+    return Container(
+      decoration: BoxDecoration(
+        color: oc.panelBackground,
+        borderRadius: BorderRadius.circular(18),
+        border: Border.all(color: oc.border),
+      ),
+      padding: const EdgeInsets.all(14),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          Row(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Container(
+                width: 34,
+                height: 34,
+                decoration: BoxDecoration(
+                  color: oc.surface.withOpacity(0.9),
+                  borderRadius: BorderRadius.circular(12),
+                  border: Border.all(color: oc.border),
+                ),
+                child: Icon(icon, size: 18, color: oc.accent),
+              ),
+              const SizedBox(width: 10),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      title,
+                      style: TextStyle(
+                        fontSize: 14,
+                        fontWeight: FontWeight.w700,
+                        color: oc.text,
+                      ),
+                    ),
+                    if (subtitle?.isNotEmpty == true) ...[
+                      const SizedBox(height: 4),
+                      Text(
+                        subtitle!,
+                        style: TextStyle(
+                          fontSize: 12.5,
+                          height: 1.35,
+                          color: oc.muted,
+                        ),
+                      ),
+                    ],
+                  ],
+                ),
+              ),
+            ],
+          ),
+          if (action != null) ...[
+            const SizedBox(height: 12),
+            action!,
+          ],
+          const SizedBox(height: 14),
+          child,
+        ],
       ),
     );
   }
@@ -795,7 +1069,8 @@ class _RemoteCredentialDialog extends StatefulWidget {
   final GitSettings gitSettings;
 
   @override
-  State<_RemoteCredentialDialog> createState() => _RemoteCredentialDialogState();
+  State<_RemoteCredentialDialog> createState() =>
+      _RemoteCredentialDialogState();
 }
 
 class _RemoteCredentialDialogState extends State<_RemoteCredentialDialog> {
