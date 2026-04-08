@@ -11,7 +11,7 @@ class GitNetworkBridge {
 
   static const MethodChannel _channel = MethodChannel('mobile_agent/git_network');
 
-  bool get isSupported => Platform.isAndroid;
+  bool get isSupported => Platform.isAndroid || Platform.isIOS;
 
   Future<Map<String, dynamic>> clone({
     required String url,
