@@ -51,8 +51,16 @@ class WorkspaceBridge {
       await Directory(cached).create(recursive: true);
       return cached;
     }
-    final externalDir = await getExternalStorageDirectory();
-    final baseDir = externalDir ?? await getApplicationDocumentsDirectory();
+    final Directory baseDir;
+    if (Platform.isAndroid) {
+      baseDir =
+          await getExternalStorageDirectory() ??
+          await getApplicationDocumentsDirectory();
+    } else {
+      // iOS does not expose an "external storage" concept; keep projects in
+      // the app sandbox where they remain writable and backed up correctly.
+      baseDir = await getApplicationSupportDirectory();
+    }
     final root = p.join(baseDir.path, _sandboxProjectsDirName);
     await Directory(root).create(recursive: true);
     _sandboxRootPath = root;
