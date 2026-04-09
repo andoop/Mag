@@ -88,10 +88,17 @@ extension SessionEngineConversation on SessionEngine {
           summaryMessageId.isNotEmpty &&
           message.id == summaryMessageId;
       if (isSummarySeed) {
-        final summaryText = messageParts
-            .where((item) => item.type == PartType.text)
-            .map(_partRawText)
-            .join('\n');
+        final compactionPart = messageParts
+            .where((item) => item.type == PartType.compaction)
+            .cast<MessagePart?>()
+            .firstWhere((item) => item != null, orElse: () => null);
+        final summaryText =
+            (compactionPart?.data['summary'] as String? ?? '').trim().isNotEmpty
+                ? (compactionPart!.data['summary'] as String? ?? '')
+                : messageParts
+                    .where((item) => item.type == PartType.text)
+                    .map(_partRawText)
+                    .join('\n');
         if (summaryText.trim().isNotEmpty) {
           conversation.add({
             'role': 'user',

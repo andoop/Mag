@@ -154,7 +154,7 @@ extension SessionEngineSummarize on SessionEngine {
       role: SessionRole.assistant,
       agent: currentAgent,
       createdAt: DateTime.now().millisecondsSinceEpoch,
-      text: summaryText,
+      text: '',
       model: modelConfig.model,
       provider: modelConfig.provider,
     );
@@ -171,17 +171,6 @@ extension SessionEngineSummarize on SessionEngine {
           'label': 'Context compacted',
           'summary': summaryText,
         },
-      ),
-    );
-    await _savePart(
-      workspace: workspace,
-      part: MessagePart(
-        id: newId('part'),
-        sessionId: session.id,
-        messageId: summaryMessage.id,
-        type: PartType.text,
-        createdAt: DateTime.now().millisecondsSinceEpoch,
-        data: {'text': summaryText},
       ),
     );
     final tracked = await _trackUsage(

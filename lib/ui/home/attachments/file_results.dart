@@ -22,18 +22,24 @@ class _GlobResultsAttachmentTile extends StatelessWidget {
         .toList();
     final count = attachment['count'];
     final pattern = attachment['pattern'] as String? ?? '*';
+    final background =
+        context.isDarkMode ? const Color(0xFF1F2233) : const Color(0xFFEEF2FF);
     return Container(
       width: double.infinity,
       padding: const EdgeInsets.all(12),
       decoration: _panelDecoration(context,
-          background: const Color(0xFFEEF2FF), radius: 14, elevated: false),
+          background: background, radius: 14, elevated: false),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           Text('Glob · $pattern',
-              style: const TextStyle(fontWeight: FontWeight.bold)),
+              style: TextStyle(
+                  fontWeight: FontWeight.bold, color: context.oc.foreground)),
           const SizedBox(height: 6),
-          Text(l(context, '匹配: $count', 'Matches: $count')),
+          Text(
+            l(context, '匹配: $count', 'Matches: $count'),
+            style: TextStyle(color: context.oc.foregroundMuted),
+          ),
           const SizedBox(height: 8),
           ...items.map(
             (item) => _FileResultRow(
@@ -72,18 +78,24 @@ class _GrepResultsAttachmentTile extends StatelessWidget {
         .toList();
     final pattern = attachment['pattern'] as String? ?? '';
     final count = attachment['count'];
+    final background =
+        context.isDarkMode ? const Color(0xFF2A2218) : const Color(0xFFFFF7ED);
     return Container(
       width: double.infinity,
       padding: const EdgeInsets.all(12),
       decoration: _panelDecoration(context,
-          background: const Color(0xFFFFF7ED), radius: 14, elevated: false),
+          background: background, radius: 14, elevated: false),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           Text('Grep · $pattern',
-              style: const TextStyle(fontWeight: FontWeight.bold)),
+              style: TextStyle(
+                  fontWeight: FontWeight.bold, color: context.oc.foreground)),
           const SizedBox(height: 6),
-          Text(l(context, '匹配: $count', 'Matches: $count')),
+          Text(
+            l(context, '匹配: $count', 'Matches: $count'),
+            style: TextStyle(color: context.oc.foregroundMuted),
+          ),
           const SizedBox(height: 8),
           ...items.map(
             (item) => Padding(
@@ -138,9 +150,14 @@ class _FileResultRow extends StatelessWidget {
         padding: const EdgeInsets.symmetric(vertical: 4),
         child: Row(
           children: [
-            const Icon(Icons.description, size: 16),
+            Icon(Icons.description, size: 16, color: context.oc.foregroundHint),
             const SizedBox(width: 8),
-            Expanded(child: Text(path)),
+            Expanded(
+              child: Text(
+                path,
+                style: TextStyle(color: context.oc.foreground),
+              ),
+            ),
           ],
         ),
       ),
@@ -184,7 +201,10 @@ class _GrepResultRow extends StatelessWidget {
           : null,
       child: Text(
         '$path:$line: $text',
-        style: const TextStyle(fontFamily: 'monospace'),
+        style: TextStyle(
+          fontFamily: 'monospace',
+          color: context.oc.foreground,
+        ),
       ),
     );
   }

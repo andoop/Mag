@@ -170,9 +170,12 @@ class _MessageBubbleState extends State<_MessageBubble> {
     _lastPartsList = parts;
     final primary = <MessagePart>[];
     final footer = <MessagePart>[];
+    final hasCompaction = parts.any((p) => p.type == PartType.compaction);
     for (final p in parts) {
       if (p.type == PartType.tool && (p.data['tool'] as String?) == 'fileref') {
         footer.add(p);
+      } else if (hasCompaction && p.type == PartType.text) {
+        continue;
       } else {
         primary.add(p);
       }
@@ -221,6 +224,36 @@ class _MessageBubbleState extends State<_MessageBubble> {
     final isUser = bundle.message.role == SessionRole.user;
     final label = isUser ? l(context, '你', 'You') : bundle.message.agent;
     final bubbleColor = isUser ? oc.userBubble : oc.agentBubble;
+    final hasCompaction = primaryParts.any((p) => p.type == PartType.compaction);
+    final compactionOnly = !isUser &&
+        bundle.message.text.isEmpty &&
+        footerParts.isEmpty &&
+        primaryParts.length == 1 &&
+        primaryParts.first.type == PartType.compaction;
+    if (compactionOnly) {
+      return RepaintBoundary(
+        child: Padding(
+          padding: const EdgeInsets.only(bottom: 10),
+          child: Center(
+            child: ConstrainedBox(
+              constraints: const BoxConstraints(maxWidth: 560),
+              child: _PartTile(
+                part: primaryParts.first,
+                message: bundle.message,
+                controller: widget.controller,
+                workspace: widget.controller.state.workspace,
+                serverUri: widget.controller.state.serverUri,
+                streamAssistantContent: false,
+                turnDurationMs: null,
+                showAssistantTextMeta: false,
+                onInsertPromptReference: widget.onInsertPromptReference,
+                onSendPromptReference: widget.onSendPromptReference,
+              ),
+            ),
+          ),
+        ),
+      );
+    }
     return RepaintBoundary(
       child: Padding(
         padding: const EdgeInsets.only(bottom: 10),
@@ -259,7 +292,7 @@ class _MessageBubbleState extends State<_MessageBubble> {
                       ),
                     ],
                   ),
-                  if (bundle.message.text.isNotEmpty) ...[
+                  if (!hasCompaction && bundle.message.text.isNotEmpty) ...[
                     const SizedBox(height: 8),
                     SelectableText(
                       bundle.message.text,

@@ -70,14 +70,13 @@ class _PartTile extends StatelessWidget {
               : oc.userBubble,
         );
       case PartType.compaction:
-        return _StatusPartTile(
-          label: l(context, '上下文已压缩', 'Context Compacted'),
-          detail: l(
-            context,
-            '已按 Mag 风格生成续聊摘要，后续上下文将从摘要继续。',
-            'A continuation summary was generated and future context will continue from it.',
-          ),
-          color: const Color(0xFFFFFBEB),
+        return _CompactionPartTile(
+          summary: part.data['summary'] as String? ?? '',
+          createdAt: message.createdAt,
+          workspace: workspace,
+          controller: controller,
+          onInsertPromptReference: onInsertPromptReference,
+          onSendPromptReference: onSendPromptReference,
         );
       case PartType.error:
         return _StatusPartTile(
@@ -877,11 +876,13 @@ class _StatusPartTile extends StatelessWidget {
     required this.label,
     required this.detail,
     required this.color,
+    this.trailing,
   });
 
   final String label;
   final String detail;
   final Color color;
+  final Widget? trailing;
 
   @override
   Widget build(BuildContext context) {
@@ -896,12 +897,22 @@ class _StatusPartTile extends StatelessWidget {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Text(
-            label,
-            style: Theme.of(context).textTheme.labelSmall?.copyWith(
-                  fontWeight: FontWeight.w700,
-                  color: context.oc.foregroundMuted,
+          Row(
+            children: [
+              Expanded(
+                child: Text(
+                  label,
+                  style: Theme.of(context).textTheme.labelSmall?.copyWith(
+                        fontWeight: FontWeight.w700,
+                        color: context.oc.foregroundMuted,
+                      ),
                 ),
+              ),
+              if (trailing != null) ...[
+                const SizedBox(width: 8),
+                trailing!,
+              ],
+            ],
           ),
           const SizedBox(height: 6),
           Text(
@@ -913,5 +924,135 @@ class _StatusPartTile extends StatelessWidget {
       ),
     );
   }
+}
+
+class _CompactionPartTile extends StatelessWidget {
+  const _CompactionPartTile({
+    required this.summary,
+    required this.createdAt,
+    required this.workspace,
+    required this.controller,
+    required this.onInsertPromptReference,
+    required this.onSendPromptReference,
+  });
+
+  final String summary;
+  final int createdAt;
+  final WorkspaceInfo? workspace;
+  final AppController controller;
+  final ValueChanged<String> onInsertPromptReference;
+  final PromptReferenceAction onSendPromptReference;
+
+  @override
+  Widget build(BuildContext context) {
+    final trimmed = summary.trim();
+    final background =
+        context.isDarkMode ? const Color(0xFF2A2412) : const Color(0xFFFFFBEB);
+    final detail = <String>[
+      l(
+        context,
+        '已生成续聊摘要，后续上下文将从摘要继续。',
+        'A continuation summary was generated and future context will continue from it.',
+      ),
+      '${_formatCompactionTimestamp(createdAt)} · ${_formatCompactionSummaryLength(context, trimmed)}',
+    ].join('\n');
+    return _StatusPartTile(
+      label: l(context, '上下文已压缩', 'Context Compacted'),
+      detail: detail,
+      color: background,
+      trailing: trimmed.isEmpty
+          ? null
+          : _CompactActionButton(
+              onPressed: () => _openCompactionSummarySheet(
+                context,
+                summary: trimmed,
+                workspace: workspace,
+                controller: controller,
+                onInsertPromptReference: onInsertPromptReference,
+                onSendPromptReference: onSendPromptReference,
+              ),
+              icon: Icons.description_outlined,
+              label: l(context, '查看摘要', 'View summary'),
+            ),
+    );
+  }
+}
+
+String _formatCompactionTimestamp(int createdAt) {
+  final dt = DateTime.fromMillisecondsSinceEpoch(createdAt);
+  final hh = dt.hour.toString().padLeft(2, '0');
+  final mm = dt.minute.toString().padLeft(2, '0');
+  return '$hh:$mm';
+}
+
+String _formatCompactionSummaryLength(BuildContext context, String summary) {
+  final count = summary.characters.length;
+  if (count >= 1000) {
+    final short = (count / 1000).toStringAsFixed(count >= 10000 ? 0 : 1);
+    return l(context, '$short 千字', '${short}k chars');
+  }
+  return l(context, '$count 字', '$count chars');
+}
+
+Future<void> _openCompactionSummarySheet(
+  BuildContext context, {
+  required String summary,
+  required WorkspaceInfo? workspace,
+  required AppController controller,
+  required ValueChanged<String> onInsertPromptReference,
+  required PromptReferenceAction onSendPromptReference,
+}) {
+  return showModalBottomSheet<void>(
+    context: context,
+    isScrollControlled: true,
+    builder: (_) => FractionallySizedBox(
+      heightFactor: 0.88,
+      child: SafeArea(
+        child: Padding(
+          padding: const EdgeInsets.all(12),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Row(
+                children: [
+                  Expanded(
+                    child: Text(
+                      l(context, '会话摘要', 'Session Summary'),
+                      style: const TextStyle(fontWeight: FontWeight.bold),
+                    ),
+                  ),
+                  _CompactIconButton(
+                    onPressed: () => Navigator.of(context).pop(),
+                    icon: Icons.close,
+                  ),
+                ],
+              ),
+              const SizedBox(height: 8),
+              Expanded(
+                child: Container(
+                  width: double.infinity,
+                  padding: const EdgeInsets.all(12),
+                  decoration: _panelDecoration(context,
+                      background: context.oc.shadow,
+                      radius: 14,
+                      elevated: false),
+                  child: SingleChildScrollView(
+                    child: _StreamingMarkdownText(
+                      text: summary,
+                      streaming: false,
+                      workspace: workspace,
+                      controller: controller,
+                      onInsertPromptReference: onInsertPromptReference,
+                      onSendPromptReference: onSendPromptReference,
+                    ),
+                  ),
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    ),
+  );
 }
 
