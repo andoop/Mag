@@ -295,7 +295,10 @@ extension SessionEnginePrompt on SessionEngine {
         );
         // #endregion
         final toolModels = [
-          ...toolRegistry.availableForAgent(agentDefinition(currentAgent)),
+          ...toolRegistry.availableForAgent(
+            agentDefinition(currentAgent),
+            modelId: modelConfig.model,
+          ),
           if (userMessage.format?.type == OutputFormatType.jsonSchema)
             ToolDefinitionModel(
               id: 'StructuredOutput',

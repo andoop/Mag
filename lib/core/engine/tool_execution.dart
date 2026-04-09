@@ -92,12 +92,27 @@ extension SessionEngineTools on SessionEngine {
         required String description,
         required String prompt,
         required String subagentType,
+        String? taskId,
       }) async {
-        final subSession = await createSession(
-          workspace: workspace,
-          agent: subagentType,
-          isChildSession: true,
-        );
+        SessionInfo subSession;
+        if (taskId != null && taskId.trim().isNotEmpty) {
+          final existing = await database.getSession(taskId.trim());
+          if (existing != null) {
+            subSession = existing;
+          } else {
+            subSession = await createSession(
+              workspace: workspace,
+              agent: subagentType,
+              isChildSession: true,
+            );
+          }
+        } else {
+          subSession = await createSession(
+            workspace: workspace,
+            agent: subagentType,
+            isChildSession: true,
+          );
+        }
         await this.prompt(
           workspace: workspace,
           session: subSession,
@@ -116,7 +131,8 @@ extension SessionEngineTools on SessionEngine {
             .join('\n');
         return ToolExecutionResult(
           title: description,
-          output: '<task_result>$output</task_result>',
+          output:
+              'task_id: ${subSession.id} (reuse this with task_id to continue the same subtask)\n\n<task_result>$output</task_result>',
           metadata: {'taskSessionId': subSession.id},
         );
       },
@@ -201,8 +217,7 @@ extension SessionEngineTools on SessionEngine {
     final args = call.arguments;
     if (args.containsKey('raw')) {
       final raw = (args['raw'] as String? ?? '').trim();
-      final preview =
-          raw.length > 200 ? '${raw.substring(0, 200)}...' : raw;
+      final preview = raw.length > 200 ? '${raw.substring(0, 200)}...' : raw;
       return 'The ${call.name} tool was called with invalid arguments: '
           'expected a valid JSON object matching the tool schema.\n'
           'Please rewrite the input so it satisfies the expected schema.\n'
@@ -333,8 +348,7 @@ extension SessionEngineTools on SessionEngine {
       final firstUserIdx =
           history.indexWhere((m) => m.role == SessionRole.user);
       if (firstUserIdx == -1) return;
-      final userCount =
-          history.where((m) => m.role == SessionRole.user).length;
+      final userCount = history.where((m) => m.role == SessionRole.user).length;
       if (userCount != 1) return;
 
       final context = history.sublist(0, firstUserIdx + 1);
@@ -378,9 +392,8 @@ extension SessionEngineTools on SessionEngine {
       );
       final cleaned = _cleanGeneratedSessionTitle(response.text);
       if (cleaned.isEmpty) return;
-      final title = cleaned.length > 100
-          ? '${cleaned.substring(0, 97)}...'
-          : cleaned;
+      final title =
+          cleaned.length > 100 ? '${cleaned.substring(0, 97)}...' : cleaned;
 
       final again = await database.getSession(sessionId);
       if (again == null) return;
@@ -436,9 +449,11 @@ extension SessionEngineTools on SessionEngine {
     // inline code: `x`
     s = s.replaceAllMapped(RegExp(r'`([^`]+)`'), (m) => m.group(1)!);
     // links: [text](url)
-    s = s.replaceAllMapped(RegExp(r'\[([^\]]+)\]\([^)]+\)'), (m) => m.group(1)!);
+    s = s.replaceAllMapped(
+        RegExp(r'\[([^\]]+)\]\([^)]+\)'), (m) => m.group(1)!);
     // images: ![alt](url)
-    s = s.replaceAllMapped(RegExp(r'!\[([^\]]*)\]\([^)]+\)'), (m) => m.group(1)!);
+    s = s.replaceAllMapped(
+        RegExp(r'!\[([^\]]*)\]\([^)]+\)'), (m) => m.group(1)!);
     // blockquote prefix
     s = s.replaceFirst(RegExp(r'^>\s+'), '');
     // strikethrough: ~~x~~

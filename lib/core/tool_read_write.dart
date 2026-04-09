@@ -77,6 +77,105 @@ Future<String> _resolveWriteContent(
   );
 }
 
+class _ToolReadLedgerEntry {
+  _ToolReadLedgerEntry({
+    required this.path,
+    required this.lastModified,
+  });
+
+  final String path;
+  final int lastModified;
+}
+
+JsonMap _toolReadLedgerMetadata({
+  required String path,
+  required int lastModified,
+}) =>
+    {
+      'path': path,
+      'lastModified': lastModified,
+    };
+
+_ToolReadLedgerEntry? _toolReadLedgerFromMetadata(
+    JsonMap metadata, String path) {
+  final normalized = _normalizeWorkspaceRelativePath(path);
+  final single = metadata['readLedger'];
+  if (single is Map) {
+    final map = Map<String, dynamic>.from(single);
+    final ledgerPath =
+        _normalizeWorkspaceRelativePath(jsonStringCoerce(map['path'], ''));
+    if (ledgerPath == normalized) {
+      return _ToolReadLedgerEntry(
+        path: ledgerPath,
+        lastModified: (map['lastModified'] as num?)?.toInt() ?? 0,
+      );
+    }
+  }
+  final multiple = metadata['readLedgers'];
+  if (multiple is List) {
+    for (final item in multiple.whereType<Map>()) {
+      final map = Map<String, dynamic>.from(item);
+      final ledgerPath =
+          _normalizeWorkspaceRelativePath(jsonStringCoerce(map['path'], ''));
+      if (ledgerPath == normalized) {
+        return _ToolReadLedgerEntry(
+          path: ledgerPath,
+          lastModified: (map['lastModified'] as num?)?.toInt() ?? 0,
+        );
+      }
+    }
+  }
+  return null;
+}
+
+Future<_ToolReadLedgerEntry?> _latestToolReadLedgerForPath(
+  ToolRuntimeContext ctx,
+  String filePath,
+) async {
+  final parts = await ctx.database.listPartsForSession(ctx.session.id);
+  for (final part in parts.reversed) {
+    if (part.type != PartType.tool) continue;
+    final state =
+        Map<String, dynamic>.from(part.data['state'] as Map? ?? const {});
+    if (state['status'] != ToolStatus.completed.name) continue;
+    final metadata =
+        Map<String, dynamic>.from(state['metadata'] as Map? ?? const {});
+    final ledger = _toolReadLedgerFromMetadata(metadata, filePath);
+    if (ledger != null) return ledger;
+  }
+  return null;
+}
+
+String _formatLedgerTimestamp(int millis) =>
+    DateTime.fromMillisecondsSinceEpoch(millis).toIso8601String();
+
+Future<void> _assertFreshReadForExistingFile(
+  ToolRuntimeContext ctx,
+  String filePath, {
+  required String toolName,
+}) async {
+  final entry = await ctx.bridge.stat(
+    treeUri: ctx.workspace.treeUri,
+    relativePath: filePath,
+  );
+  if (entry == null || entry.isDirectory) {
+    return;
+  }
+  final ledger = await _latestToolReadLedgerForPath(ctx, filePath);
+  if (ledger == null) {
+    throw Exception(
+      'you must read the file $filePath before using $toolName. Use the read tool first',
+    );
+  }
+  if (entry.lastModified > ledger.lastModified) {
+    throw Exception(
+      'file $filePath has been modified since it was last read '
+      '(mod time: ${_formatLedgerTimestamp(entry.lastModified)}, '
+      'last read: ${_formatLedgerTimestamp(ledger.lastModified)})',
+    );
+  }
+}
+
 Future<ToolExecutionResult> _readTool(
     JsonMap args, ToolRuntimeContext ctx) async {
   final filePath = _toolFilePathArg(args);
@@ -242,6 +341,11 @@ Future<ToolExecutionResult> _readTool(
       'path': filePath,
       'kind': 'file',
       'lineCount': rawLines.length,
+      'lastModified': entry.lastModified,
+      'readLedger': _toolReadLedgerMetadata(
+        path: filePath,
+        lastModified: entry.lastModified,
+      ),
     },
     attachments: [
       {
@@ -264,13 +368,22 @@ Future<ToolExecutionResult> _writeTool(
   if (filePath.isEmpty) {
     throw Exception('Missing required `path`.');
   }
-  String existing = '';
+  var existing = '';
+  var exists = false;
   try {
     existing = await ctx.bridge.readText(
       treeUri: ctx.workspace.treeUri,
       relativePath: filePath,
     );
+    exists = true;
   } catch (_) {}
+  if (exists) {
+    await _assertFreshReadForExistingFile(
+      ctx,
+      filePath,
+      toolName: 'write',
+    );
+  }
   await ctx.askPermission(
     PermissionRequest(
       id: newId('perm'),
@@ -282,7 +395,7 @@ Future<ToolExecutionResult> _writeTool(
         'path': filePath,
         'filePath': filePath,
         'preview': _buildDiffAttachment(
-          kind: existing.isEmpty ? 'write' : 'write_update',
+          kind: exists ? 'write_update' : 'write',
           path: filePath,
           before: existing,
           after: content,
@@ -298,6 +411,10 @@ Future<ToolExecutionResult> _writeTool(
     relativePath: filePath,
     content: content,
   );
+  final updatedEntry = await ctx.bridge.stat(
+    treeUri: ctx.workspace.treeUri,
+    relativePath: filePath,
+  );
   return ToolExecutionResult(
     title: filePath,
     output: 'Wrote file successfully.',
@@ -305,12 +422,17 @@ Future<ToolExecutionResult> _writeTool(
     metadata: {
       'path': filePath,
       'filepath': filePath,
-      'exists': existing.isNotEmpty,
+      'exists': exists,
       'diagnostics': const <String, dynamic>{},
+      if (updatedEntry != null)
+        'readLedger': _toolReadLedgerMetadata(
+          path: filePath,
+          lastModified: updatedEntry.lastModified,
+        ),
     },
     attachments: [
       _buildDiffAttachment(
-        kind: existing.isEmpty ? 'write' : 'write_update',
+        kind: exists ? 'write_update' : 'write',
         path: filePath,
         before: existing,
         after: content,
@@ -361,10 +483,10 @@ void _logEditToolMismatch({
     'oldStringUtf8Bytes': utf8.encode(oldString).length,
     'oldStringLines': oldLines.length,
     'newStringChars': newString.length,
-    'oldStringPreview': _editDebugEscapedPreview(
-        oldString, _kEditMismatchLogPreviewChars),
-    'newStringPreview': _editDebugEscapedPreview(
-        newString, _kEditMismatchLogPreviewChars ~/ 2),
+    'oldStringPreview':
+        _editDebugEscapedPreview(oldString, _kEditMismatchLogPreviewChars),
+    'newStringPreview':
+        _editDebugEscapedPreview(newString, _kEditMismatchLogPreviewChars ~/ 2),
     'fileChars': existing.length,
     'fileLines': fileLines,
     'exactSubstringMatch': existing.contains(oldString),
@@ -475,7 +597,8 @@ String _editUnescapeForMatch(String s) {
 }
 
 /// Substrings of [content] that line-up with [find] when each line is `.trim()` equal.
-Iterable<String> _editLineTrimmedMatchSubstrings(String content, String find) sync* {
+Iterable<String> _editLineTrimmedMatchSubstrings(
+    String content, String find) sync* {
   final searchLines = _editLogicalLinesNoTrailingBlank(find);
   if (searchLines.isEmpty) return;
 
@@ -502,7 +625,8 @@ Iterable<String> _editLineTrimmedMatchSubstrings(String content, String find) sy
   }
 }
 
-Iterable<String> _editTrimmedBoundaryMatchSubstrings(String content, String find) sync* {
+Iterable<String> _editTrimmedBoundaryMatchSubstrings(
+    String content, String find) sync* {
   final trimmedFind = find.trim();
   if (trimmedFind.isEmpty || trimmedFind == find) return;
   if (content.contains(trimmedFind)) yield trimmedFind;
@@ -519,7 +643,8 @@ Iterable<String> _editTrimmedBoundaryMatchSubstrings(String content, String find
   }
 }
 
-Iterable<String> _editIndentFlexibleMatchSubstrings(String content, String find) sync* {
+Iterable<String> _editIndentFlexibleMatchSubstrings(
+    String content, String find) sync* {
   final want = _editStripCommonIndent(_editNormalizeNewlines(find));
   final findLines = _editLogicalLinesNoTrailingBlank(find);
   if (findLines.isEmpty) return;
@@ -533,7 +658,8 @@ Iterable<String> _editIndentFlexibleMatchSubstrings(String content, String find)
   }
 }
 
-Iterable<String> _editNewlineFlexibleMatchSubstrings(String content, String find) sync* {
+Iterable<String> _editNewlineFlexibleMatchSubstrings(
+    String content, String find) sync* {
   final lines = _editLogicalLinesNoTrailingBlank(find);
   if (lines.length < 2) return;
   const sep = r'(?:\r\n|\r|\n)';
@@ -544,7 +670,8 @@ Iterable<String> _editNewlineFlexibleMatchSubstrings(String content, String find
   }
 }
 
-Iterable<String> _editEscapeNormalizedMatchSubstrings(String content, String find) sync* {
+Iterable<String> _editEscapeNormalizedMatchSubstrings(
+    String content, String find) sync* {
   final u = _editUnescapeForMatch(find);
   if (u != find && content.contains(u)) yield u;
 }
@@ -612,6 +739,11 @@ Future<ToolExecutionResult> _editTool(
       'oldString must not be empty. Use `write` or `apply_patch` to replace entire file content.',
     );
   }
+  await _assertFreshReadForExistingFile(
+    ctx,
+    filePath,
+    toolName: 'edit',
+  );
   final existingRaw = await ctx.bridge.readText(
     treeUri: ctx.workspace.treeUri,
     relativePath: filePath,
@@ -662,6 +794,10 @@ Future<ToolExecutionResult> _editTool(
     relativePath: filePath,
     content: out,
   );
+  final updatedEntry = await ctx.bridge.stat(
+    treeUri: ctx.workspace.treeUri,
+    relativePath: filePath,
+  );
   return ToolExecutionResult(
     title: filePath,
     output: 'Updated file successfully.',
@@ -670,6 +806,11 @@ Future<ToolExecutionResult> _editTool(
       'path': filePath,
       'filepath': filePath,
       'diagnostics': const <String, dynamic>{},
+      if (updatedEntry != null)
+        'readLedger': _toolReadLedgerMetadata(
+          path: filePath,
+          lastModified: updatedEntry.lastModified,
+        ),
     },
     attachments: [
       _buildDiffAttachment(
@@ -681,4 +822,3 @@ Future<ToolExecutionResult> _editTool(
     ],
   );
 }
-

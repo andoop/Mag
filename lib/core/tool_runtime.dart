@@ -35,6 +35,7 @@ typedef RunSubtask = Future<ToolExecutionResult> Function({
   required String description,
   required String prompt,
   required String subagentType,
+  String? taskId,
 });
 typedef SaveTodos = Future<void> Function(List<TodoItem> items);
 
@@ -43,8 +44,10 @@ const int _kMaxReadBytes = 50 * 1024;
 const int _kMaxReadLineLength = 2000;
 const String _kMaxReadLineSuffix = '... (line truncated to 2000 chars)';
 const int _kToolResultLimit = 100;
+
 /// Preview length cap for `[mag-edit]` / `[mag-patch]` debug logs (lengths still printed).
 const int _kEditMismatchLogPreviewChars = 900;
+
 /// Max patch hunk lines included in `[mag-patch][fail]` logs per section.
 const int _kApplyPatchLogSectionLines = 60;
 
@@ -400,8 +403,7 @@ class ToolRegistry {
     register(
       ToolDefinition(
         id: 'webfetch',
-        description:
-            '${kWebfetchToolDescription.trim()}$kMobileWebFetchSuffix',
+        description: '${kWebfetchToolDescription.trim()}$kMobileWebFetchSuffix',
         parameters: {
           'type': 'object',
           'properties': {
@@ -495,20 +497,22 @@ class ToolRegistry {
             },
             'firstParentOnly': {
               'type': 'boolean',
-              'description': 'Follow only the first parent when walking history',
+              'description':
+                  'Follow only the first parent when walking history',
             },
             'since': {
               'type': 'string',
-              'description': 'Only include commits on or after this ISO-8601 timestamp',
+              'description':
+                  'Only include commits on or after this ISO-8601 timestamp',
             },
             'until': {
               'type': 'string',
-              'description': 'Only include commits on or before this ISO-8601 timestamp',
+              'description':
+                  'Only include commits on or before this ISO-8601 timestamp',
             },
             'action': {
               'type': 'string',
-              'description':
-                  'Sub-action: list | create | delete (for branch)',
+              'description': 'Sub-action: list | create | delete (for branch)',
             },
             'name': {
               'type': 'string',
@@ -516,7 +520,8 @@ class ToolRegistry {
             },
             'force': {
               'type': 'boolean',
-              'description': 'Force the operation when supported (branch delete, push)',
+              'description':
+                  'Force the operation when supported (branch delete, push)',
             },
             'startPoint': {
               'type': 'string',
@@ -528,16 +533,17 @@ class ToolRegistry {
             },
             'newBranch': {
               'type': 'boolean',
-              'description':
-                  'Create and switch to a new branch (for checkout)',
+              'description': 'Create and switch to a new branch (for checkout)',
             },
             'branch': {
               'type': 'string',
-              'description': 'Branch to merge or fetch/pull from (for merge/fetch/pull)',
+              'description':
+                  'Branch to merge or fetch/pull from (for merge/fetch/pull)',
             },
             'remote': {
               'type': 'string',
-              'description': 'Remote name (for fetch/pull/push, default origin)',
+              'description':
+                  'Remote name (for fetch/pull/push, default origin)',
             },
             'url': {
               'type': 'string',
@@ -545,7 +551,8 @@ class ToolRegistry {
             },
             'path': {
               'type': 'string',
-              'description': 'Destination path for clone, relative to the workspace root',
+              'description':
+                  'Destination path for clone, relative to the workspace root',
             },
             'rebase': {
               'type': 'boolean',
@@ -553,11 +560,13 @@ class ToolRegistry {
             },
             'refspec': {
               'type': 'string',
-              'description': 'Explicit push refspec, for example refs/heads/main:refs/heads/main',
+              'description':
+                  'Explicit push refspec, for example refs/heads/main:refs/heads/main',
             },
             'ref': {
               'type': 'string',
-              'description': 'Commit or branch ref to show/rebase onto (for show/rebase, default HEAD)',
+              'description':
+                  'Commit or branch ref to show/rebase onto (for show/rebase, default HEAD)',
             },
             'authorName': {
               'type': 'string',
@@ -605,13 +614,17 @@ class ToolRegistry {
     register(
       ToolDefinition(
         id: 'task',
-        description: 'Create a subtask using a subagent.',
+        description:
+            'Launch a new subagent to handle complex, multi-step work. '
+            'Provide a short description, a detailed prompt, and an optional `subagent_type`. '
+            'Reuse `task_id` to continue a previous subtask session instead of creating a new one.',
         parameters: {
           'type': 'object',
           'properties': {
             'description': {'type': 'string'},
             'prompt': {'type': 'string'},
             'subagent_type': {'type': 'string'},
+            'task_id': {'type': 'string'},
           },
           'required': ['description', 'prompt'],
           'additionalProperties': false,
@@ -626,10 +639,31 @@ class ToolRegistry {
   List<ToolDefinitionModel> all() =>
       _definitions.values.map((item) => item.toModel()).toList();
 
-  List<ToolDefinitionModel> availableForAgent(AgentDefinition agent) {
+  bool _shouldPreferApplyPatch(String modelId) {
+    final lower = modelId.trim().toLowerCase();
+    if (lower.isEmpty) return false;
+    return lower.contains('gpt-') &&
+        !lower.contains('oss') &&
+        !lower.contains('gpt-4');
+  }
+
+  List<ToolDefinitionModel> availableForAgent(
+    AgentDefinition agent, {
+    String? modelId,
+  }) {
     final ids = agent.availableTools.toSet();
+    final preferApplyPatch =
+        modelId != null && _shouldPreferApplyPatch(modelId);
     return _definitions.values
-        .where((item) => ids.contains(item.id))
+        .where((item) {
+          if (!ids.contains(item.id)) return false;
+          if (preferApplyPatch) {
+            if (item.id == 'edit' || item.id == 'write') return false;
+          } else {
+            if (item.id == 'apply_patch') return false;
+          }
+          return true;
+        })
         .map((item) => item.toModel())
         .toList();
   }

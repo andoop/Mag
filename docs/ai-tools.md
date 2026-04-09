@@ -22,6 +22,11 @@
 - `webfetch`：默认 ask（需用户确认）。
 - `*.env` / `*.env.*` 的 `read` / `edit`：默认 ask。
 
+写类工具的实际暴露还会按模型做一次路由：
+
+- GPT 系列（排除 `gpt-4*` 与 `*oss*`）优先暴露 `apply_patch`，隐藏 `write` / `edit`。
+- 其他模型优先暴露 `write` / `edit`，隐藏 `apply_patch`。
+
 ---
 
 ## 路径规则（文件类工具通用）
@@ -87,6 +92,12 @@
 | `content` | string | 可选，直接写入的短文本 |
 | `contentRef` | string | 可选，对应同条助手消息中 `<write_content id="...">...</write_content>` 的 `id` |
 
+**行为要点**：
+
+- 若目标文件已存在，必须先用 `read` 读取；否则工具会直接失败。
+- 若上次 `read` 之后文件又被外部修改，工具也会拒绝写入，要求重新 `read` 最新内容。
+- 成功写入后，会把该文件的最新时间戳回写到会话 ledger，供后续 `edit` / `apply_patch` 继续使用。
+
 **示例（短内容）**：
 
 ```json
@@ -124,6 +135,12 @@ void main() {}
 | `newString` | string | **必填** |
 | `replaceAll` | boolean | 可选，默认 `false`（仅替换第一处） |
 
+**行为要点**：
+
+- 必须先 `read` 目标文件。
+- 若自上次 `read` 后文件已变化，`edit` 会拒绝执行，要求重新读取。
+- 成功写回后也会刷新会话内的 read ledger。
+
 **示例**：
 
 ```json
@@ -153,6 +170,16 @@ void main() {}
 - `*** Update File: <path>` — 修改；使用 `@@` 开始 hunk，行前缀：` `（上下文）、`-`（删）、`+`（增）。
 - `*** Delete File: <path>` — 删除文件。
 - `*** Move to: <newpath>` — 与 Update 配合表示移动（先写目标路径行）。
+- `*** End of File` — 可放在 update hunk 内，表示该块应优先从文件尾定位。
+
+**使用建议**：
+
+- 修改已有文件前，先用 `read` 读取最新内容，再生成 patch。
+- 若自上次 `read` 后文件发生变化，`apply_patch` 会拒绝执行并要求重新读取。
+- `@@` 后可带一个简短上下文锚点（如函数名 / 类名 / 附近唯一行）帮助定位重复代码块。
+- 尽量带足够的未修改上下文行，避免只给一两行导致定位失败。
+- 空白同样参与匹配；缩进、行尾空格、换行差异都可能影响结果。
+- patch 失败后应重新 `read` 目标文件，并用更大的上下文重新生成。
 
 **Update 示例**：
 
@@ -465,7 +492,7 @@ void main() {}
 
 ### 20. `task`
 
-**作用**：创建子会话，使用指定子代理执行 `prompt`，返回最后助手输出（包在 `<task_result>` 中）。
+**作用**：创建或续用子会话，使用指定子代理执行 `prompt`，返回最后助手输出（包在 `<task_result>` 中）。
 
 **参数**：
 
@@ -474,6 +501,7 @@ void main() {}
 | `description` | string | **必填**，任务标题 |
 | `prompt` | string | **必填**，子会话用户消息 |
 | `subagent_type` | string | 可选，默认 `general`；与 `AgentRegistry` 名称一致：`build`、`plan`、`general`、`explore` |
+| `task_id` | string | 可选；传入已有子会话 ID 时，会续跑该子任务而不是新建会话 |
 
 **示例**：
 
@@ -481,7 +509,8 @@ void main() {}
 {
   "description": "梳理 lib/core 依赖",
   "prompt": "只读分析 tool_runtime.dart 的依赖关系，简要输出。",
-  "subagent_type": "explore"
+  "subagent_type": "explore",
+  "task_id": "session_xxx"
 }
 ```
 

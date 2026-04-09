@@ -51,8 +51,7 @@ Future<ToolExecutionResult> _questionTool(
   final rawQuestions = (args['questions'] as List?) ?? const [];
   final parsed = rawQuestions
       .whereType<Map>()
-      .map((item) =>
-          QuestionInfo.fromJson(Map<String, dynamic>.from(item)))
+      .map((item) => QuestionInfo.fromJson(Map<String, dynamic>.from(item)))
       .toList();
   if (parsed.isEmpty) {
     return ToolExecutionResult(
@@ -142,7 +141,8 @@ Future<ToolExecutionResult> _webFetchTool(
 
 Future<ToolExecutionResult> _browserTool(
     JsonMap args, ToolRuntimeContext ctx) async {
-  final requestedPath = _normalizeWorkspaceRelativePath(args['path'] as String? ?? '');
+  final requestedPath =
+      _normalizeWorkspaceRelativePath(args['path'] as String? ?? '');
   if (requestedPath.isEmpty) {
     throw Exception('Missing workspace page path');
   }
@@ -288,6 +288,6 @@ Future<ToolExecutionResult> _taskTool(
     description: args['description'] as String? ?? '',
     prompt: args['prompt'] as String? ?? '',
     subagentType: args['subagent_type'] as String? ?? 'general',
+    taskId: args['task_id'] as String?,
   );
 }
-
