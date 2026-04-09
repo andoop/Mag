@@ -38,6 +38,7 @@ void main() {
   late Directory supportDir;
 
   final registry = ToolRegistry.builtins();
+  final readTool = registry['read']!;
   final writeTool = registry['write']!;
   final editTool = registry['edit']!;
   final taskTool = registry['task']!;
@@ -194,6 +195,21 @@ void main() {
     expect(permissionRequests, isEmpty);
   });
 
+  test('read returns hashline-tagged text lines', () async {
+    final target = File('${tempDir.path}/hashline_read.txt');
+    await target.writeAsString('alpha\nbeta\n');
+
+    final result = await readTool.execute(
+      {
+        'path': 'hashline_read.txt',
+      },
+      makeContext(),
+    );
+
+    expect(result.output, contains(RegExp(r'1#[A-Z]{2}\|alpha')));
+    expect(result.output, contains(RegExp(r'2#[A-Z]{2}\|beta')));
+  });
+
   test('write rejects stale read ledger', () async {
     final target = File('${tempDir.path}/stale.txt');
     await target.writeAsString('old\n');
@@ -275,7 +291,8 @@ void main() {
         type: PartType.text,
         createdAt: DateTime.now().millisecondsSinceEpoch,
         data: {
-          'rawText': '<write_content id="note-body">\nhello from ref\n</write_content>',
+          'rawText':
+              '<write_content id="note-body">\nhello from ref\n</write_content>',
           'text': '[write_content:note-body omitted]',
         },
       ),
@@ -312,7 +329,8 @@ void main() {
       ),
     );
 
-    expect(await File('${tempDir.path}/note.txt').readAsString(), 'hello from ref');
+    expect(await File('${tempDir.path}/note.txt').readAsString(),
+        'hello from ref');
     expect(permissionRequests, hasLength(1));
     expect(result.displayOutput, 'Wrote note.txt');
   });
@@ -341,11 +359,89 @@ void main() {
       throwsA(
         predicate(
           (error) =>
-              error.toString().contains('call `read` on the file again first') &&
-              error.toString().contains('without the `read` line-number prefixes'),
+              error
+                  .toString()
+                  .contains('call `read` on the file again first') &&
+              error
+                  .toString()
+                  .contains('without the `read` line-number prefixes'),
         ),
       ),
     );
+  });
+
+  test('hashline edit updates file content using read anchors', () async {
+    final target = File('${tempDir.path}/hashline_edit.txt');
+    await target.writeAsString('alpha\nbeta\n');
+
+    final readResult = await readTool.execute(
+      {
+        'path': 'hashline_edit.txt',
+      },
+      makeContext(),
+    );
+    final anchor =
+        RegExp(r'1#[A-Z]{2}').firstMatch(readResult.output)?.group(0);
+    expect(anchor, isNotNull);
+
+    final result = await editTool.execute(
+      {
+        'path': 'hashline_edit.txt',
+        'edits': [
+          {
+            'op': 'replace',
+            'pos': anchor,
+            'lines': ['gamma'],
+          }
+        ],
+      },
+      makeContext(),
+    );
+
+    expect(await target.readAsString(), 'gamma\nbeta\n');
+    expect(result.displayOutput, 'Updated hashline_edit.txt');
+    expect(permissionRequests, hasLength(1));
+  });
+
+  test('hashline edit rejects stale anchors with updated references', () async {
+    final target = File('${tempDir.path}/hashline_stale.txt');
+    await target.writeAsString('alpha\nbeta\n');
+
+    final readResult = await readTool.execute(
+      {
+        'path': 'hashline_stale.txt',
+      },
+      makeContext(),
+    );
+    final anchor =
+        RegExp(r'1#[A-Z]{2}').firstMatch(readResult.output)?.group(0);
+    expect(anchor, isNotNull);
+
+    await target.writeAsString('changed\nbeta\n');
+
+    await expectLater(
+      editTool.execute(
+        {
+          'path': 'hashline_stale.txt',
+          'edits': [
+            {
+              'op': 'replace',
+              'pos': anchor,
+              'lines': ['gamma'],
+            }
+          ],
+        },
+        makeContext(),
+      ),
+      throwsA(
+        predicate(
+          (error) =>
+              error.toString().contains('changed since last read') &&
+              error.toString().contains('>>> 1#'),
+        ),
+      ),
+    );
+    expect(permissionRequests, isEmpty);
   });
 
   test(
@@ -391,14 +487,11 @@ void main() {
       ),
     );
 
-    final envPrompt = prompts
-        .map((item) => item['content'] ?? '')
-        .firstWhere((content) =>
+    final envPrompt = prompts.map((item) => item['content'] ?? '').firstWhere(
+        (content) =>
             content.contains('Available tools:') || content.contains('可用工具:'));
-    final toolsLine = envPrompt
-        .split('\n')
-        .firstWhere((line) =>
-            line.contains('Available tools:') || line.contains('可用工具:'));
+    final toolsLine = envPrompt.split('\n').firstWhere(
+        (line) => line.contains('Available tools:') || line.contains('可用工具:'));
     final advertisedTools = toolsLine
         .split(':')
         .last
@@ -410,9 +503,11 @@ void main() {
     expect(advertisedTools.contains('write'), isFalse);
     expect(advertisedTools.contains('edit'), isFalse);
     expect(
-      envPrompt.contains('If you just changed a file and need to modify the same file again, read it again first.'),
+      envPrompt.contains(
+          'If you just changed a file and need to modify the same file again, read it again first.'),
       isTrue,
     );
+    expect(envPrompt.contains('@@ replace 12#VK'), isTrue);
   });
 
   test('engine preview returns the provider request payload', () async {
@@ -462,7 +557,10 @@ void main() {
     expect(payload['model'], 'gpt-5');
     final messages = (payload['messages'] as List? ?? const []).cast<Map>();
     expect(
-      messages.any((item) => (item['content'] as String?)?.contains('Preview the current payload') == true),
+      messages.any((item) =>
+          (item['content'] as String?)
+              ?.contains('Preview the current payload') ==
+          true),
       isTrue,
     );
     final tools = (payload['tools'] as List? ?? const []).cast<Map>();

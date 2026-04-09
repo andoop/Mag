@@ -299,7 +299,11 @@ Future<ToolExecutionResult> _readTool(
       hasMoreLines = true;
       break;
     }
-    final numbered = '${i + 1}: $line';
+    final numbered = _formatHashlineReadLine(
+      i + 1,
+      line,
+      truncated: original.length > _kMaxReadLineLength,
+    );
     contentLines.add(numbered);
     bytes += size;
   }
@@ -728,6 +732,11 @@ String _performEditReplacement({
 
 Future<ToolExecutionResult> _editTool(
     JsonMap args, ToolRuntimeContext ctx) async {
+  if (args.containsKey('edits') ||
+      args['delete'] == true ||
+      args['rename'] != null) {
+    return _executeHashlineEditTool(args, ctx);
+  }
   final filePath = _toolFilePathArg(args);
   final oldString = args['oldString'] as String? ?? '';
   final newString = args['newString'] as String? ?? '';

@@ -67,11 +67,26 @@ Future<ToolExecutionResult> _applyPatchTool(
           treeUri: ctx.workspace.treeUri,
           relativePath: section.path,
         );
-        after = _deriveNewContentsFromChunks(
-          filePath: section.path,
-          existing: existing,
-          chunks: section.chunks,
-        );
+        if (_sectionUsesHashlineAnchors(section)) {
+          final envelope = _canonicalizeHashlineFileText(existing);
+          final originalLines = envelope.content.isEmpty
+              ? <String>[]
+              : envelope.content.split('\n');
+          final updatedLines = _applyHashlineEditsToLines(
+            originalLines,
+            _hashlineEditsFromPatchSection(section),
+          );
+          after = _restoreHashlineFileText(
+            updatedLines.join('\n'),
+            envelope,
+          );
+        } else {
+          after = _deriveNewContentsFromChunks(
+            filePath: section.path,
+            existing: existing,
+            chunks: section.chunks,
+          );
+        }
         if (section.movePath != null) {
           previewKind = 'move';
         } else {
@@ -241,12 +256,18 @@ class _PatchUpdateChunk {
     required this.newLines,
     this.changeContext,
     this.isEndOfFile = false,
+    this.hashlineOp,
+    this.hashlinePos,
+    this.hashlineEnd,
   });
 
   final List<String> oldLines;
   final List<String> newLines;
   final String? changeContext;
   final bool isEndOfFile;
+  final String? hashlineOp;
+  final String? hashlinePos;
+  final String? hashlineEnd;
 }
 
 class _PatchChunkParseResult {
@@ -289,6 +310,18 @@ class _PatchPlannedChange {
 
 enum _PatchSectionKind { add, update, delete }
 
+class _PatchHashlineHeader {
+  _PatchHashlineHeader({
+    required this.op,
+    this.pos,
+    this.end,
+  });
+
+  final String op;
+  final String? pos;
+  final String? end;
+}
+
 String _normalizePatchHeaderPath(String raw) {
   final out = _normalizeWorkspaceRelativePath(raw);
   if (out.isEmpty) {
@@ -309,6 +342,43 @@ String _stripPatchHeredoc(String input) {
   ).firstMatch(input);
   if (match == null) return input;
   return match.group(2) ?? input;
+}
+
+_PatchHashlineHeader? _parseHashlineChunkHeader(String contextLine) {
+  final trimmed = contextLine.trim();
+  if (trimmed.isEmpty) return null;
+  final parts =
+      trimmed.split(RegExp(r'\s+')).where((item) => item.isNotEmpty).toList();
+  if (parts.isEmpty) return null;
+
+  String op = 'replace';
+  var index = 0;
+  if (const {'replace', 'append', 'prepend'}.contains(parts.first)) {
+    op = parts.first;
+    index = 1;
+  }
+
+  final anchors = parts.skip(index).toList();
+  if (anchors.isEmpty) {
+    return (op == 'append' || op == 'prepend')
+        ? _PatchHashlineHeader(op: op)
+        : null;
+  }
+  if (anchors.length > 2) {
+    return null;
+  }
+  try {
+    final pos = _normalizeHashlineRef(anchors[0]);
+    _parseHashlineRef(pos);
+    String? end;
+    if (anchors.length == 2) {
+      end = _normalizeHashlineRef(anchors[1]);
+      _parseHashlineRef(end);
+    }
+    return _PatchHashlineHeader(op: op, pos: pos, end: end);
+  } catch (_) {
+    return null;
+  }
 }
 
 _PatchSectionHeader? _parsePatchHeader(List<String> lines, int startIdx) {
@@ -372,6 +442,7 @@ _PatchChunkParseResult _parseUpdateFileChunks(
   while (i < endIdx && !lines[i].startsWith('***')) {
     if (lines[i].startsWith('@@')) {
       final contextLine = lines[i].substring(2).trim();
+      final hashlineHeader = _parseHashlineChunkHeader(contextLine);
       i += 1;
       final oldLines = <String>[];
       final newLines = <String>[];
@@ -404,6 +475,9 @@ _PatchChunkParseResult _parseUpdateFileChunks(
           newLines: newLines,
           changeContext: contextLine.isEmpty ? null : contextLine,
           isEndOfFile: isEndOfFile,
+          hashlineOp: hashlineHeader?.op,
+          hashlinePos: hashlineHeader?.pos,
+          hashlineEnd: hashlineHeader?.end,
         ),
       );
       continue;
@@ -480,7 +554,14 @@ List<String> _patchSectionDebugLines(_PatchSection section) {
     case _PatchSectionKind.update:
       final out = <String>[];
       for (final chunk in section.chunks) {
-        out.add('@@ ${chunk.changeContext ?? ''}'.trimRight());
+        if (chunk.hashlineOp != null) {
+          final headerParts = <String>[chunk.hashlineOp!];
+          if (chunk.hashlinePos != null) headerParts.add(chunk.hashlinePos!);
+          if (chunk.hashlineEnd != null) headerParts.add(chunk.hashlineEnd!);
+          out.add('@@ ${headerParts.join(' ')}'.trimRight());
+        } else {
+          out.add('@@ ${chunk.changeContext ?? ''}'.trimRight());
+        }
         var oldIdx = 0;
         var newIdx = 0;
         while (
@@ -510,6 +591,45 @@ List<String> _patchSectionDebugLines(_PatchSection section) {
       }
       return out;
   }
+}
+
+bool _chunkUsesHashlineAnchors(_PatchUpdateChunk chunk) =>
+    chunk.hashlineOp != null;
+
+bool _sectionUsesHashlineAnchors(_PatchSection section) =>
+    section.chunks.any(_chunkUsesHashlineAnchors);
+
+List<_HashlineEditOp> _hashlineEditsFromPatchSection(_PatchSection section) {
+  final edits = <_HashlineEditOp>[];
+  for (final chunk in section.chunks) {
+    final op = chunk.hashlineOp;
+    if (op == null) {
+      throw Exception(
+        'apply_patch hashline sections cannot mix hash-anchored and classic hunks in the same file. Choose one style per file.',
+      );
+    }
+    List<String>? lines;
+    switch (op) {
+      case 'replace':
+        lines = chunk.newLines.isEmpty ? null : List<String>.of(chunk.newLines);
+        break;
+      case 'append':
+      case 'prepend':
+        lines = List<String>.of(chunk.newLines);
+        break;
+      default:
+        throw Exception('Unsupported hashline patch op: $op');
+    }
+    edits.add(
+      _HashlineEditOp(
+        op: op,
+        pos: chunk.hashlinePos,
+        end: chunk.hashlineEnd,
+        lines: lines,
+      ),
+    );
+  }
+  return edits;
 }
 
 String _deriveNewContentsFromChunks({

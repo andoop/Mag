@@ -3,6 +3,7 @@ library tool_runtime;
 import 'dart:convert';
 import 'dart:io';
 
+import 'package:crypto/crypto.dart';
 import 'package:path/path.dart' as p;
 
 import 'database.dart';
@@ -18,6 +19,7 @@ import 'tools/todo_tool_spec.dart';
 import 'workspace_bridge.dart';
 
 part 'tool_read_write.dart';
+part 'tool_hashline.dart';
 part 'tool_file_ops.dart';
 part 'tool_patch.dart';
 part 'tool_misc.dart';
@@ -199,19 +201,50 @@ class ToolRegistry {
       ToolDefinition(
         id: 'edit',
         description:
-            'Replace text in a file at `path` using `oldString` and `newString`. '
-            'Copy `oldString` from a fresh `read` of the file (not from numbered `read` output). '
-            'If you need to edit the same file again after a successful edit, `read` it again first and use the updated contents. '
-            'Multi-line spans tolerate CRLF vs LF; matching also allows per-line trim and common-indent stripping when unambiguous.$kMobileWorkspacePathSuffix',
+            'Edit files using hash-anchored LINE#ID references for precise, safe modifications. '
+            'Workflow: call `read`, copy exact LINE#ID anchors, submit one `edit` call per file with the smallest possible operations, and if the same file needs another call, `read` it again first. '
+            'Use anchors like `42#VK` only; do not include trailing `|content`. '
+            'All operations in one call must reference the original file state. '
+            'Supported operations: `replace`, `append`, `prepend`; `replace` with `lines: null` deletes the target line or range. '
+            'Anchored edits reject stale LINE#ID references before writing any file changes. '
+            'For compatibility, legacy `oldString`/`newString` edits are still accepted, but LINE#ID edits are preferred.$kMobileWorkspacePathSuffix',
         parameters: {
           'type': 'object',
           'properties': {
             'path': {'type': 'string'},
+            'filePath': {'type': 'string'},
+            'delete': {'type': 'boolean'},
+            'rename': {'type': 'string'},
+            'edits': {
+              'type': 'array',
+              'items': {
+                'type': 'object',
+                'properties': {
+                  'op': {
+                    'type': 'string',
+                    'enum': ['replace', 'append', 'prepend'],
+                  },
+                  'pos': {'type': 'string'},
+                  'end': {'type': 'string'},
+                  'lines': {
+                    'anyOf': [
+                      {'type': 'string'},
+                      {
+                        'type': 'array',
+                        'items': {'type': 'string'},
+                      },
+                      {'type': 'null'},
+                    ],
+                  },
+                },
+                'required': ['op', 'lines'],
+                'additionalProperties': false,
+              },
+            },
             'oldString': {'type': 'string'},
             'newString': {'type': 'string'},
             'replaceAll': {'type': 'boolean'},
           },
-          'required': ['path', 'oldString', 'newString'],
           'additionalProperties': false,
         },
         execute: _editTool,

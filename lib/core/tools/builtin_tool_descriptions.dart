@@ -10,7 +10,7 @@ Usage:
 - To read later sections, call this tool again with a larger offset.
 - Use the grep tool to find specific content in large files or files with long lines.
 - If you are unsure of the correct file path, use the glob tool to look up filenames by glob pattern.
-- Contents are returned with each line prefixed by its line number as `<line>: <content>`. For example, if a file has contents "foo\n", you will receive "1: foo\n". For directories, entries are returned one per line (without line numbers) with a trailing `/` for subdirectories.
+- Text-file contents are returned with hash-anchored line references in `LINE#ID|content` format when the full line is available. For example, if a file has contents "foo\n", you may receive `1#AB|foo`. Long truncated lines fall back to plain numbered output. For directories, entries are returned one per line (without line numbers) with a trailing `/` for subdirectories.
 - Any line longer than 2000 characters is truncated.
 - Call this tool in parallel when you know there are multiple files you want to read.
 - Avoid tiny repeated slices (30 line chunks). If you need more context, read a larger window.
@@ -63,6 +63,8 @@ Example patch:
 It is important to remember:
 
 - Before writing a patch for an existing file, first call `read` so you have the exact current contents.
+- This client also supports hash-anchored patch hunks. In an update section, you may write headers like `@@ replace 12#VK`, `@@ replace 12#VK 15#MB`, `@@ append 20#QR`, or `@@ prepend 20#QR`, reusing exact `LINE#ID` anchors copied from `read` output.
+- For hash-anchored hunks, do not guess anchors and do not include the trailing `|content` portion from `read`.
 - If you need to patch the same file again after a successful edit or patch, call `read` again first and regenerate the patch from the new contents.
 - Context lines in each update hunk should uniquely identify the target location. Prefer including at least 3 lines of unchanged context before/after a change when possible.
 - Match whitespace carefully. Tabs, spaces, trailing whitespace, and nearby unchanged lines help the tool find the correct location.

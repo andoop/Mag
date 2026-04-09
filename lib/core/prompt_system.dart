@@ -151,7 +151,9 @@ class PromptAssembler {
 
     final zh = context.isZh;
     final lines = <String>[
-      zh ? '你和用户共享同一个 Android 工作区。' : 'You and the user share the same Android workspace.',
+      zh
+          ? '你和用户共享同一个 Android 工作区。'
+          : 'You and the user share the same Android workspace.',
       '',
       zh ? '# 当前智能体' : '# Current Agent',
       '${zh ? "名称" : "Name"}: ${context.agent}',
@@ -166,18 +168,31 @@ class PromptAssembler {
       '${zh ? "日期" : "Date"}: $now.',
       if (context.maxSteps != null)
         '${zh ? "当前步骤" : "Current step"}: ${context.currentStep}/${context.maxSteps}.',
-      zh ? '不要假设存在 shell、PTY 或桌面专属功能。' : 'Do not assume shell, PTY, or desktop-only capabilities exist.',
-      zh ? '优先使用可用工具，保持在工作区边界内。' : 'Prefer available tools and stay within the workspace boundary.',
+      zh
+          ? '不要假设存在 shell、PTY 或桌面专属功能。'
+          : 'Do not assume shell, PTY, or desktop-only capabilities exist.',
+      zh
+          ? '优先使用可用工具，保持在工作区边界内。'
+          : 'Prefer available tools and stay within the workspace boundary.',
       kToolCallingRulesPrompt.trim(),
     ];
 
-    final hasEditTools = tools.any(
-        (t) => const {'write', 'edit', 'apply_patch', 'delete', 'rename', 'move', 'copy'}.contains(t));
+    final hasEditTools = tools.any((t) => const {
+          'write',
+          'edit',
+          'apply_patch',
+          'delete',
+          'rename',
+          'move',
+          'copy'
+        }.contains(t));
 
     if (hasEditTools) {
       lines.addAll(zh
           ? [
-              '对已有文件做任何 `edit` 或 `apply_patch` 之前，必须先用 `read` 读取该文件最新内容，再基于读取结果确定位置、`oldString`、上下文和 patch。',
+              '对已有文件做任何 `edit` 或 `apply_patch` 之前，必须先用 `read` 读取该文件最新内容。',
+              '`edit` 现在优先使用基于内容哈希的 `LINE#ID` 锚点；请直接复用 `read` 输出中的精确锚点，不要猜测，也不要带上后面的 `|内容`。',
+              '`apply_patch` 也支持 hashline 头部，例如 `@@ replace 12#VK`、`@@ replace 12#VK 15#MB`、`@@ append 20#QR`、`@@ prepend 20#QR`。',
               '如果你刚刚修改过某个文件，又要再次修改同一文件，先重新 `read` 一次最新内容；不要复用上一次读取或修改前的旧片段。',
               '修改已有文件时优先使用 `edit` 或 `apply_patch`。',
               '大量写入或包含许多引号/大括号的代码，不要在工具 JSON 中内联完整文件内容。',
@@ -188,7 +203,9 @@ class PromptAssembler {
               '你也可以在文字中用 `[[file:path/relative/to/workspace]]` 写可点击链接。',
             ]
           : [
-              'Before any `edit` or `apply_patch` on an existing file, you MUST call `read` on that file and use the fresh contents to choose the location, `oldString`, context, and patch.',
+              'Before any `edit` or `apply_patch` on an existing file, you MUST call `read` on that file and use the fresh contents.',
+              '`edit` now prefers hash-anchored `LINE#ID` references. Reuse the exact anchors from `read` output; do not guess them, and do not include the trailing `|content` portion.',
+              '`apply_patch` also supports hashline headers such as `@@ replace 12#VK`, `@@ replace 12#VK 15#MB`, `@@ append 20#QR`, and `@@ prepend 20#QR`.',
               'If you just changed a file and need to modify the same file again, read it again first. Do not reuse stale snippets from before the previous edit.',
               'Prefer `edit` or `apply_patch` for modifying existing files.',
               'For workspace file operations: `delete` can remove files or directories (directories are recursive); `rename` only changes the final name within the same parent folder; use `move` for path changes or cross-folder moves; `copy` can duplicate files or whole directory trees.',
@@ -209,8 +226,7 @@ class PromptAssembler {
       for (final a in context.allAgents) {
         if (a.hidden) continue;
         if (a.name == context.agent) continue;
-        lines.add(
-            '- ${a.name}: ${a.localizedDescription(zh: context.isZh)}');
+        lines.add('- ${a.name}: ${a.localizedDescription(zh: context.isZh)}');
       }
     }
 
@@ -553,8 +569,7 @@ const String _buildSwitchReminderZh = '''<system-reminder>
 使用可用的工具和权限来实现已批准的方案。
 </system-reminder>''';
 
-const String _maxStepsReminder =
-    '''CRITICAL - MAXIMUM STEPS REACHED
+const String _maxStepsReminder = '''CRITICAL - MAXIMUM STEPS REACHED
 
 The maximum number of steps allowed for this task has been reached. Tools are disabled until next user input. Respond with text only.
 
@@ -571,8 +586,7 @@ Response must include:
 
 Any attempt to use tools is a critical violation. Respond with text ONLY.''';
 
-const String _maxStepsReminderZh =
-    '''关键 - 已达到最大步数限制
+const String _maxStepsReminderZh = '''关键 - 已达到最大步数限制
 
 此任务允许的最大步数已用尽。在下次用户输入之前，工具已被禁用。请仅用文字回复。
 
@@ -636,7 +650,8 @@ const String _codexPrompt =
 - Finish the job end to end.
 ''';
 
-const String explorePrompt = '''You are Mag Explore, a file search specialist. You excel at thoroughly navigating and exploring codebases.
+const String explorePrompt =
+    '''You are Mag Explore, a file search specialist. You excel at thoroughly navigating and exploring codebases.
 
 Your strengths:
 - Rapidly finding files using glob patterns
