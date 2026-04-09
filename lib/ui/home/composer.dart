@@ -3,6 +3,130 @@ part of '../home_page.dart';
 // ignore_for_file: invalid_use_of_protected_member
 
 extension _HomePageComposer on _HomePageState {
+  void _handlePromptComposerChanged() {
+    final match = _currentPromptMentionMatch();
+    if (!_promptFocusNode.hasFocus || match == null) {
+      _promptMentionDebounce?.cancel();
+      if (_activePromptMention != null ||
+          _promptMentionSuggestions.isNotEmpty ||
+          _promptMentionSearching) {
+        setState(() {
+          _activePromptMention = null;
+          _promptMentionSuggestions = const [];
+          _promptMentionSelectedIndex = 0;
+          _promptMentionSearching = false;
+        });
+      }
+      return;
+    }
+    final sameMatch = _activePromptMention != null &&
+        _activePromptMention!.start == match.start &&
+        _activePromptMention!.end == match.end &&
+        _activePromptMention!.query == match.query;
+    if (sameMatch) return;
+    setState(() {
+      _activePromptMention = match;
+      _promptMentionSelectedIndex = 0;
+      _promptMentionSearching = true;
+    });
+    _promptMentionDebounce?.cancel();
+    _promptMentionDebounce = Timer(const Duration(milliseconds: 120), () async {
+      final requestId = ++_promptMentionRequestId;
+      final results = await widget.controller.searchWorkspaceEntries(
+        query: match.query,
+        limit: 8,
+      );
+      if (!mounted || requestId != _promptMentionRequestId) return;
+      final latest = _currentPromptMentionMatch();
+      if (latest == null ||
+          latest.start != match.start ||
+          latest.query != match.query) {
+        return;
+      }
+      setState(() {
+        _activePromptMention = latest;
+        _promptMentionSuggestions = results;
+        _promptMentionSelectedIndex = 0;
+        _promptMentionSearching = false;
+      });
+    });
+  }
+
+  _PromptMentionMatch? _currentPromptMentionMatch() {
+    final workspace = widget.controller.state.workspace;
+    if (workspace == null) return null;
+    final value = _promptController.value;
+    final selection = value.selection;
+    if (!selection.isValid || !selection.isCollapsed) return null;
+    final cursor = selection.baseOffset;
+    if (cursor < 0 || cursor > value.text.length) return null;
+    final prefix = value.text.substring(0, cursor);
+    final atIndex = prefix.lastIndexOf('@');
+    if (atIndex < 0) return null;
+    if (atIndex > 0) {
+      final prev = prefix[atIndex - 1];
+      final allowedPrefix = RegExp(r'[\s\(\[\{"]');
+      if (!allowedPrefix.hasMatch(prev)) return null;
+    }
+    final token = prefix.substring(atIndex + 1);
+    if (token.contains(RegExp(r'\s'))) return null;
+    return _PromptMentionMatch(start: atIndex, end: cursor, query: token);
+  }
+
+  void _insertPromptMentionSuggestion(WorkspaceEntry entry) {
+    final match = _activePromptMention ?? _currentPromptMentionMatch();
+    if (match == null) return;
+    final suffix = entry.isDirectory && !entry.path.endsWith('/') ? '/' : '';
+    final replacement = '@${entry.path}$suffix ';
+    final text = _promptController.text;
+    final next = text.replaceRange(match.start, match.end, replacement);
+    final cursor = match.start + replacement.length;
+    _promptController.value = TextEditingValue(
+      text: next,
+      selection: TextSelection.collapsed(offset: cursor),
+    );
+    _promptMentionDebounce?.cancel();
+    setState(() {
+      _activePromptMention = null;
+      _promptMentionSuggestions = const [];
+      _promptMentionSelectedIndex = 0;
+      _promptMentionSearching = false;
+    });
+    _promptFocusNode.requestFocus();
+  }
+
+  void _movePromptMentionSelection(int delta) {
+    if (_promptMentionSuggestions.isEmpty) return;
+    final next = (_promptMentionSelectedIndex + delta)
+        .clamp(0, _promptMentionSuggestions.length - 1);
+    if (next == _promptMentionSelectedIndex) return;
+    setState(() {
+      _promptMentionSelectedIndex = next;
+    });
+  }
+
+  void _confirmPromptMentionSelection() {
+    if (_promptMentionSuggestions.isEmpty) return;
+    final index =
+        _promptMentionSelectedIndex.clamp(0, _promptMentionSuggestions.length - 1);
+    _insertPromptMentionSuggestion(_promptMentionSuggestions[index]);
+  }
+
+  void _dismissPromptMentionSelection() {
+    if (_activePromptMention == null &&
+        _promptMentionSuggestions.isEmpty &&
+        !_promptMentionSearching) {
+      return;
+    }
+    _promptMentionDebounce?.cancel();
+    setState(() {
+      _activePromptMention = null;
+      _promptMentionSuggestions = const [];
+      _promptMentionSelectedIndex = 0;
+      _promptMentionSearching = false;
+    });
+  }
+
   Widget _buildComposerDock(
       BuildContext context, AppState state, bool isKeyboardOpen) {
     final oc = context.oc;
@@ -82,6 +206,209 @@ extension _HomePageComposer on _HomePageState {
                 child: Column(
                   mainAxisSize: MainAxisSize.min,
                   children: [
+                    if (_activePromptMention != null &&
+                        (_promptMentionSearching ||
+                            _promptMentionSuggestions.isNotEmpty)) ...[
+                      Padding(
+                        padding: const EdgeInsets.fromLTRB(8, 8, 8, 0),
+                        child: Container(
+                          constraints: const BoxConstraints(maxHeight: 220),
+                          decoration: BoxDecoration(
+                            color: oc.composerOptionBg,
+                            borderRadius: BorderRadius.circular(16),
+                            border: Border.all(color: oc.softBorderColor),
+                          ),
+                          child: Column(
+                            mainAxisSize: MainAxisSize.min,
+                            children: [
+                              Padding(
+                                padding:
+                                    const EdgeInsets.fromLTRB(12, 10, 12, 6),
+                                child: Row(
+                                  children: [
+                                    Icon(Icons.alternate_email,
+                                        size: 15, color: oc.foregroundHint),
+                                    const SizedBox(width: 6),
+                                    Expanded(
+                                      child: Text(
+                                        _activePromptMention!.query.isEmpty
+                                            ? l(context, '引用工作区文件或目录',
+                                                'Reference workspace files or folders')
+                                            : l(
+                                                context,
+                                                '搜索 "${
+                                                    _activePromptMention!.query
+                                                  }"',
+                                                'Search "${_activePromptMention!.query}"',
+                                              ),
+                                        style: Theme.of(context)
+                                            .textTheme
+                                            .labelSmall
+                                            ?.copyWith(
+                                                color: oc.foregroundHint,
+                                                fontWeight: FontWeight.w600),
+                                      ),
+                                    ),
+                                    if (_promptMentionSearching)
+                                      SizedBox(
+                                        width: 14,
+                                        height: 14,
+                                        child: CircularProgressIndicator(
+                                          strokeWidth: 1.6,
+                                          color: oc.foregroundHint,
+                                        ),
+                                      ),
+                                  ],
+                                ),
+                              ),
+                              Flexible(
+                                child: _promptMentionSuggestions.isEmpty
+                                    ? Padding(
+                                        padding: const EdgeInsets.fromLTRB(
+                                            12, 4, 12, 12),
+                                        child: Align(
+                                          alignment: Alignment.centerLeft,
+                                          child: Text(
+                                            l(context, '没有匹配结果',
+                                                'No matches found'),
+                                            style: Theme.of(context)
+                                                .textTheme
+                                                .bodySmall
+                                                ?.copyWith(
+                                                    color: oc.foregroundMuted),
+                                          ),
+                                        ),
+                                      )
+                                    : ListView.separated(
+                                        padding: const EdgeInsets.fromLTRB(
+                                            6, 0, 6, 6),
+                                        shrinkWrap: true,
+                                        itemCount:
+                                            _promptMentionSuggestions.length,
+                                        separatorBuilder: (_, __) =>
+                                            Divider(height: 1,
+                                                color: oc.softBorderColor),
+                                        itemBuilder: (context, index) {
+                                          final entry =
+                                              _promptMentionSuggestions[index];
+                                          final selected =
+                                              index == _promptMentionSelectedIndex;
+                                          final fullPath = entry.path +
+                                              (entry.isDirectory &&
+                                                      !entry.path.endsWith('/')
+                                                  ? '/'
+                                                  : '');
+                                          final itemName = entry.isDirectory
+                                              ? entry.name.replaceAll(
+                                                  RegExp(r'/+$'), '')
+                                              : entry.name;
+                                          return InkWell(
+                                            borderRadius:
+                                                BorderRadius.circular(12),
+                                            onTap: () =>
+                                                _insertPromptMentionSuggestion(
+                                                    entry),
+                                            child: Padding(
+                                              padding:
+                                                  const EdgeInsets.symmetric(
+                                                      horizontal: 8,
+                                                      vertical: 10),
+                                              child: Container(
+                                                decoration: BoxDecoration(
+                                                  color: selected
+                                                      ? oc.selectedFill
+                                                      : Colors.transparent,
+                                                  borderRadius:
+                                                      BorderRadius.circular(10),
+                                                ),
+                                                padding:
+                                                    const EdgeInsets.symmetric(
+                                                        horizontal: 8,
+                                                        vertical: 8),
+                                                child: Row(
+                                                  children: [
+                                                    Icon(
+                                                      entry.isDirectory
+                                                          ? Icons.folder_outlined
+                                                          : Icons.description_outlined,
+                                                      size: 16,
+                                                      color: selected
+                                                          ? oc.accent
+                                                          : oc.foregroundHint,
+                                                    ),
+                                                    const SizedBox(width: 8),
+                                                    Expanded(
+                                                      child: Column(
+                                                        crossAxisAlignment:
+                                                            CrossAxisAlignment
+                                                                .start,
+                                                        children: [
+                                                          Text(
+                                                            itemName,
+                                                            maxLines: 1,
+                                                            overflow:
+                                                                TextOverflow
+                                                                    .ellipsis,
+                                                            style: TextStyle(
+                                                              color: oc
+                                                                  .foreground,
+                                                              fontSize: 13,
+                                                              height: 1.25,
+                                                              fontWeight: selected
+                                                                  ? FontWeight
+                                                                      .w600
+                                                                  : FontWeight
+                                                                      .w400,
+                                                            ),
+                                                          ),
+                                                          const SizedBox(
+                                                              height: 2),
+                                                          Text(
+                                                            fullPath,
+                                                            style: Theme.of(
+                                                                    context)
+                                                                .textTheme
+                                                                .bodySmall
+                                                                ?.copyWith(
+                                                                    fontSize:
+                                                                        11.5,
+                                                                    color: oc
+                                                                        .foregroundMuted),
+                                                          ),
+                                                          const SizedBox(
+                                                              height: 2),
+                                                          Text(
+                                                            entry.isDirectory
+                                                                ? l(context,
+                                                                    '目录',
+                                                                    'Directory')
+                                                                : l(context,
+                                                                    '文件',
+                                                                    'File'),
+                                                            style: Theme.of(
+                                                                    context)
+                                                                .textTheme
+                                                                .labelSmall
+                                                                ?.copyWith(
+                                                                    color: oc
+                                                                        .foregroundMuted),
+                                                          ),
+                                                        ],
+                                                      ),
+                                                    ),
+                                                  ],
+                                                ),
+                                              ),
+                                            ),
+                                          );
+                                        },
+                                      ),
+                              ),
+                            ],
+                          ),
+                        ),
+                      ),
+                    ],
                     AnimatedSwitcher(
                       duration: const Duration(milliseconds: 160),
                       switchInCurve: Curves.easeOut,
@@ -126,22 +453,45 @@ extension _HomePageComposer on _HomePageState {
                         Padding(
                           padding: EdgeInsets.fromLTRB(
                               10, isKeyboardOpen ? 2 : 3, 10, 8),
-                          child: TextField(
-                            controller: _promptController,
-                            minLines: 1,
-                            maxLines: isKeyboardOpen ? 4 : 3,
-                            textInputAction: TextInputAction.newline,
-                            style: const TextStyle(fontSize: 14, height: 1.32),
-                            decoration: InputDecoration(
-                              hintText: l(context, '问我关于这个工作区的任何事',
-                                  'Ask anything about this workspace'),
-                              border: InputBorder.none,
-                              contentPadding: EdgeInsets.fromLTRB(
-                                  38, isKeyboardOpen ? 7 : 8, 86, 11),
-                              hintStyle: Theme.of(context)
-                                  .textTheme
-                                  .bodyMedium
-                                  ?.copyWith(color: oc.foregroundHint),
+                          child: CallbackShortcuts(
+                            bindings: {
+                              const SingleActivator(
+                                      LogicalKeyboardKey.arrowDown):
+                                  _activePromptMention != null
+                                      ? () => _movePromptMentionSelection(1)
+                                      : () {},
+                              const SingleActivator(
+                                      LogicalKeyboardKey.arrowUp):
+                                  _activePromptMention != null
+                                      ? () => _movePromptMentionSelection(-1)
+                                      : () {},
+                              const SingleActivator(LogicalKeyboardKey.tab):
+                                  _activePromptMention != null
+                                      ? _confirmPromptMentionSelection
+                                      : () {},
+                              const SingleActivator(LogicalKeyboardKey.escape):
+                                  _dismissPromptMentionSelection,
+                            },
+                            child: TextField(
+                              controller: _promptController,
+                              focusNode: _promptFocusNode,
+                              minLines: 1,
+                              maxLines: isKeyboardOpen ? 4 : 3,
+                              textInputAction: TextInputAction.newline,
+                              style: const TextStyle(fontSize: 14, height: 1.32),
+                              decoration: InputDecoration(
+                                hintText: l(
+                                    context,
+                                    '问我关于这个工作区的任何事，输入 @ 引用文件',
+                                    'Ask anything about this workspace, type @ to reference files'),
+                                border: InputBorder.none,
+                                contentPadding: EdgeInsets.fromLTRB(
+                                    38, isKeyboardOpen ? 7 : 8, 86, 11),
+                                hintStyle: Theme.of(context)
+                                    .textTheme
+                                    .bodyMedium
+                                    ?.copyWith(color: oc.foregroundHint),
+                              ),
                             ),
                           ),
                         ),

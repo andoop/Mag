@@ -177,6 +177,9 @@ class AppController extends ChangeNotifier {
   StreamSubscription<ServerEvent>? _subscription;
   final Map<String, Future<Uint8List>> _workspaceBytesCache = {};
   final Map<String, Future<String>> _workspaceTextCache = {};
+  final Map<String, List<WorkspaceEntry>> _workspaceSearchIndexCache = {};
+  final Map<String, Future<List<WorkspaceEntry>>> _workspaceSearchIndexInflight =
+      {};
   final Map<String, JsonMap> _pendingPartDeltas = {};
   Timer? _partDeltaFlushTimer;
   int _lastFlushDurationMs = 0; // ignore: prefer_final_fields

@@ -54,6 +54,7 @@ extension AppControllerSession on AppController {
       _cancelPendingPartDeltas();
       _clearWorkspacePreviewCaches();
       final resolved = await _resolveWorkspace(picked);
+      unawaited(prewarmWorkspaceSearchIndex(workspace: resolved, force: true));
       await ProjectRecentsStore.touch(resolved.id, resolved.name);
       final sessions = await _client!.listSessions(resolved.id);
       final statuses = await _loadSessionStatuses(resolved.id);
@@ -273,6 +274,7 @@ extension AppControllerSession on AppController {
       _cancelPendingPartDeltas();
       _clearWorkspacePreviewCaches();
       final session = await _client!.createSession(workspace, agent: agent);
+      unawaited(prewarmWorkspaceSearchIndex(workspace: workspace));
       final sessions = await _client!.listSessions(workspace.id);
       final statuses = await _loadSessionStatuses(workspace.id);
       state = state.copyWith(

@@ -61,10 +61,23 @@ class HomePage extends StatefulWidget {
   State<HomePage> createState() => _HomePageState();
 }
 
+class _PromptMentionMatch {
+  const _PromptMentionMatch({
+    required this.start,
+    required this.end,
+    required this.query,
+  });
+
+  final int start;
+  final int end;
+  final String query;
+}
+
 class _HomePageState extends State<HomePage> {
   final GlobalKey<ScaffoldState> _scaffoldKey = GlobalKey<ScaffoldState>();
 
   final TextEditingController _promptController = TextEditingController();
+  final FocusNode _promptFocusNode = FocusNode();
   final TextEditingController _schemaController = TextEditingController(
     text: const JsonEncoder.withIndent('  ')
         .convert(_structuredSchemaTemplates['answer']),
@@ -89,6 +102,16 @@ class _HomePageState extends State<HomePage> {
   int _lastTimelineSyncAt = 0;
   String _lastStateRenderKey = '';
   String _lastStructuralKey = '';
+  // ignore: prefer_final_fields
+  List<WorkspaceEntry> _promptMentionSuggestions = const [];
+  _PromptMentionMatch? _activePromptMention;
+  // ignore: prefer_final_fields
+  int _promptMentionSelectedIndex = 0;
+  // ignore: prefer_final_fields
+  bool _promptMentionSearching = false;
+  Timer? _promptMentionDebounce;
+  // ignore: prefer_final_fields
+  int _promptMentionRequestId = 0;
 
   /// 会话切换时必须重建时间线；不能仅依赖 [_stateRenderKey]，否则新建/切换会话后可能与旧 key 碰撞而不调用 setState，界面仍显示旧消息。
   String? _lastObservedSessionId;
@@ -97,6 +120,8 @@ class _HomePageState extends State<HomePage> {
   void initState() {
     super.initState();
     _timelineController.addListener(_handleTimelineScroll);
+    _promptController.addListener(_handlePromptComposerChanged);
+    _promptFocusNode.addListener(_handlePromptComposerChanged);
     widget.controller.addListener(_onStateChanged);
   }
 
@@ -106,7 +131,11 @@ class _HomePageState extends State<HomePage> {
     _timelineController
       ..removeListener(_handleTimelineScroll)
       ..dispose();
+    _promptMentionDebounce?.cancel();
+    _promptController.removeListener(_handlePromptComposerChanged);
+    _promptFocusNode.removeListener(_handlePromptComposerChanged);
     _promptController.dispose();
+    _promptFocusNode.dispose();
     _schemaController.dispose();
     _stickToBottom.dispose();
     _messageVersion.dispose();

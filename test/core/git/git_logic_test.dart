@@ -9,25 +9,25 @@ void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
 
   const channel = MethodChannel('mobile_agent/git_network');
-  late Directory tempDir;
+    late Directory tempDir;
   late _FakeNativeGitBackend backend;
 
-  setUp(() async {
+    setUp(() async {
     tempDir = await Directory.systemTemp.createTemp('mag_git_native_');
     backend = _FakeNativeGitBackend();
     GitNetworkBridge.debugOverrideIsSupported = true;
     TestDefaultBinaryMessengerBinding.instance!.defaultBinaryMessenger
         .setMockMethodCallHandler(channel, backend.handle);
-  });
+    });
 
-  tearDown(() async {
+    tearDown(() async {
     GitNetworkBridge.debugOverrideIsSupported = null;
     TestDefaultBinaryMessengerBinding.instance!.defaultBinaryMessenger
         .setMockMethodCallHandler(channel, null);
-    if (await tempDir.exists()) {
-      await tempDir.delete(recursive: true);
-    }
-  });
+      if (await tempDir.exists()) {
+        await tempDir.delete(recursive: true);
+      }
+    });
 
   group('git service native bridge', () {
     test('clone -> status is clean and current branch is preserved', () async {
