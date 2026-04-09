@@ -24,6 +24,7 @@ Usage:
 - This tool will overwrite the existing file if there is one at the provided path.
 - If this is an existing file, you MUST use the Read tool first to read the file's contents. This tool will fail if you did not read the file first.
 - This tool also checks whether the file changed after your last read. If it did, read the file again before writing.
+- Provide either `content` directly or `contentRef` pointing to a `<write_content id="...">...</write_content>` block from the same assistant message.
 - ALWAYS prefer editing existing files in the codebase. NEVER write new files unless explicitly required.
 - NEVER proactively create documentation files (*.md) or README files. Only create documentation files if explicitly requested by the User.
 - Only use emojis if the user explicitly requests it. Avoid writing emojis to files unless asked.
@@ -62,6 +63,7 @@ Example patch:
 It is important to remember:
 
 - Before writing a patch for an existing file, first call `read` so you have the exact current contents.
+- If you need to patch the same file again after a successful edit or patch, call `read` again first and regenerate the patch from the new contents.
 - Context lines in each update hunk should uniquely identify the target location. Prefer including at least 3 lines of unchanged context before/after a change when possible.
 - Match whitespace carefully. Tabs, spaces, trailing whitespace, and nearby unchanged lines help the tool find the correct location.
 - Use `@@ optional context` lines to disambiguate repeated code blocks (for example a function name, class name, or nearby unique line).

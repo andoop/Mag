@@ -1,6 +1,39 @@
 part of '../session_engine.dart';
 
 extension SessionEngineSummarize on SessionEngine {
+  String _compactedToolOutput(MessagePart part) {
+    final state = Map<String, dynamic>.from(part.data['state'] as Map? ?? {});
+    final tool = part.data['tool'] as String? ?? 'tool';
+    final displayOutput = (state['displayOutput'] as String? ?? '').trim();
+    final metadata = Map<String, dynamic>.from(state['metadata'] as Map? ?? {});
+    final compactMetadata = <String, dynamic>{};
+    for (final entry in metadata.entries) {
+      final key = entry.key;
+      final value = entry.value;
+      if (value == null) continue;
+      if (value is num || value is bool) {
+        compactMetadata[key] = value;
+        continue;
+      }
+      if (value is String) {
+        final trimmed = value.trim();
+        if (trimmed.isEmpty || trimmed.length > 160) continue;
+        if (key == 'preview') continue;
+        compactMetadata[key] = trimmed;
+      }
+    }
+    final lines = <String>['[output compacted]'];
+    if (displayOutput.isNotEmpty) {
+      lines.add('Summary: $displayOutput');
+    } else {
+      lines.add('Summary: output from `$tool` was compacted.');
+    }
+    if (compactMetadata.isNotEmpty) {
+      lines.add('Metadata: ${jsonEncode(compactMetadata)}');
+    }
+    return lines.join('\n');
+  }
+
   /// OpenCode `compaction.prune` 思路的简化版：从大到小清空已完成 tool 的 output，避免 summary 请求本身超窗。
   Future<int> _pruneLargestToolOutputsForContext({
     required WorkspaceInfo workspace,
@@ -33,7 +66,7 @@ extension SessionEngineSummarize on SessionEngine {
       final out = state['output'] as String? ?? '';
       if (out.isEmpty || out == '[output compacted]') continue;
       totalEst += math.max(1, estimateOpenCodeCharsAsTokens(out.length));
-      state['output'] = '[output compacted]';
+      state['output'] = _compactedToolOutput(p);
       await _savePart(
         workspace: workspace,
         part: MessagePart(

@@ -9,7 +9,6 @@ import 'database.dart';
 import 'git/exceptions/git_exceptions.dart';
 import 'git/git_service.dart';
 import 'git/git_settings_store.dart';
-import 'git/remote/remote_manager.dart';
 import 'json_coerce.dart';
 import 'models.dart';
 import 'tools/builtin_tool_descriptions.dart';
@@ -184,8 +183,13 @@ class ToolRegistry {
               'type': 'string',
               'description': 'The content to write to the file',
             },
+            'contentRef': {
+              'type': 'string',
+              'description':
+                  'Optional id of a <write_content id="..."> block from the same assistant message',
+            },
           },
-          'required': ['filePath', 'content'],
+          'required': ['filePath'],
           'additionalProperties': false,
         },
         execute: _writeTool,
@@ -197,6 +201,7 @@ class ToolRegistry {
         description:
             'Replace text in a file at `path` using `oldString` and `newString`. '
             'Copy `oldString` from a fresh `read` of the file (not from numbered `read` output). '
+            'If you need to edit the same file again after a successful edit, `read` it again first and use the updated contents. '
             'Multi-line spans tolerate CRLF vs LF; matching also allows per-line trim and common-indent stripping when unambiguous.$kMobileWorkspacePathSuffix',
         parameters: {
           'type': 'object',

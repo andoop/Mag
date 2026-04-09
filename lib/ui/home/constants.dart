@@ -136,27 +136,38 @@ class _CompactIconButton extends StatelessWidget {
     required this.icon,
     required this.onPressed,
     this.tooltip,
+    this.small = false,
+    this.quiet = false,
   });
 
   final IconData icon;
   final VoidCallback? onPressed;
   final String? tooltip;
+  final bool small;
+  final bool quiet;
 
   @override
   Widget build(BuildContext context) {
     final oc = context.oc;
+    final buttonSize = small ? 26.0 : 32.0;
+    final padding = small ? 4.0 : 6.0;
+    final iconSize = small ? 14.0 : 17.0;
     return IconButton(
       tooltip: tooltip,
       onPressed: onPressed,
-      constraints: const BoxConstraints(minWidth: 32, minHeight: 32),
-      padding: const EdgeInsets.all(6),
+      constraints: BoxConstraints(minWidth: buttonSize, minHeight: buttonSize),
+      padding: EdgeInsets.all(padding),
       visualDensity: VisualDensity.compact,
-      splashRadius: 18,
-      iconSize: 17,
+      splashRadius: small ? 15 : 18,
+      iconSize: iconSize,
       style: IconButton.styleFrom(
         tapTargetSize: MaterialTapTargetSize.shrinkWrap,
-        backgroundColor: oc.panelBackground.withOpacity(0.78),
-        side: BorderSide(color: oc.borderColor),
+        backgroundColor: quiet
+            ? oc.panelBackground.withOpacity(0.34)
+            : oc.panelBackground.withOpacity(0.78),
+        side: BorderSide(
+          color: quiet ? oc.borderColor.withOpacity(0.55) : oc.borderColor,
+        ),
       ),
       icon: Icon(icon),
     );

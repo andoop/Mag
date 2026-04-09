@@ -1,10 +1,200 @@
 part of '../../home_page.dart';
 
+Future<void> _openRawToolCallSheet(
+  BuildContext context, {
+  required String toolName,
+  String? callId,
+  required JsonMap rawInput,
+  String? rawOutput,
+}) {
+  return showModalBottomSheet<void>(
+    context: context,
+    isScrollControlled: true,
+    builder: (_) => FractionallySizedBox(
+      heightFactor: 0.88,
+      child: SafeArea(
+        child: _RawToolCallSheet(
+          toolName: toolName,
+          callId: callId,
+          rawInput: rawInput,
+          rawOutput: rawOutput,
+        ),
+      ),
+    ),
+  );
+}
+
+class _RawToolCallSheet extends StatefulWidget {
+  const _RawToolCallSheet({
+    required this.toolName,
+    required this.rawInput,
+    this.callId,
+    this.rawOutput,
+  });
+
+  final String toolName;
+  final String? callId;
+  final JsonMap rawInput;
+  final String? rawOutput;
+
+  @override
+  State<_RawToolCallSheet> createState() => _RawToolCallSheetState();
+}
+
+class _RawToolCallSheetState extends State<_RawToolCallSheet> {
+  String _view = 'input';
+  late final ScrollController _verticalScrollController;
+  late final ScrollController _horizontalScrollController;
+
+  @override
+  void initState() {
+    super.initState();
+    _verticalScrollController = ScrollController();
+    _horizontalScrollController = ScrollController();
+  }
+
+  @override
+  void dispose() {
+    _verticalScrollController.dispose();
+    _horizontalScrollController.dispose();
+    super.dispose();
+  }
+
+  String _rawText() {
+    if (_view == 'output') {
+      return widget.rawOutput ?? '';
+    }
+    return const JsonEncoder.withIndent('  ').convert(widget.rawInput);
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final hasOutput =
+        widget.rawOutput != null && widget.rawOutput!.trim().isNotEmpty;
+    final raw = _rawText();
+    return Padding(
+      padding: const EdgeInsets.all(12),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      '${widget.toolName} · ${l(context, '原始调用', 'Raw call')}',
+                      style: const TextStyle(fontWeight: FontWeight.bold),
+                    ),
+                    if (widget.callId != null && widget.callId!.isNotEmpty) ...[
+                      const SizedBox(height: 4),
+                      Text(
+                        'callID: ${widget.callId}',
+                        style: Theme.of(context).textTheme.bodySmall,
+                      ),
+                    ],
+                  ],
+                ),
+              ),
+              const SizedBox(width: 8),
+              _CompactIconButton(
+                onPressed: () => Navigator.of(context).pop(),
+                icon: Icons.close,
+              ),
+            ],
+          ),
+          const SizedBox(height: 8),
+          Expanded(
+            child: Container(
+              width: double.infinity,
+              padding: const EdgeInsets.all(12),
+              decoration: _panelDecoration(context,
+                  background: context.oc.shadow, radius: 14, elevated: false),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Wrap(
+                    spacing: 6,
+                    runSpacing: 6,
+                    children: [
+                      ChoiceChip(
+                        label: const Text('input'),
+                        selected: _view == 'input',
+                        onSelected: (_) => setState(() => _view = 'input'),
+                      ),
+                      if (hasOutput)
+                        ChoiceChip(
+                          label: const Text('output'),
+                          selected: _view == 'output',
+                          onSelected: (_) => setState(() => _view = 'output'),
+                        ),
+                      _CompactActionButton(
+                        onPressed: () async {
+                          await Clipboard.setData(ClipboardData(text: raw));
+                          if (context.mounted) {
+                            ScaffoldMessenger.of(context).showSnackBar(
+                              SnackBar(
+                                content:
+                                    Text(l(context, '已复制', 'Copied to clipboard')),
+                              ),
+                            );
+                          }
+                        },
+                        icon: Icons.copy_all_outlined,
+                        label: l(context, '复制', 'Copy'),
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 8),
+                  Expanded(
+                    child: Scrollbar(
+                      controller: _verticalScrollController,
+                      thumbVisibility: true,
+                      child: SingleChildScrollView(
+                        controller: _verticalScrollController,
+                        child: Scrollbar(
+                          controller: _horizontalScrollController,
+                          thumbVisibility: true,
+                          notificationPredicate: (notification) =>
+                              notification.metrics.axis == Axis.horizontal,
+                          child: SingleChildScrollView(
+                            controller: _horizontalScrollController,
+                            scrollDirection: Axis.horizontal,
+                            child: SelectionArea(
+                              child: Text(
+                                raw,
+                                style: const TextStyle(
+                                  fontFamily: 'monospace',
+                                  fontSize: 12,
+                                  height: 1.4,
+                                ),
+                              ),
+                            ),
+                          ),
+                        ),
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
 /// `fileref` 工具：可点击路径，打开预览（.md / .html 支持排版视图）。
 class _FileRefToolPart extends StatelessWidget {
   const _FileRefToolPart({
     required this.toolStatus,
     required this.refs,
+    required this.rawInput,
+    required this.rawOutput,
+    required this.callId,
     required this.controller,
     required this.workspace,
     required this.onInsertPromptReference,
@@ -13,6 +203,9 @@ class _FileRefToolPart extends StatelessWidget {
 
   final String toolStatus;
   final List<Map<String, dynamic>> refs;
+  final JsonMap rawInput;
+  final String? rawOutput;
+  final String? callId;
   final AppController controller;
   final WorkspaceInfo? workspace;
   final ValueChanged<String> onInsertPromptReference;
@@ -65,6 +258,19 @@ class _FileRefToolPart extends StatelessWidget {
                     fontSize: 11.5,
                     color: oc.foreground,
                   ),
+                ),
+              ),
+              _CompactIconButton(
+                icon: Icons.data_object_outlined,
+                tooltip: l(context, '查看原始调用', 'View raw call'),
+                small: true,
+                quiet: true,
+                onPressed: () => _openRawToolCallSheet(
+                  context,
+                  toolName: 'fileref',
+                  callId: callId,
+                  rawInput: rawInput,
+                  rawOutput: rawOutput,
                 ),
               ),
             ],
@@ -158,10 +364,16 @@ class _TodoWriteToolPart extends StatelessWidget {
   const _TodoWriteToolPart({
     required this.toolStatus,
     required this.todos,
+    required this.rawInput,
+    required this.rawOutput,
+    required this.callId,
   });
 
   final String toolStatus;
   final List<Map<String, dynamic>> todos;
+  final JsonMap rawInput;
+  final String? rawOutput;
+  final String? callId;
 
   @override
   Widget build(BuildContext context) {
@@ -236,6 +448,19 @@ class _TodoWriteToolPart extends StatelessWidget {
                   ],
                 ),
               ),
+              _CompactIconButton(
+                icon: Icons.data_object_outlined,
+                tooltip: l(context, '查看原始调用', 'View raw call'),
+                small: true,
+                quiet: true,
+                onPressed: () => _openRawToolCallSheet(
+                  context,
+                  toolName: 'todowrite',
+                  callId: callId,
+                  rawInput: rawInput,
+                  rawOutput: rawOutput,
+                ),
+              ),
             ],
           ),
           if (todos.isNotEmpty) ...[
@@ -294,11 +519,17 @@ class _QuestionToolPart extends StatefulWidget {
     required this.toolStatus,
     required this.questions,
     required this.answers,
+    required this.rawInput,
+    required this.rawOutput,
+    required this.callId,
   });
 
   final String toolStatus;
   final List<Map<String, dynamic>> questions;
   final List<List<String>> answers;
+  final JsonMap rawInput;
+  final String? rawOutput;
+  final String? callId;
 
   @override
   State<_QuestionToolPart> createState() => _QuestionToolPartState();
@@ -390,6 +621,19 @@ class _QuestionToolPartState extends State<_QuestionToolPart> {
                         ),
                       ],
                     ],
+                  ),
+                ),
+                _CompactIconButton(
+                  icon: Icons.data_object_outlined,
+                  tooltip: l(context, '查看原始调用', 'View raw call'),
+                  small: true,
+                  quiet: true,
+                  onPressed: () => _openRawToolCallSheet(
+                    context,
+                    toolName: 'question',
+                    callId: widget.callId,
+                    rawInput: widget.rawInput,
+                    rawOutput: widget.rawOutput,
                   ),
                 ),
                 Icon(

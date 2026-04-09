@@ -457,12 +457,14 @@ class _ContextStatsCard extends StatelessWidget {
     required this.model,
     required this.onInitializeMemory,
     required this.onCompactSession,
+    required this.onViewRawContext,
   });
 
   final SessionInfo? session;
   final String model;
   final VoidCallback? onInitializeMemory;
   final VoidCallback? onCompactSession;
+  final VoidCallback? onViewRawContext;
 
   @override
   Widget build(BuildContext context) {
@@ -550,6 +552,11 @@ class _ContextStatsCard extends StatelessWidget {
                   icon: Icons.note_add_outlined,
                   label: l(context, '初始化/更新 Mag.md',
                       'Initialize/Update Mag.md'),
+                ),
+                _CompactActionButton(
+                  onPressed: onViewRawContext,
+                  icon: Icons.data_object_outlined,
+                  label: l(context, '查看原始 Context', 'View Raw Context'),
                 ),
               ],
             ),

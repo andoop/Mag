@@ -179,6 +179,22 @@ extension _HomePageComposer on _HomePageState {
                                     onCompactSession: state.isBusy
                                         ? null
                                         : widget.controller.compactSession,
+                                    onViewRawContext: state.session == null
+                                        ? null
+                                        : () {
+                                            _openRawContextSheet(
+                                              context,
+                                              title: l(context, '原始 Context',
+                                                  'Raw Context'),
+                                              subtitle: l(
+                                                context,
+                                                '当前会话发给模型的请求 payload',
+                                                'Request payload sent to the model for this session',
+                                              ),
+                                              loader: widget.controller
+                                                  .buildCurrentContextPreview,
+                                            );
+                                          },
                                   ),
                                 ),
                                 const SizedBox(width: 8),
@@ -409,6 +425,7 @@ extension _HomePageComposer on _HomePageState {
     required String model,
     required VoidCallback? onInitializeMemory,
     required VoidCallback? onCompactSession,
+    required VoidCallback? onViewRawContext,
   }) {
     return showModalBottomSheet<void>(
       context: context,
@@ -456,11 +473,244 @@ extension _HomePageComposer on _HomePageState {
                   model: model,
                   onInitializeMemory: onInitializeMemory,
                   onCompactSession: onCompactSession,
+                  onViewRawContext: onViewRawContext,
                 ),
               ],
             ),
           ),
         ),
+      ),
+    );
+  }
+}
+
+Future<void> _openRawContextSheet(
+  BuildContext context, {
+  required String title,
+  required String subtitle,
+  required Future<JsonMap> Function() loader,
+}) {
+  return showModalBottomSheet<void>(
+    context: context,
+    isScrollControlled: true,
+    builder: (_) => FractionallySizedBox(
+      heightFactor: 0.92,
+      child: SafeArea(
+        child: _RawContextSheet(
+          title: title,
+          subtitle: subtitle,
+          loader: loader,
+        ),
+      ),
+    ),
+  );
+}
+
+class _RawContextSheet extends StatefulWidget {
+  const _RawContextSheet({
+    required this.title,
+    required this.subtitle,
+    required this.loader,
+  });
+
+  final String title;
+  final String subtitle;
+  final Future<JsonMap> Function() loader;
+
+  @override
+  State<_RawContextSheet> createState() => _RawContextSheetState();
+}
+
+class _RawContextSheetState extends State<_RawContextSheet> {
+  String _view = 'payload';
+  late final ScrollController _verticalScrollController;
+  late final ScrollController _horizontalScrollController;
+
+  @override
+  void initState() {
+    super.initState();
+    _verticalScrollController = ScrollController();
+    _horizontalScrollController = ScrollController();
+  }
+
+  @override
+  void dispose() {
+    _verticalScrollController.dispose();
+    _horizontalScrollController.dispose();
+    super.dispose();
+  }
+
+  String _encodeForView(JsonMap payload) {
+    Object selected;
+    switch (_view) {
+      case 'messages':
+        selected = payload['messages'] ?? const [];
+        break;
+      case 'tools':
+        selected = payload['tools'] ?? const [];
+        break;
+      default:
+        selected = payload;
+        break;
+    }
+    return const JsonEncoder.withIndent('  ').convert(selected);
+  }
+
+  String _viewLabel(BuildContext context, String id) {
+    switch (id) {
+      case 'messages':
+        return l(context, 'messages', 'messages');
+      case 'tools':
+        return l(context, 'tools', 'tools');
+      default:
+        return l(context, '完整 payload', 'Full payload');
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Padding(
+      padding: const EdgeInsets.all(12),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      widget.title,
+                      style: const TextStyle(fontWeight: FontWeight.bold),
+                    ),
+                    const SizedBox(height: 4),
+                    Text(
+                      widget.subtitle,
+                      style: Theme.of(context).textTheme.bodySmall,
+                    ),
+                  ],
+                ),
+              ),
+              const SizedBox(width: 8),
+              _CompactIconButton(
+                onPressed: () => Navigator.of(context).pop(),
+                icon: Icons.close,
+              ),
+            ],
+          ),
+          const SizedBox(height: 8),
+          Expanded(
+            child: FutureBuilder<JsonMap>(
+              future: widget.loader(),
+              builder: (context, snapshot) {
+                if (snapshot.connectionState != ConnectionState.done) {
+                  return const Center(child: CircularProgressIndicator());
+                }
+                if (snapshot.hasError) {
+                  return Container(
+                    width: double.infinity,
+                    padding: const EdgeInsets.all(12),
+                    decoration: _panelDecoration(context,
+                        background: context.oc.shadow,
+                        radius: 14,
+                        elevated: false),
+                    child: SelectionArea(
+                      child: SingleChildScrollView(
+                        controller: _verticalScrollController,
+                        child: Text(
+                          snapshot.error.toString(),
+                          style: TextStyle(
+                            fontFamily: 'monospace',
+                            fontSize: 12,
+                            height: 1.4,
+                            color: Colors.red.shade400,
+                          ),
+                        ),
+                      ),
+                    ),
+                  );
+                }
+                final payload = snapshot.data ?? <String, dynamic>{};
+                final raw = _encodeForView(payload);
+                return Container(
+                  width: double.infinity,
+                  padding: const EdgeInsets.all(12),
+                  decoration: _panelDecoration(context,
+                      background: context.oc.shadow,
+                      radius: 14,
+                      elevated: false),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Wrap(
+                        spacing: 6,
+                        runSpacing: 6,
+                        children: [
+                          for (final view in const ['payload', 'messages', 'tools'])
+                            ChoiceChip(
+                              label: Text(_viewLabel(context, view)),
+                              selected: _view == view,
+                              onSelected: (_) => setState(() => _view = view),
+                            ),
+                          _CompactActionButton(
+                            onPressed: () async {
+                              await Clipboard.setData(
+                                ClipboardData(text: raw),
+                              );
+                              if (context.mounted) {
+                                ScaffoldMessenger.of(context).showSnackBar(
+                                  SnackBar(
+                                    content: Text(l(context, '已复制',
+                                        'Copied to clipboard')),
+                                  ),
+                                );
+                              }
+                            },
+                            icon: Icons.copy_all_outlined,
+                            label: l(context, '复制', 'Copy'),
+                          ),
+                        ],
+                      ),
+                      const SizedBox(height: 8),
+                      Expanded(
+                        child: Scrollbar(
+                          controller: _verticalScrollController,
+                          thumbVisibility: true,
+                          child: SingleChildScrollView(
+                            controller: _verticalScrollController,
+                            child: Scrollbar(
+                              controller: _horizontalScrollController,
+                              thumbVisibility: true,
+                              notificationPredicate: (notification) =>
+                                  notification.metrics.axis ==
+                                  Axis.horizontal,
+                              child: SingleChildScrollView(
+                                controller: _horizontalScrollController,
+                                scrollDirection: Axis.horizontal,
+                                child: SelectionArea(
+                                  child: Text(
+                                    raw,
+                                    style: const TextStyle(
+                                      fontFamily: 'monospace',
+                                      fontSize: 12,
+                                      height: 1.4,
+                                    ),
+                                  ),
+                                ),
+                              ),
+                            ),
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
+                );
+              },
+            ),
+          ),
+        ],
       ),
     );
   }

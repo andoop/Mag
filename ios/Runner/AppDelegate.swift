@@ -724,18 +724,60 @@ private final class IOSGitNetworkBridge {
       do {
         let value: [String: Any?]
         switch call.method {
+        case "discoverRepository":
+          value = try self.discoverRepository(arguments: arguments)
+        case "initRepository":
+          value = try self.initRepository(arguments: arguments)
         case "cloneRepository":
           value = try self.cloneRepository(arguments: arguments)
+        case "statusRepository":
+          value = try self.statusRepository(arguments: arguments)
+        case "addRepositoryPaths":
+          value = try self.addRepositoryPaths(arguments: arguments)
+        case "addAllRepositoryPaths":
+          value = try self.addAllRepositoryPaths(arguments: arguments)
+        case "unstageRepositoryPath":
+          value = try self.unstageRepositoryPath(arguments: arguments)
         case "commitRepository":
           value = try self.commitRepository(arguments: arguments, amend: false)
         case "amendCommitRepository":
           value = try self.commitRepository(arguments: arguments, amend: true)
+        case "logRepository":
+          value = try self.logRepository(arguments: arguments)
+        case "showRepositoryCommit":
+          value = try self.showRepositoryCommit(arguments: arguments)
+        case "diffRepository":
+          value = try self.diffRepository(arguments: arguments)
+        case "currentRepositoryBranch":
+          value = try self.currentRepositoryBranch(arguments: arguments)
+        case "listRepositoryBranches":
+          value = try self.listRepositoryBranches(arguments: arguments)
+        case "createRepositoryBranch":
+          value = try self.createRepositoryBranch(arguments: arguments)
+        case "deleteRepositoryBranch":
+          value = try self.deleteRepositoryBranch(arguments: arguments)
+        case "checkoutRepositoryTarget":
+          value = try self.checkoutRepositoryTarget(arguments: arguments)
+        case "checkoutRepositoryNewBranch":
+          value = try self.checkoutRepositoryNewBranch(arguments: arguments)
+        case "restoreRepositoryFile":
+          value = try self.restoreRepositoryFile(arguments: arguments)
+        case "mergeRepositoryBranch":
+          value = try self.mergeRepositoryBranch(arguments: arguments)
         case "fetchRepository":
           value = try self.fetchRepository(arguments: arguments)
         case "pullRepository":
           value = try self.pullRepository(arguments: arguments)
         case "pushRepository":
           value = try self.pushRepository(arguments: arguments)
+        case "rebaseRepositoryTarget":
+          value = try self.rebaseRepositoryTarget(arguments: arguments)
+        case "getRepositoryConfigValue":
+          value = try self.getRepositoryConfigValue(arguments: arguments)
+        case "setRepositoryConfigValue":
+          value = try self.setRepositoryConfigValue(arguments: arguments)
+        case "getRepositoryRemoteUrl":
+          value = try self.getRepositoryRemoteUrl(arguments: arguments)
         default:
           DispatchQueue.main.async { result(FlutterMethodNotImplemented) }
           return
@@ -751,6 +793,53 @@ private final class IOSGitNetworkBridge {
         }
       }
     }
+  }
+
+  private func discoverRepository(arguments: [String: Any]) throws -> [String: Any?] {
+    let path = try requiredString("path", in: arguments)
+    let fileManager = FileManager.default
+    var currentURL = URL(fileURLWithPath: path, isDirectory: true)
+    var isDirectory: ObjCBool = false
+    if !fileManager.fileExists(atPath: currentURL.path, isDirectory: &isDirectory) {
+      currentURL = currentURL.deletingLastPathComponent()
+    } else if !isDirectory.boolValue {
+      currentURL = currentURL.deletingLastPathComponent()
+    }
+    while true {
+      let gitURL = currentURL.appendingPathComponent(".git", isDirectory: true)
+      if fileManager.fileExists(atPath: gitURL.path) {
+        return [
+          "success": true,
+          "workDir": currentURL.path,
+        ]
+      }
+      let parent = currentURL.deletingLastPathComponent()
+      if parent.path == currentURL.path {
+        break
+      }
+      currentURL = parent
+    }
+    return [
+      "success": false,
+      "error": "Not a git repository",
+    ]
+  }
+
+  private func initRepository(arguments: [String: Any]) throws -> [String: Any?] {
+    let path = try requiredString("path", in: arguments)
+    var repository: OpaquePointer?
+    defer {
+      if let repository {
+        git_repository_free(repository)
+      }
+    }
+    try withGitCString(path) { pathCString in
+      try check(git_repository_init(&repository, pathCString, 0), "Init failed")
+    }
+    return [
+      "success": true,
+      "workDir": path,
+    ]
   }
 
   private func cloneRepository(arguments: [String: Any]) throws -> [String: Any?] {
@@ -802,6 +891,139 @@ private final class IOSGitNetworkBridge {
       "defaultBranch": defaultBranch,
       "objectsReceived": 0,
     ]
+  }
+
+  private func statusRepository(arguments: [String: Any]) throws -> [String: Any?] {
+    let workDir = try requiredString("workDir", in: arguments)
+    return try withRepository(path: workDir) { repository in
+      var statusOptions = git_status_options()
+      try check(
+        git_status_init_options(&statusOptions, UInt32(GIT_STATUS_OPTIONS_VERSION)),
+        "Failed to initialize status options"
+      )
+      statusOptions.show = GIT_STATUS_SHOW_INDEX_AND_WORKDIR
+      statusOptions.flags = UInt32(
+        GIT_STATUS_OPT_INCLUDE_UNTRACKED.rawValue |
+        GIT_STATUS_OPT_RECURSE_UNTRACKED_DIRS.rawValue |
+        GIT_STATUS_OPT_RENAMES_HEAD_TO_INDEX.rawValue
+      )
+      var statusList: OpaquePointer?
+      defer {
+        if let statusList {
+          git_status_list_free(statusList)
+        }
+      }
+      try check(git_status_list_new(&statusList, repository, &statusOptions), "Status failed")
+      let count = git_status_list_entrycount(statusList)
+      var staged: [[String: Any?]] = []
+      var unstaged: [[String: Any?]] = []
+      var untracked: [[String: Any?]] = []
+      for index in 0..<count {
+        guard let entry = git_status_byindex(statusList, index)?.pointee else {
+          continue
+        }
+        let path = statusEntryPath(entry)
+        if path.isEmpty {
+          continue
+        }
+        let flags = entry.status.rawValue
+        if (flags & GIT_STATUS_WT_NEW.rawValue) != 0 {
+          untracked.append(["path": path, "status": "untracked"])
+        }
+        if (flags & GIT_STATUS_CONFLICTED.rawValue) != 0 {
+          unstaged.append(["path": path, "status": "unmerged"])
+          continue
+        }
+        if (flags & GIT_STATUS_INDEX_NEW.rawValue) != 0 {
+          staged.append(["path": path, "status": "added"])
+        }
+        if (flags & GIT_STATUS_INDEX_MODIFIED.rawValue) != 0 {
+          staged.append(["path": path, "status": "modified"])
+        }
+        if (flags & GIT_STATUS_INDEX_DELETED.rawValue) != 0 {
+          staged.append(["path": path, "status": "deleted"])
+        }
+        if (flags & GIT_STATUS_INDEX_RENAMED.rawValue) != 0 {
+          staged.append(["path": path, "status": "renamed"])
+        }
+        if (flags & GIT_STATUS_WT_MODIFIED.rawValue) != 0 {
+          unstaged.append(["path": path, "status": "modified"])
+        }
+        if (flags & GIT_STATUS_WT_DELETED.rawValue) != 0 {
+          unstaged.append(["path": path, "status": "deleted"])
+        }
+        if (flags & GIT_STATUS_WT_RENAMED.rawValue) != 0 {
+          unstaged.append(["path": path, "status": "renamed"])
+        }
+      }
+      return [
+        "success": true,
+        "branch": try currentBranchName(repository: repository),
+        "head": try headOidString(repository: repository),
+        "clean": staged.isEmpty && unstaged.isEmpty && untracked.isEmpty,
+        "staged": staged,
+        "unstaged": unstaged,
+        "untracked": untracked,
+      ]
+    }
+  }
+
+  private func addRepositoryPaths(arguments: [String: Any]) throws -> [String: Any?] {
+    let workDir = try requiredString("workDir", in: arguments)
+    let paths = (arguments["paths"] as? [String] ?? []).map {
+      $0.trimmingCharacters(in: .whitespacesAndNewlines)
+    }.filter { !$0.isEmpty }
+    guard !paths.isEmpty else {
+      throw GitBridgeError("Missing required parameter: paths")
+    }
+    return try withRepository(path: workDir) { repository in
+      var index: OpaquePointer?
+      defer {
+        if let index {
+          git_index_free(index)
+        }
+      }
+      try check(git_repository_index(&index, repository), "Failed to open index")
+      for path in paths {
+        try withGitCString(path) { pathCString in
+          try check(git_index_add_bypath(index, pathCString), "Add failed")
+        }
+      }
+      try check(git_index_write(index), "Failed to write index")
+      return ["success": true]
+    }
+  }
+
+  private func addAllRepositoryPaths(arguments: [String: Any]) throws -> [String: Any?] {
+    let workDir = try requiredString("workDir", in: arguments)
+    return try withRepository(path: workDir) { repository in
+      var index: OpaquePointer?
+      defer {
+        if let index {
+          git_index_free(index)
+        }
+      }
+      try check(git_repository_index(&index, repository), "Failed to open index")
+      try withGitPathspec("*") { pathspec in
+        try check(
+          git_index_add_all(index, pathspec, UInt32(GIT_INDEX_ADD_DEFAULT.rawValue), nil, nil),
+          "Add failed"
+        )
+      }
+      try check(git_index_write(index), "Failed to write index")
+      return ["success": true]
+    }
+  }
+
+  private func unstageRepositoryPath(arguments: [String: Any]) throws -> [String: Any?] {
+    let workDir = try requiredString("workDir", in: arguments)
+    let path = try requiredString("path", in: arguments)
+    return try withRepository(path: workDir) { repository in
+      try withGitPathspec(path) { pathspec in
+        try check(git_reset_default(repository, nil, pathspec), "Unstage failed")
+      }
+      return ["success": true]
+    }
   }
 
   private func commitRepository(arguments: [String: Any], amend: Bool) throws -> [String: Any?] {
@@ -864,6 +1086,199 @@ private final class IOSGitNetworkBridge {
     }
 
     return try commitResult(repository: repository, oid: oid)
+  }
+
+  private func logRepository(arguments: [String: Any]) throws -> [String: Any?] {
+    let workDir = try requiredString("workDir", in: arguments)
+    let maxCount = max(1, arguments["maxCount"] as? Int ?? 20)
+    let firstParentOnly = (arguments["firstParentOnly"] as? Bool) == true
+    let since = parseDateFilter(arguments["since"] as? String)
+    let until = parseDateFilter(arguments["until"] as? String)
+    let commits = try withRepository(path: workDir) { repository -> [[String: Any?]] in
+      guard let headOid = try resolveObjectId(repository: repository, spec: "HEAD") else {
+        return []
+      }
+      var walker: OpaquePointer?
+      defer {
+        if let walker {
+          git_revwalk_free(walker)
+        }
+      }
+      try check(git_revwalk_new(&walker, repository), "Failed to initialize log walk")
+      git_revwalk_sorting(walker, UInt32(GIT_SORT_TIME.rawValue))
+      var oid = headOid
+      try check(git_revwalk_push(walker, &oid), "Failed to walk history")
+      var output: [[String: Any?]] = []
+      while output.count < maxCount {
+        var next = git_oid()
+        let code = git_revwalk_next(&next, walker)
+        if code == GIT_ITEROVER.rawValue {
+          break
+        }
+        try check(code, "Failed to read commit history")
+        let commit = try commitPayload(repository: repository, oid: next)
+        let timestamp = (commit["authorTimestampMs"] as? Int) ?? 0
+        if let since, timestamp < since {
+          continue
+        }
+        if let until, timestamp > until {
+          continue
+        }
+        output.append(commit)
+        if firstParentOnly {
+          let parents = commit["parents"] as? [String] ?? []
+          if let first = parents.first, let parentOid = oidFromString(first) {
+            git_revwalk_reset(walker)
+            var mutableParentOid = parentOid
+            try check(git_revwalk_push(walker, &mutableParentOid), "Failed to continue first-parent history")
+          } else {
+            break
+          }
+        }
+      }
+      return output
+    }
+    return [
+      "success": true,
+      "commits": commits,
+    ]
+  }
+
+  private func showRepositoryCommit(arguments: [String: Any]) throws -> [String: Any?] {
+    let workDir = try requiredString("workDir", in: arguments)
+    let ref = try requiredString("ref", in: arguments)
+    let commit = try withRepository(path: workDir) { repository -> [String: Any?] in
+      guard let oid = try resolveObjectId(repository: repository, spec: ref) else {
+        throw GitBridgeError("Unknown ref: \(ref)")
+      }
+      return try commitPayload(repository: repository, oid: oid)
+    }
+    return [
+      "success": true,
+      "commit": commit,
+    ]
+  }
+
+  private func diffRepository(arguments: [String: Any]) throws -> [String: Any?] {
+    let filter = Set((arguments["paths"] as? [String] ?? []).map {
+      $0.trimmingCharacters(in: .whitespacesAndNewlines)
+    }.filter { !$0.isEmpty })
+    let status = try statusRepository(arguments: arguments)
+    let groups: [(String, [[String: Any?]])] = [
+      ("Staged changes", status["staged"] as? [[String: Any?]] ?? []),
+      ("Unstaged changes", status["unstaged"] as? [[String: Any?]] ?? []),
+      ("Untracked files", status["untracked"] as? [[String: Any?]] ?? []),
+    ]
+    var sections: [String] = []
+    for (title, entries) in groups {
+      let visible = entries.filter { entry in
+        guard !filter.isEmpty else { return true }
+        return filter.contains(entry["path"] as? String ?? "")
+      }
+      guard !visible.isEmpty else {
+        continue
+      }
+      let body = visible.map { entry in
+        let statusName = entry["status"] as? String ?? "modified"
+        let path = entry["path"] as? String ?? ""
+        return "--- \(statusName): \(path)"
+      }.joined(separator: "\n")
+      sections.append("\(title):\n\(body)")
+    }
+    return [
+      "success": true,
+      "diff": sections.isEmpty ? "No changes." : sections.joined(separator: "\n\n"),
+    ]
+  }
+
+  private func currentRepositoryBranch(arguments: [String: Any]) throws -> [String: Any?] {
+    let workDir = try requiredString("workDir", in: arguments)
+    return try withRepository(path: workDir) { repository in
+      [
+        "success": true,
+        "branch": try currentBranchName(repository: repository),
+        "head": try headOidString(repository: repository),
+      ]
+    }
+  }
+
+  private func listRepositoryBranches(arguments: [String: Any]) throws -> [String: Any?] {
+    let workDir = try requiredString("workDir", in: arguments)
+    return try withRepository(path: workDir) { repository in
+      [
+        "success": true,
+        "branches": try listBranches(repository: repository),
+        "current": try currentBranchName(repository: repository),
+      ]
+    }
+  }
+
+  private func createRepositoryBranch(arguments: [String: Any]) throws -> [String: Any?] {
+    let workDir = try requiredString("workDir", in: arguments)
+    let name = try requiredString("name", in: arguments)
+    let startPoint = ((arguments["startPoint"] as? String)?.trimmingCharacters(in: .whitespacesAndNewlines)).flatMap { $0.isEmpty ? nil : $0 }
+    return try withRepository(path: workDir) { repository in
+      try createBranch(repository: repository, name: name, startPoint: startPoint)
+      return ["success": true]
+    }
+  }
+
+  private func deleteRepositoryBranch(arguments: [String: Any]) throws -> [String: Any?] {
+    let workDir = try requiredString("workDir", in: arguments)
+    let name = try requiredString("name", in: arguments)
+    let force = (arguments["force"] as? Bool) == true
+    return try withRepository(path: workDir) { repository in
+      try deleteBranch(repository: repository, name: name, force: force)
+      return ["success": true]
+    }
+  }
+
+  private func checkoutRepositoryTarget(arguments: [String: Any]) throws -> [String: Any?] {
+    let workDir = try requiredString("workDir", in: arguments)
+    let target = try requiredString("target", in: arguments)
+    return try withRepository(path: workDir) { repository in
+      try checkoutTarget(repository: repository, target: target)
+      return ["success": true]
+    }
+  }
+
+  private func checkoutRepositoryNewBranch(arguments: [String: Any]) throws -> [String: Any?] {
+    let workDir = try requiredString("workDir", in: arguments)
+    let name = try requiredString("name", in: arguments)
+    return try withRepository(path: workDir) { repository in
+      try createBranch(repository: repository, name: name, startPoint: nil)
+      try checkoutTarget(repository: repository, target: name)
+      return ["success": true]
+    }
+  }
+
+  private func restoreRepositoryFile(arguments: [String: Any]) throws -> [String: Any?] {
+    let workDir = try requiredString("workDir", in: arguments)
+    let path = try requiredString("path", in: arguments)
+    return try withRepository(path: workDir) { repository in
+      var checkoutOptions = git_checkout_options()
+      try check(git_checkout_init_options(&checkoutOptions, UInt32(GIT_CHECKOUT_OPTIONS_VERSION)), "Failed to initialize checkout options")
+      checkoutOptions.checkout_strategy = UInt32(GIT_CHECKOUT_FORCE.rawValue)
+      try withGitPathspec(path) { pathspec in
+        checkoutOptions.paths = pathspec.pointee
+        try check(git_checkout_head(repository, &checkoutOptions), "Restore failed")
+      }
+      return ["success": true]
+    }
+  }
+
+  private func mergeRepositoryBranch(arguments: [String: Any]) throws -> [String: Any?] {
+    let workDir = try requiredString("workDir", in: arguments)
+    let branch = try requiredString("branch", in: arguments)
+    return try withRepository(path: workDir) { repository in
+      let result = try performMerge(repository: repository, targetRef: branch, targetLabel: branch)
+      return [
+        "success": result.success,
+        "conflicts": result.conflicts,
+        "mergeCommit": result.mergeCommit,
+        "error": result.success ? nil : "Merge failed",
+      ]
+    }
   }
 
   private func fetchRepository(arguments: [String: Any]) throws -> [String: Any?] {
@@ -933,6 +1348,53 @@ private final class IOSGitNetworkBridge {
       "pushedRefs": [effectiveRefspec],
       "error": nil,
     ]
+  }
+
+  private func rebaseRepositoryTarget(arguments: [String: Any]) throws -> [String: Any?] {
+    let workDir = try requiredString("workDir", in: arguments)
+    let targetRef = try requiredString("targetRef", in: arguments)
+    return try withRepository(path: workDir) { repository in
+      try performRebase(repository: repository, targetRef: targetRef)
+      return [
+        "success": true,
+        "conflicts": [],
+        "newHead": try headOidString(repository: repository),
+      ]
+    }
+  }
+
+  private func getRepositoryConfigValue(arguments: [String: Any]) throws -> [String: Any?] {
+    let workDir = try requiredString("workDir", in: arguments)
+    let section = try requiredString("section", in: arguments)
+    let key = try requiredString("key", in: arguments)
+    return try withRepository(path: workDir) { repository in
+      [
+        "success": true,
+        "value": try configValue(repository: repository, section: section, key: key),
+      ]
+    }
+  }
+
+  private func setRepositoryConfigValue(arguments: [String: Any]) throws -> [String: Any?] {
+    let workDir = try requiredString("workDir", in: arguments)
+    let section = try requiredString("section", in: arguments)
+    let key = try requiredString("key", in: arguments)
+    let value = try requiredString("value", in: arguments)
+    return try withRepository(path: workDir) { repository in
+      try setConfigValue(repository: repository, section: section, key: key, value: value)
+      return ["success": true]
+    }
+  }
+
+  private func getRepositoryRemoteUrl(arguments: [String: Any]) throws -> [String: Any?] {
+    let workDir = try requiredString("workDir", in: arguments)
+    let remoteName = ((arguments["remoteName"] as? String)?.trimmingCharacters(in: .whitespacesAndNewlines)).flatMap { $0.isEmpty ? nil : $0 } ?? "origin"
+    return try withRepository(path: workDir) { repository in
+      [
+        "success": true,
+        "url": try configValue(repository: repository, section: "remote.\(remoteName)", key: "url"),
+      ]
+    }
   }
 
   private func fetch(repository: OpaquePointer?, remoteName: String, branch: String?, auth: GitAuthInfo?) throws -> [String] {
@@ -1149,6 +1611,426 @@ private final class IOSGitNetworkBridge {
     try check(git_checkout_init_options(&checkoutOptions, UInt32(GIT_CHECKOUT_OPTIONS_VERSION)), "Failed to initialize checkout options")
     checkoutOptions.checkout_strategy = UInt32(GIT_CHECKOUT_SAFE.rawValue)
     try check(git_checkout_tree(repository, targetObject, &checkoutOptions), "Pull failed")
+  }
+
+  private func performMerge(repository: OpaquePointer?, targetRef: String, targetLabel: String) throws -> MergeOutcome {
+    var annotated: OpaquePointer?
+    defer {
+      if let annotated {
+        git_annotated_commit_free(annotated)
+      }
+      git_repository_state_cleanup(repository)
+    }
+    try withGitCString(targetRef) { targetRefCString in
+      try check(git_annotated_commit_from_revspec(&annotated, repository, targetRefCString), "Reference not found: \(targetRef)")
+    }
+    var analysis = git_merge_analysis_t(rawValue: 0)
+    var preference = git_merge_preference_t(rawValue: 0)
+    var commits = [annotated]
+    try check(git_merge_analysis(&analysis, &preference, repository, &commits, commits.count), "Merge failed")
+    if (analysis.rawValue & GIT_MERGE_ANALYSIS_UP_TO_DATE.rawValue) != 0 {
+      return MergeOutcome(success: true, conflicts: [], mergeCommit: nil)
+    }
+    if (analysis.rawValue & GIT_MERGE_ANALYSIS_FASTFORWARD.rawValue) != 0 {
+      let branchName = try currentBranchName(repository: repository) ?? {
+        throw GitBridgeError("Cannot merge in detached HEAD state")
+      }()
+      try fastForward(repository: repository, branchName: branchName, targetAnnotated: annotated, remoteRefName: targetRef)
+      return MergeOutcome(success: true, conflicts: [], mergeCommit: try headOidString(repository: repository))
+    }
+    var mergeOptions = git_merge_options()
+    try check(git_merge_init_options(&mergeOptions, UInt32(GIT_MERGE_OPTIONS_VERSION)), "Failed to initialize merge options")
+    var checkoutOptions = git_checkout_options()
+    try check(git_checkout_init_options(&checkoutOptions, UInt32(GIT_CHECKOUT_OPTIONS_VERSION)), "Failed to initialize checkout options")
+    checkoutOptions.checkout_strategy = UInt32(GIT_CHECKOUT_SAFE.rawValue)
+    try check(git_merge(repository, &commits, commits.count, &mergeOptions, &checkoutOptions), "Merge failed")
+    var index: OpaquePointer?
+    defer {
+      if let index {
+        git_index_free(index)
+      }
+    }
+    try check(git_repository_index(&index, repository), "Merge failed")
+    if git_index_has_conflicts(index) != 0 {
+      let conflicts = try conflictPaths(index: index)
+      return MergeOutcome(success: false, conflicts: conflicts, mergeCommit: nil)
+    }
+    var signature: UnsafeMutablePointer<git_signature>?
+    defer {
+      if let signature {
+        git_signature_free(signature)
+      }
+    }
+    try signatureNow(repository: repository, name: nil, email: nil, output: &signature)
+    let message = "Merge \(targetLabel)"
+    let mergeHead = try mergeHeadOid(repository: repository)
+    let oid = try createCommitFromIndex(
+      repository: repository,
+      message: message,
+      signature: signature,
+      extraParents: [mergeHead]
+    )
+    return MergeOutcome(success: true, conflicts: [], mergeCommit: oidDescription(oid))
+  }
+
+  private func performRebase(repository: OpaquePointer?, targetRef: String) throws {
+    var headRef: OpaquePointer?
+    var branchAnnotated: OpaquePointer?
+    var upstreamAnnotated: OpaquePointer?
+    var rebase: OpaquePointer?
+    defer {
+      if let headRef { git_reference_free(headRef) }
+      if let branchAnnotated { git_annotated_commit_free(branchAnnotated) }
+      if let upstreamAnnotated { git_annotated_commit_free(upstreamAnnotated) }
+      if let rebase { git_rebase_free(rebase) }
+      git_repository_state_cleanup(repository)
+    }
+    try check(git_repository_head(&headRef, repository), "Cannot rebase in detached HEAD state")
+    try check(git_annotated_commit_from_ref(&branchAnnotated, repository, headRef), "Rebase failed")
+    try withGitCString(targetRef) { targetRefCString in
+      try check(git_annotated_commit_from_revspec(&upstreamAnnotated, repository, targetRefCString), "Reference not found: \(targetRef)")
+    }
+    var options = git_rebase_options()
+    try check(git_rebase_init_options(&options, UInt32(GIT_REBASE_OPTIONS_VERSION)), "Failed to initialize rebase options")
+    try check(git_rebase_init(&rebase, repository, branchAnnotated, upstreamAnnotated, nil, &options), "Rebase failed")
+    var operation: UnsafeMutablePointer<git_rebase_operation>?
+    while true {
+      let nextCode = git_rebase_next(&operation, rebase)
+      if nextCode == GIT_ITEROVER.rawValue {
+        break
+      }
+      try check(nextCode, "Rebase failed")
+      var index: OpaquePointer?
+      defer {
+        if let index {
+          git_index_free(index)
+        }
+      }
+      try check(git_repository_index(&index, repository), "Rebase failed")
+      if git_index_has_conflicts(index) != 0 {
+        throw GitBridgeError("Rebase failed: conflicts")
+      }
+      var signature: UnsafeMutablePointer<git_signature>?
+      defer {
+        if let signature {
+          git_signature_free(signature)
+        }
+      }
+      try signatureNow(repository: repository, name: nil, email: nil, output: &signature)
+      var oid = git_oid()
+      let commitCode = git_rebase_commit(&oid, rebase, nil, signature, nil, nil)
+      if commitCode == GIT_EAPPLIED.rawValue {
+        continue
+      }
+      try check(commitCode, "Rebase failed")
+    }
+    try check(git_rebase_finish(rebase, nil), "Rebase failed")
+  }
+
+  private func listBranches(repository: OpaquePointer?) throws -> [String] {
+    var iterator: OpaquePointer?
+    defer {
+      if let iterator {
+        git_branch_iterator_free(iterator)
+      }
+    }
+    try check(git_branch_iterator_new(&iterator, repository, GIT_BRANCH_LOCAL), "Failed to list branches")
+    var branches: [String] = []
+    while true {
+      var reference: OpaquePointer?
+      var branchType = git_branch_t(rawValue: 0)
+      let code = git_branch_next(&reference, &branchType, iterator)
+      if code == GIT_ITEROVER.rawValue {
+        break
+      }
+      try check(code, "Failed to list branches")
+      defer {
+        if let reference {
+          git_reference_free(reference)
+        }
+      }
+      var namePointer: UnsafePointer<CChar>?
+      try check(git_branch_name(&namePointer, reference), "Failed to read branch name")
+      if let namePointer {
+        branches.append(String(cString: namePointer))
+      }
+    }
+    return branches.sorted()
+  }
+
+  private func createBranch(repository: OpaquePointer?, name: String, startPoint: String?) throws {
+    var commit: OpaquePointer?
+    var reference: OpaquePointer?
+    defer {
+      if let commit {
+        git_commit_free(commit)
+      }
+      if let reference {
+        git_reference_free(reference)
+      }
+    }
+    let spec = startPoint ?? "HEAD"
+    guard let oid = try resolveObjectId(repository: repository, spec: spec) else {
+      throw GitBridgeError("Unknown ref: \(spec)")
+    }
+    var mutableOid = oid
+    try check(git_commit_lookup(&commit, repository, &mutableOid), "Object not found: \(oidDescription(oid))")
+    try withGitCString(name) { nameCString in
+      try check(git_branch_create(&reference, repository, nameCString, commit, 0), "Branch create failed")
+    }
+  }
+
+  private func deleteBranch(repository: OpaquePointer?, name: String, force: Bool) throws {
+    var reference: OpaquePointer?
+    defer {
+      if let reference {
+        git_reference_free(reference)
+      }
+    }
+    try withGitCString(name) { nameCString in
+      try check(git_branch_lookup(&reference, repository, nameCString, GIT_BRANCH_LOCAL), "Branch not found: \(name)")
+    }
+    if !force {
+      let current = try currentBranchName(repository: repository)
+      if current == name {
+        throw GitBridgeError("Cannot delete checked out branch: \(name)")
+      }
+    }
+    try check(git_branch_delete(reference), "Branch delete failed")
+  }
+
+  private func checkoutTarget(repository: OpaquePointer?, target: String) throws {
+    if let _ = try? lookupLocalBranch(repository: repository, name: target) {
+      try checkoutLocalBranch(repository: repository, name: target)
+      return
+    }
+    guard let oid = try resolveObjectId(repository: repository, spec: target) else {
+      throw GitBridgeError("Unknown ref: \(target)")
+    }
+    try checkoutDetached(repository: repository, oid: oid)
+  }
+
+  private func lookupLocalBranch(repository: OpaquePointer?, name: String) throws -> OpaquePointer? {
+    var reference: OpaquePointer?
+    do {
+      try withGitCString(name) { nameCString in
+        try check(git_branch_lookup(&reference, repository, nameCString, GIT_BRANCH_LOCAL), "Branch not found: \(name)")
+      }
+      return reference
+    } catch {
+      if let reference {
+        git_reference_free(reference)
+      }
+      throw error
+    }
+  }
+
+  private func checkoutLocalBranch(repository: OpaquePointer?, name: String) throws {
+    var reference: OpaquePointer?
+    defer {
+      if let reference {
+        git_reference_free(reference)
+      }
+    }
+    try withGitCString(name) { nameCString in
+      try check(git_branch_lookup(&reference, repository, nameCString, GIT_BRANCH_LOCAL), "Branch not found: \(name)")
+      guard let fullName = git_reference_name(reference) else {
+        throw GitBridgeError("Branch not found: \(name)")
+      }
+      var checkoutOptions = git_checkout_options()
+      try check(git_checkout_init_options(&checkoutOptions, UInt32(GIT_CHECKOUT_OPTIONS_VERSION)), "Failed to initialize checkout options")
+      checkoutOptions.checkout_strategy = UInt32(GIT_CHECKOUT_SAFE.rawValue)
+      try check(git_checkout_head(repository, &checkoutOptions), "Checkout failed")
+      try check(git_repository_set_head(repository, fullName), "Checkout failed")
+    }
+  }
+
+  private func checkoutDetached(repository: OpaquePointer?, oid: git_oid) throws {
+    var commit: OpaquePointer?
+    defer {
+      if let commit {
+        git_commit_free(commit)
+      }
+    }
+    var mutableOid = oid
+    try check(git_commit_lookup(&commit, repository, &mutableOid), "Object not found: \(oidDescription(oid))")
+    var checkoutOptions = git_checkout_options()
+    try check(git_checkout_init_options(&checkoutOptions, UInt32(GIT_CHECKOUT_OPTIONS_VERSION)), "Failed to initialize checkout options")
+    checkoutOptions.checkout_strategy = UInt32(GIT_CHECKOUT_SAFE.rawValue)
+    try check(git_checkout_tree(repository, commit, &checkoutOptions), "Checkout failed")
+    try check(git_repository_set_head_detached(repository, &mutableOid), "Checkout failed")
+  }
+
+  private func resolveObjectId(repository: OpaquePointer?, spec: String) throws -> git_oid? {
+    var object: OpaquePointer?
+    defer {
+      if let object {
+        git_object_free(object)
+      }
+    }
+    let code = try withGitCString(spec) { specCString in
+      git_revparse_single(&object, repository, specCString)
+    }
+    if code == GIT_ENOTFOUND.rawValue {
+      return nil
+    }
+    try check(code, "Unknown ref: \(spec)")
+    guard let object else {
+      return nil
+    }
+    return git_object_id(object).pointee
+  }
+
+  private func headOidString(repository: OpaquePointer?) throws -> String? {
+    guard let oid = try resolveObjectId(repository: repository, spec: "HEAD") else {
+      return nil
+    }
+    return oidDescription(oid)
+  }
+
+  private func commitPayload(repository: OpaquePointer?, oid: git_oid) throws -> [String: Any?] {
+    var commit: OpaquePointer?
+    defer {
+      if let commit {
+        git_commit_free(commit)
+      }
+    }
+    var mutableOid = oid
+    try check(git_commit_lookup(&commit, repository, &mutableOid), "Object not found: \(oidDescription(oid))")
+    guard let commit else {
+      throw GitBridgeError("Commit not found")
+    }
+    let author = git_commit_author(commit)
+    let committer = git_commit_committer(commit)
+    let tree = git_commit_tree_id(commit).pointee
+    let parentCount = Int(git_commit_parentcount(commit))
+    var parents: [String] = []
+    if parentCount > 0 {
+      parents.reserveCapacity(parentCount)
+      for index in 0..<parentCount {
+        if let parentId = git_commit_parent_id(commit, UInt32(index)) {
+          parents.append(oidDescription(parentId.pointee))
+        }
+      }
+    }
+    return [
+      "hash": oidDescription(mutableOid),
+      "tree": oidDescription(tree),
+      "parents": parents,
+      "message": git_commit_message(commit).map { String(cString: $0) } ?? "",
+      "authorName": author?.pointee.name.map { String(cString: $0) } ?? "Unknown",
+      "authorEmail": author?.pointee.email.map { String(cString: $0) } ?? "unknown@example.com",
+      "authorTimestampMs": Int((author?.pointee.when.time ?? 0) * 1000),
+      "authorTimezone": timezoneString(offsetMinutes: Int(author?.pointee.when.offset ?? 0)),
+      "committerName": committer?.pointee.name.map { String(cString: $0) } ?? "Unknown",
+      "committerEmail": committer?.pointee.email.map { String(cString: $0) } ?? "unknown@example.com",
+      "committerTimestampMs": Int((committer?.pointee.when.time ?? 0) * 1000),
+      "committerTimezone": timezoneString(offsetMinutes: Int(committer?.pointee.when.offset ?? 0)),
+    ]
+  }
+
+  private func oidFromString(_ value: String) -> git_oid? {
+    var oid = git_oid()
+    let code = value.withCString { git_oid_fromstr(&oid, $0) }
+    return code == 0 ? oid : nil
+  }
+
+  private func conflictPaths(index: OpaquePointer?) throws -> [String] {
+    var iterator: OpaquePointer?
+    defer {
+      if let iterator {
+        git_index_conflict_iterator_free(iterator)
+      }
+    }
+    try check(git_index_conflict_iterator_new(&iterator, index), "Merge failed")
+    var paths = Set<String>()
+    while true {
+      var ancestor: UnsafePointer<git_index_entry>?
+      var ours: UnsafePointer<git_index_entry>?
+      var theirs: UnsafePointer<git_index_entry>?
+      let code = git_index_conflict_next(&ancestor, &ours, &theirs, iterator)
+      if code == GIT_ITEROVER.rawValue {
+        break
+      }
+      try check(code, "Merge failed")
+      let path = ancestor?.pointee.path ?? ours?.pointee.path ?? theirs?.pointee.path
+      if let path {
+        paths.insert(String(cString: path))
+      }
+    }
+    return paths.sorted()
+  }
+
+  private func configValue(repository: OpaquePointer?, section: String, key: String) throws -> String? {
+    var config: OpaquePointer?
+    defer {
+      if let config {
+        git_config_free(config)
+      }
+    }
+    try check(git_repository_config(&config, repository), "Failed to read config")
+    let fullKey = "\(section).\(key)"
+    var buffer = git_buf()
+    defer {
+      git_buf_free(&buffer)
+    }
+    let code = try withGitCString(fullKey) { keyCString in
+      git_config_get_string_buf(&buffer, config, keyCString)
+    }
+    if code == GIT_ENOTFOUND.rawValue {
+      return nil
+    }
+    try check(code, "Failed to read config")
+    guard let ptr = buffer.ptr else {
+      return nil
+    }
+    return String(cString: ptr)
+  }
+
+  private func setConfigValue(repository: OpaquePointer?, section: String, key: String, value: String) throws {
+    var config: OpaquePointer?
+    defer {
+      if let config {
+        git_config_free(config)
+      }
+    }
+    try check(git_repository_config(&config, repository), "Failed to open config")
+    let fullKey = "\(section).\(key)"
+    try withGitCString(fullKey) { keyCString in
+      try withGitCString(value) { valueCString in
+        try check(git_config_set_string(config, keyCString, valueCString), "Failed to update config")
+      }
+    }
+  }
+
+  private func parseDateFilter(_ value: String?) -> Int? {
+    let trimmed = value?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+    guard !trimmed.isEmpty else {
+      return nil
+    }
+    if let date = ISO8601DateFormatter().date(from: trimmed) {
+      return Int(date.timeIntervalSince1970 * 1000)
+    }
+    let formatter = DateFormatter()
+    formatter.dateFormat = "yyyy-MM-dd"
+    formatter.timeZone = TimeZone(secondsFromGMT: 0)
+    return formatter.date(from: trimmed).map { Int($0.timeIntervalSince1970 * 1000) }
+  }
+
+  private func statusEntryPath(_ entry: git_status_entry) -> String {
+    if let path = entry.head_to_index?.pointee.new_file.path {
+      return String(cString: path)
+    }
+    if let path = entry.index_to_workdir?.pointee.new_file.path {
+      return String(cString: path)
+    }
+    if let path = entry.head_to_index?.pointee.old_file.path {
+      return String(cString: path)
+    }
+    if let path = entry.index_to_workdir?.pointee.old_file.path {
+      return String(cString: path)
+    }
+    return ""
   }
 
   private func currentBranchName(repository: OpaquePointer?) throws -> String? {
@@ -1405,6 +2287,12 @@ private struct PullOutcome {
   let updatedRefs: [String]
 }
 
+private struct MergeOutcome {
+  let success: Bool
+  let conflicts: [String]
+  let mergeCommit: String?
+}
+
 private struct GitBridgeError: Error {
   let message: String
 
@@ -1449,6 +2337,18 @@ private func withGitStrarray<T>(_ strings: [String], _ body: (UnsafePointer<git_
   var mutable = duplicates.map { UnsafeMutablePointer<CChar>($0) }
   return try mutable.withUnsafeMutableBufferPointer { buffer in
     var array = git_strarray(strings: buffer.baseAddress, count: strings.count)
+    return try body(&array)
+  }
+}
+
+private func withGitPathspec<T>(_ path: String, _ body: (UnsafePointer<git_strarray>) throws -> T) rethrows -> T {
+  let duplicate = strdup(path)
+  defer {
+    free(duplicate)
+  }
+  var entries: [UnsafeMutablePointer<CChar>?] = [duplicate]
+  return try entries.withUnsafeMutableBufferPointer { buffer in
+    var array = git_strarray(strings: buffer.baseAddress, count: 1)
     return try body(&array)
   }
 }

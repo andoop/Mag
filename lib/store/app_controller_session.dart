@@ -433,6 +433,18 @@ extension AppControllerSession on AppController {
     }
   }
 
+  Future<JsonMap> buildCurrentContextPreview() async {
+    final session = state.session;
+    final workspace = state.workspace;
+    if (session == null || workspace == null) {
+      throw StateError('No active session');
+    }
+    return _engine.previewModelRequest(
+      workspace: workspace,
+      session: session,
+    );
+  }
+
   Future<void> cancelPrompt() async {
     final session = state.session;
     if (session == null) return;

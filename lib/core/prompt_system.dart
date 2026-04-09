@@ -16,6 +16,7 @@ class PromptContext {
     required this.agent,
     required this.agentDefinition,
     required this.model,
+    this.effectiveTools,
     this.agentPrompt,
     required this.hasSkillTool,
     required this.currentStep,
@@ -29,6 +30,7 @@ class PromptContext {
   final String agent;
   final AgentDefinition agentDefinition;
   final String model;
+  final List<String>? effectiveTools;
   final String? agentPrompt;
   final bool hasSkillTool;
   final int currentStep;
@@ -145,7 +147,7 @@ class PromptAssembler {
   String _environmentPrompt(PromptContext context) {
     final now = DateTime.now().toIso8601String();
     final agentDef = context.agentDefinition;
-    final tools = agentDef.availableTools;
+    final tools = context.effectiveTools ?? agentDef.availableTools;
 
     final zh = context.isZh;
     final lines = <String>[
@@ -175,6 +177,8 @@ class PromptAssembler {
     if (hasEditTools) {
       lines.addAll(zh
           ? [
+              '对已有文件做任何 `edit` 或 `apply_patch` 之前，必须先用 `read` 读取该文件最新内容，再基于读取结果确定位置、`oldString`、上下文和 patch。',
+              '如果你刚刚修改过某个文件，又要再次修改同一文件，先重新 `read` 一次最新内容；不要复用上一次读取或修改前的旧片段。',
               '修改已有文件时优先使用 `edit` 或 `apply_patch`。',
               '大量写入或包含许多引号/大括号的代码，不要在工具 JSON 中内联完整文件内容。',
               '改为在助手文本中使用 `<write_content id="name">...</write_content>`，然后调用 `write` 并传入 `path` 加 `contentRef: "name"`。',
@@ -184,6 +188,8 @@ class PromptAssembler {
               '你也可以在文字中用 `[[file:path/relative/to/workspace]]` 写可点击链接。',
             ]
           : [
+              'Before any `edit` or `apply_patch` on an existing file, you MUST call `read` on that file and use the fresh contents to choose the location, `oldString`, context, and patch.',
+              'If you just changed a file and need to modify the same file again, read it again first. Do not reuse stale snippets from before the previous edit.',
               'Prefer `edit` or `apply_patch` for modifying existing files.',
               'For large writes or code with many quotes/braces, do not inline the full file body in tool JSON.',
               'Instead, put the body in assistant text using `<write_content id="name">...</write_content>` and call `write` with `path` plus `contentRef: "name"`.',

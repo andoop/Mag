@@ -338,12 +338,11 @@ Future<ToolExecutionResult> _gitTool(
     case 'fetch':
       final remote = (args['remote'] as String? ?? 'origin').trim();
       final branch = (args['branch'] as String?)?.trim();
-      final remoteDef = await RemoteManager(git.repository.gitDir)
-          .getRemote(remote.isEmpty ? 'origin' : remote);
-      final auth = remoteDef == null
+      final remoteUrl = await git.getRemoteUrl(remote.isEmpty ? 'origin' : remote);
+      final auth = remoteUrl == null
           ? null
-          : await _loadSavedGitAuth(ctx.database, remoteDef.url);
-      if (remoteDef != null && remoteDef.isSsh && auth == null) {
+          : await _loadSavedGitAuth(ctx.database, remoteUrl);
+      if (remoteUrl != null && _looksLikeSshRemoteUrl(remoteUrl) && auth == null) {
         return ToolExecutionResult(
           title: 'git fetch',
           output: 'No SSH credential matched this remote URL. '
@@ -376,12 +375,11 @@ Future<ToolExecutionResult> _gitTool(
       final remote = (args['remote'] as String? ?? 'origin').trim();
       final branch = (args['branch'] as String?)?.trim();
       final useRebase = args['rebase'] == true;
-      final remoteDef = await RemoteManager(git.repository.gitDir)
-          .getRemote(remote.isEmpty ? 'origin' : remote);
-      final auth = remoteDef == null
+      final remoteUrl = await git.getRemoteUrl(remote.isEmpty ? 'origin' : remote);
+      final auth = remoteUrl == null
           ? null
-          : await _loadSavedGitAuth(ctx.database, remoteDef.url);
-      if (remoteDef != null && remoteDef.isSsh && auth == null) {
+          : await _loadSavedGitAuth(ctx.database, remoteUrl);
+      if (remoteUrl != null && _looksLikeSshRemoteUrl(remoteUrl) && auth == null) {
         return ToolExecutionResult(
           title: 'git pull',
           output: 'No SSH credential matched this remote URL. '
@@ -421,12 +419,11 @@ Future<ToolExecutionResult> _gitTool(
       final remote = (args['remote'] as String? ?? 'origin').trim();
       final refspec = (args['refspec'] as String?)?.trim();
       final force = args['force'] == true;
-      final remoteDef = await RemoteManager(git.repository.gitDir)
-          .getRemote(remote.isEmpty ? 'origin' : remote);
-      final auth = remoteDef == null
+      final remoteUrl = await git.getRemoteUrl(remote.isEmpty ? 'origin' : remote);
+      final auth = remoteUrl == null
           ? null
-          : await _loadSavedGitAuth(ctx.database, remoteDef.url);
-      if (remoteDef != null && remoteDef.isSsh && auth == null) {
+          : await _loadSavedGitAuth(ctx.database, remoteUrl);
+      if (remoteUrl != null && _looksLikeSshRemoteUrl(remoteUrl) && auth == null) {
         return ToolExecutionResult(
           title: 'git push',
           output: 'No SSH credential matched this remote URL. '

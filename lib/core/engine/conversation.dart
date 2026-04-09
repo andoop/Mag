@@ -26,6 +26,13 @@ extension SessionEngineConversation on SessionEngine {
         agent: currentAgent,
         agentDefinition: currentAgentDefinition,
         model: model,
+        effectiveTools: toolRegistry
+            .availableForAgent(
+              currentAgentDefinition,
+              modelId: model,
+            )
+            .map((item) => item.id)
+            .toList(),
         agentPrompt: currentAgentDefinition.promptOverride,
         hasSkillTool: true,
         currentStep: currentStep,

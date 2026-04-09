@@ -133,6 +133,31 @@ class ModelGateway {
     return payload;
   }
 
+  JsonMap buildDebugPayload({
+    required ModelConfig config,
+    required List<Map<String, dynamic>> messages,
+    required List<ToolDefinitionModel> tools,
+    required MessageFormat? format,
+  }) {
+    final maxOut = inferMaxOutputTokens(config.model);
+    if (_usesAnthropicApi(config)) {
+      return _buildAnthropicPayload(
+        config: config,
+        messages: messages,
+        tools: tools,
+        format: format,
+        maxOutputTokens: maxOut,
+      );
+    }
+    return _buildOpenAiPayload(
+      config: config,
+      messages: messages,
+      tools: tools,
+      format: format,
+      maxOutputTokens: maxOut,
+    );
+  }
+
   Future<ModelResponse> _completeAnthropic({
     required ModelConfig config,
     required List<Map<String, dynamic>> messages,

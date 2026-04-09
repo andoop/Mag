@@ -535,7 +535,8 @@ void _logApplyPatchToolFailure({
 
 String _editOldStringNotFoundHint(String filePath) =>
     'oldString not found in $filePath. '
-    'Call `read` on the file and copy the exact text (no `read` line-number prefixes). '
+    'If you edited this file earlier in the same task, call `read` on the file again first and use the latest contents. '
+    'Then copy the exact text from `read` output (without the `read` line-number prefixes). '
     'The tool also accepts: per-line trim match, common-indent stripped match, and '
     'CRLF/LF between lines for multi-line spans. '
     'Check console for a line starting with [mag-edit][mismatch] for argument details.';

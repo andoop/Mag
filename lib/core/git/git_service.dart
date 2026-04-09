@@ -1,57 +1,214 @@
-/// High-level git service wrapping pure-Dart repository operations.
-///
-/// Provides a single entry point for both AI tool calls and programmatic use.
-/// All paths are workspace-relative; the service resolves them against the
-/// repository working directory.
 library;
 
-import 'dart:io';
-
-import 'core/repository.dart';
 import 'exceptions/git_exceptions.dart';
+import 'git_settings_store.dart';
 import 'models/commit.dart';
 import 'models/git_author.dart';
-import 'models/tree.dart';
-import 'operations/add_operations.dart';
-import 'operations/commit_operations.dart';
-import 'operations/status_operations.dart';
-import 'operations/log_operations.dart';
-import 'operations/checkout_operations.dart';
-import 'operations/clone_operations.dart';
-import 'operations/fetch_operations.dart';
-import 'operations/merge_operations.dart';
-import 'operations/pull_operations.dart';
-import 'operations/push_operations.dart';
-import 'operations/rebase_operations.dart';
-import 'remote/remote_manager.dart';
-import 'git_settings_store.dart';
 import 'network_git_bridge.dart';
 
+enum FileStatus {
+  untracked,
+  added,
+  modified,
+  deleted,
+  renamed,
+  copied,
+  unmerged,
+}
+
+class StatusEntry {
+  const StatusEntry({
+    required this.path,
+    required this.status,
+    this.oldPath,
+  });
+
+  final String path;
+  final FileStatus status;
+  final String? oldPath;
+
+  @override
+  String toString() {
+    switch (status) {
+      case FileStatus.untracked:
+        return '?? $path';
+      case FileStatus.added:
+        return 'A  $path';
+      case FileStatus.modified:
+        return ' M $path';
+      case FileStatus.deleted:
+        return ' D $path';
+      case FileStatus.renamed:
+        return 'R  ${oldPath ?? path} -> $path';
+      case FileStatus.copied:
+        return 'C  ${oldPath ?? path} -> $path';
+      case FileStatus.unmerged:
+        return 'UU $path';
+    }
+  }
+}
+
+class RepositoryStatus {
+  const RepositoryStatus({
+    required this.staged,
+    required this.unstaged,
+    required this.untracked,
+    this.currentBranch,
+    this.currentCommit,
+  });
+
+  final List<StatusEntry> staged;
+  final List<StatusEntry> unstaged;
+  final List<StatusEntry> untracked;
+  final String? currentBranch;
+  final String? currentCommit;
+
+  bool get isClean => staged.isEmpty && unstaged.isEmpty && untracked.isEmpty;
+
+  @override
+  String toString() {
+    final buffer = StringBuffer();
+    if (currentBranch != null) {
+      buffer.writeln('On branch $currentBranch');
+    } else if (currentCommit != null) {
+      final shortCommit = currentCommit!.length > 8
+          ? currentCommit!.substring(0, 8)
+          : currentCommit;
+      buffer.writeln('HEAD detached at $shortCommit');
+    } else {
+      buffer.writeln('No commits yet');
+    }
+    if (isClean) {
+      buffer.writeln('nothing to commit, working tree clean');
+      return buffer.toString();
+    }
+    if (staged.isNotEmpty) {
+      buffer.writeln('\nChanges to be committed:');
+      for (final entry in staged) {
+        buffer.writeln('  $entry');
+      }
+    }
+    if (unstaged.isNotEmpty) {
+      buffer.writeln('\nChanges not staged for commit:');
+      for (final entry in unstaged) {
+        buffer.writeln('  $entry');
+      }
+    }
+    if (untracked.isNotEmpty) {
+      buffer.writeln('\nUntracked files:');
+      for (final entry in untracked) {
+        buffer.writeln('  $entry');
+      }
+    }
+    return buffer.toString();
+  }
+}
+
+class CloneResult {
+  const CloneResult({
+    required this.success,
+    this.defaultBranch,
+    required this.objectsReceived,
+    this.error,
+  });
+
+  final bool success;
+  final String? defaultBranch;
+  final int objectsReceived;
+  final String? error;
+}
+
+class FetchResult {
+  const FetchResult({
+    required this.success,
+    required this.updatedRefs,
+    required this.objectsReceived,
+    this.error,
+  });
+
+  final bool success;
+  final List<String> updatedRefs;
+  final int objectsReceived;
+  final String? error;
+}
+
+class MergeResult {
+  const MergeResult({
+    required this.success,
+    required this.conflicts,
+    this.mergeCommit,
+  });
+
+  final bool success;
+  final List<String> conflicts;
+  final String? mergeCommit;
+
+  bool get hasConflicts => conflicts.isNotEmpty;
+}
+
+class RebaseResult {
+  const RebaseResult({
+    required this.success,
+    required this.conflicts,
+    this.newHead,
+  });
+
+  final bool success;
+  final List<String> conflicts;
+  final String? newHead;
+
+  bool get hasConflicts => conflicts.isNotEmpty;
+}
+
+class PullResult {
+  const PullResult({
+    required this.success,
+    required this.fetchResult,
+    this.mergeResult,
+    this.rebaseResult,
+    this.error,
+  });
+
+  final bool success;
+  final FetchResult fetchResult;
+  final MergeResult? mergeResult;
+  final RebaseResult? rebaseResult;
+  final String? error;
+}
+
+class PushResult {
+  const PushResult({
+    required this.success,
+    required this.pushedRefs,
+    this.error,
+  });
+
+  final bool success;
+  final List<String> pushedRefs;
+  final String? error;
+}
+
 class GitService {
-  GitService._(this._repo);
+  GitService._(this.workDir);
 
-  static const GitNetworkBridge _networkBridge = GitNetworkBridge();
+  static const GitNetworkBridge _bridge = GitNetworkBridge();
 
-  final GitRepository _repo;
+  final String workDir;
 
-  GitRepository get repository => _repo;
-  String get workDir => _repo.workDir;
-
-  // ---------------------------------------------------------------------------
-  // Factory / lifecycle
-  // ---------------------------------------------------------------------------
-
-  /// Open the git repository that contains [workspacePath].
-  /// Walks parent directories looking for `.git/`.
   static Future<GitService> open(String workspacePath) async {
-    final repo = await GitRepository.open(workspacePath);
-    return GitService._(repo);
+    final result = await _bridge.discoverRepository(path: workspacePath);
+    _throwIfBridgeFailed(result, fallback: 'Not a git repository');
+    final workDir = result['workDir'] as String?;
+    if (workDir == null || workDir.isEmpty) {
+      throw const GitException('Not a git repository');
+    }
+    return GitService._(workDir);
   }
 
-  /// Initialise a brand-new repository at [path].
   static Future<GitService> init(String path) async {
-    final repo = await GitRepository.init(path);
-    return GitService._(repo);
+    final result = await _bridge.initRepository(path: path);
+    _throwIfBridgeFailed(result, fallback: 'Init failed.');
+    return GitService._((result['workDir'] as String?) ?? path);
   }
 
   static Future<CloneResult> clone({
@@ -60,39 +217,9 @@ class GitService {
     String remoteName = 'origin',
     String? branch,
     ResolvedGitAuth? auth,
-  }) {
-    if (_looksLikeNetworkRemote(url)) {
-      return _cloneOverNetwork(
-        url: url,
-        path: path,
-        remoteName: remoteName,
-        branch: branch,
-        auth: auth,
-      );
-    }
-    return CloneOperation().clone(
-      url: url,
-      path: path,
-      remoteName: remoteName,
-      branch: branch,
-    );
-  }
-
-  static Future<CloneResult> _cloneOverNetwork({
-    required String url,
-    required String path,
-    required String remoteName,
-    String? branch,
-    ResolvedGitAuth? auth,
   }) async {
-    if (!_networkBridge.isSupported) {
-      return const CloneResult(
-        success: false,
-        error: 'Network git clone is currently supported on Android only.',
-      );
-    }
     try {
-      final result = await _networkBridge.clone(
+      final result = await _bridge.clone(
         url: url,
         path: path,
         remoteName: remoteName,
@@ -102,62 +229,75 @@ class GitService {
       return CloneResult(
         success: (result['success'] as bool?) ?? true,
         defaultBranch: result['defaultBranch'] as String?,
-        objectsReceived: (result['objectsReceived'] as int?) ?? 0,
+        objectsReceived: _asInt(result['objectsReceived']) ?? 0,
         error: result['error'] as String?,
       );
     } catch (error) {
       return CloneResult(
         success: false,
+        objectsReceived: 0,
         error: error.toString(),
       );
     }
   }
 
-  /// Returns `true` if [path] is inside a git repository.
-  static Future<bool> isRepo(String path) => GitRepository.isRepository(path);
+  static Future<bool> isRepo(String path) async {
+    try {
+      final result = await _bridge.discoverRepository(path: path);
+      return (result['success'] as bool?) != false &&
+          ((result['workDir'] as String?)?.isNotEmpty ?? false);
+    } catch (_) {
+      return false;
+    }
+  }
 
-  // ---------------------------------------------------------------------------
-  // Status
-  // ---------------------------------------------------------------------------
+  Future<RepositoryStatus> status() async {
+    final result = await _bridge.status(workDir: workDir);
+    _throwIfBridgeFailed(result, fallback: 'Status failed.');
+    return RepositoryStatus(
+      staged: _statusEntries(result['staged']),
+      unstaged: _statusEntries(result['unstaged']),
+      untracked: _statusEntries(result['untracked']),
+      currentBranch: result['branch'] as String?,
+      currentCommit: result['head'] as String?,
+    );
+  }
 
-  Future<RepositoryStatus> status() => StatusOperation(_repo).status();
+  Future<bool> isClean() async => (await status()).isClean;
 
-  Future<bool> isClean() => StatusOperation(_repo).isClean();
+  Future<void> add(List<String> paths) async {
+    final result = await _bridge.add(workDir: workDir, paths: paths);
+    _throwIfBridgeFailed(result, fallback: 'Add failed.');
+  }
 
-  // ---------------------------------------------------------------------------
-  // Add / stage
-  // ---------------------------------------------------------------------------
+  Future<void> addAll() async {
+    final result = await _bridge.addAll(workDir: workDir);
+    _throwIfBridgeFailed(result, fallback: 'Add failed.');
+  }
 
-  /// Stage specific files.  [paths] are workspace-relative.
-  Future<void> add(List<String> paths) => AddOperation(_repo).add(paths);
-
-  /// Stage all modified & untracked files.
-  Future<void> addAll() => AddOperation(_repo).addAll();
-
-  /// Unstage a file (remove from index).
-  Future<void> unstage(String path) => AddOperation(_repo).remove(path);
-
-  // ---------------------------------------------------------------------------
-  // Commit
-  // ---------------------------------------------------------------------------
+  Future<void> unstage(String path) async {
+    final result = await _bridge.unstage(workDir: workDir, path: path);
+    _throwIfBridgeFailed(result, fallback: 'Unstage failed.');
+  }
 
   Future<GitCommit> commit(
     String message, {
     String? authorName,
     String? authorEmail,
   }) async {
-    final author = (authorName != null && authorEmail != null)
-        ? GitAuthor(name: authorName, email: authorEmail)
-        : null;
-    if (_networkBridge.isSupported) {
-      return _commitOverNativeBridge(
-        message: message,
-        authorName: authorName,
-        authorEmail: authorEmail,
-        amend: false,
-      );
-    }
-    return CommitOperation(_repo).commit(message, author: author);
+    final result = await _bridge.commit(
+      workDir: workDir,
+      message: message,
+      authorName: authorName,
+      authorEmail: authorEmail,
+    );
+    _throwIfBridgeFailed(result, fallback: 'Commit failed.');
+    return _commitFromMap(
+      result,
+      fallbackMessage: message,
+      fallbackAuthorName: authorName,
+      fallbackAuthorEmail: authorEmail,
+    );
   }
 
   Future<GitCommit> amendCommit(
@@ -165,161 +305,125 @@ class GitService {
     String? authorName,
     String? authorEmail,
   }) async {
-    final author = (authorName != null && authorEmail != null)
-        ? GitAuthor(name: authorName, email: authorEmail)
-        : null;
-    if (_networkBridge.isSupported) {
-      return _commitOverNativeBridge(
-        message: message,
-        authorName: authorName,
-        authorEmail: authorEmail,
-        amend: true,
-      );
-    }
-    return CommitOperation(_repo).amend(message, author: author);
+    final result = await _bridge.amendCommit(
+      workDir: workDir,
+      message: message,
+      authorName: authorName,
+      authorEmail: authorEmail,
+    );
+    _throwIfBridgeFailed(result, fallback: 'Commit amend failed.');
+    return _commitFromMap(
+      result,
+      fallbackMessage: message,
+      fallbackAuthorName: authorName,
+      fallbackAuthorEmail: authorEmail,
+    );
   }
-
-  Future<GitCommit> _commitOverNativeBridge({
-    required String message,
-    required bool amend,
-    String? authorName,
-    String? authorEmail,
-  }) async {
-    try {
-      final result = amend
-          ? await _networkBridge.amendCommit(
-              workDir: workDir,
-              message: message,
-              authorName: authorName,
-              authorEmail: authorEmail,
-            )
-          : await _networkBridge.commit(
-              workDir: workDir,
-              message: message,
-              authorName: authorName,
-              authorEmail: authorEmail,
-            );
-      if ((result['success'] as bool?) == false) {
-        throw GitException(result['error'] as String? ?? 'Commit failed.');
-      }
-      return GitCommit(
-        hash: result['hash'] as String? ?? '',
-        tree: result['tree'] as String? ?? '',
-        parents: ((result['parents'] as List?) ?? const [])
-            .map((item) => item.toString())
-            .toList(),
-        author: GitAuthor(
-          name: result['authorName'] as String? ?? (authorName ?? 'Unknown'),
-          email: result['authorEmail'] as String? ?? (authorEmail ?? 'unknown@example.com'),
-          timestamp: DateTime.fromMillisecondsSinceEpoch(
-            (result['authorTimestampMs'] as int?) ?? DateTime.now().millisecondsSinceEpoch,
-          ),
-          timezone: result['authorTimezone'] as String?,
-        ),
-        committer: GitAuthor(
-          name: result['committerName'] as String? ?? (authorName ?? 'Unknown'),
-          email: result['committerEmail'] as String? ?? (authorEmail ?? 'unknown@example.com'),
-          timestamp: DateTime.fromMillisecondsSinceEpoch(
-            (result['committerTimestampMs'] as int?) ?? DateTime.now().millisecondsSinceEpoch,
-          ),
-          timezone: result['committerTimezone'] as String?,
-        ),
-        message: result['message'] as String? ?? message,
-      );
-    } catch (error) {
-      throw GitException(error.toString());
-    }
-  }
-
-  // ---------------------------------------------------------------------------
-  // Log
-  // ---------------------------------------------------------------------------
 
   Future<List<GitCommit>> log({
     int? maxCount,
     bool firstParentOnly = false,
     String? since,
     String? until,
-  }) =>
-      LogOperation(_repo).getHistory(
-        options: LogOptions(
-          maxCount: maxCount ?? 20,
-          firstParentOnly: firstParentOnly,
-          since: since,
-          until: until,
-        ),
-      );
-
-  Future<GitCommit> showCommit(String ref) =>
-      LogOperation(_repo).getCommit(ref);
-
-  // ---------------------------------------------------------------------------
-  // Branch
-  // ---------------------------------------------------------------------------
-
-  Future<String?> currentBranch() => _repo.getCurrentBranch();
-
-  Future<List<String>> listBranches() => _repo.listBranches();
-
-  Future<void> createBranch(String name, {String? startPoint}) =>
-      _repo.createBranch(name, startPoint: startPoint);
-
-  Future<void> deleteBranch(String name, {bool force = false}) =>
-      _repo.deleteBranch(name, force: force);
-
-  // ---------------------------------------------------------------------------
-  // Checkout
-  // ---------------------------------------------------------------------------
-
-  Future<void> checkout(String target) async {
-    final op = CheckoutOperation(_repo);
-    if (await _repo.refs.branchExists(target)) {
-      await op.checkoutBranch(target);
-      return;
-    }
-
-    final commitHash = await _repo.resolveCommitish(target);
-    await op.checkoutCommit(commitHash);
+  }) async {
+    final result = await _bridge.log(
+      workDir: workDir,
+      maxCount: maxCount ?? 20,
+      firstParentOnly: firstParentOnly,
+      since: since,
+      until: until,
+    );
+    _throwIfBridgeFailed(result, fallback: 'Log failed.');
+    final commits = result['commits'] as List? ?? const [];
+    return commits
+        .map((item) => _commitFromMap(Map<String, dynamic>.from(item as Map)))
+        .toList();
   }
 
-  Future<void> checkoutNewBranch(String name) =>
-      CheckoutOperation(_repo).checkoutNewBranch(name);
+  Future<GitCommit> showCommit(String ref) async {
+    final result = await _bridge.showCommit(workDir: workDir, ref: ref);
+    _throwIfBridgeFailed(result, fallback: 'Show failed.');
+    final commit = result['commit'];
+    if (commit is! Map) {
+      throw const GitException('Commit not found.');
+    }
+    return _commitFromMap(Map<String, dynamic>.from(commit));
+  }
 
-  Future<void> restoreFile(String path) =>
-      CheckoutOperation(_repo).restoreFile(path);
+  Future<String?> currentBranch() async {
+    final result = await _bridge.currentBranch(workDir: workDir);
+    _throwIfBridgeFailed(result, fallback: 'Branch lookup failed.');
+    return result['branch'] as String?;
+  }
 
-  // ---------------------------------------------------------------------------
-  // Merge
-  // ---------------------------------------------------------------------------
+  Future<List<String>> listBranches() async {
+    final result = await _bridge.listBranches(workDir: workDir);
+    _throwIfBridgeFailed(result, fallback: 'List branches failed.');
+    return ((result['branches'] as List?) ?? const [])
+        .map((item) => item.toString())
+        .toList();
+  }
 
-  Future<MergeResult> merge(String branch) =>
-      MergeOperation(_repo).merge(branch);
+  Future<void> createBranch(String name, {String? startPoint}) async {
+    final result = await _bridge.createBranch(
+      workDir: workDir,
+      name: name,
+      startPoint: startPoint,
+    );
+    _throwIfBridgeFailed(result, fallback: 'Create branch failed.');
+  }
+
+  Future<void> deleteBranch(String name, {bool force = false}) async {
+    final result = await _bridge.deleteBranch(
+      workDir: workDir,
+      name: name,
+      force: force,
+    );
+    _throwIfBridgeFailed(result, fallback: 'Delete branch failed.');
+  }
+
+  Future<void> checkout(String target) async {
+    final result = await _bridge.checkout(workDir: workDir, target: target);
+    _throwIfBridgeFailed(result, fallback: 'Checkout failed.');
+  }
+
+  Future<void> checkoutNewBranch(String name) async {
+    final result =
+        await _bridge.checkoutNewBranch(workDir: workDir, name: name);
+    _throwIfBridgeFailed(result, fallback: 'Checkout failed.');
+  }
+
+  Future<void> restoreFile(String path) async {
+    final result = await _bridge.restoreFile(workDir: workDir, path: path);
+    _throwIfBridgeFailed(result, fallback: 'Restore failed.');
+  }
+
+  Future<MergeResult> merge(String branch) async {
+    final result = await _bridge.merge(workDir: workDir, branch: branch);
+    final conflicts = ((result['conflicts'] as List?) ?? const [])
+        .map((item) => item.toString())
+        .toList();
+    final success = (result['success'] as bool?) ?? true;
+    if (!success && conflicts.isEmpty) {
+      throw GitException(result['error'] as String? ?? 'Merge failed.');
+    }
+    return MergeResult(
+      success: success,
+      conflicts: conflicts,
+      mergeCommit: result['mergeCommit'] as String?,
+    );
+  }
 
   Future<MergeResult> mergeRef(String ref, {String? targetLabel}) =>
-      MergeOperation(_repo).mergeRef(ref, targetLabel: targetLabel);
+      merge(ref);
 
   Future<FetchResult> fetch(
     String remoteName, {
     String? branch,
     ResolvedGitAuth? auth,
   }) async {
-    final remote = await RemoteManager(_repo.gitDir).getRemote(remoteName);
-    if (remote == null) {
-      throw GitException('Remote not found: $remoteName');
-    }
-    if (remote.isLocal) {
-      return FetchOperation(_repo).fetch(remoteName, branch: branch);
-    }
-    if (!_networkBridge.isSupported) {
-      return const FetchResult(
-        success: false,
-        updatedRefs: [],
-        objectsReceived: 0,
-        error: 'Network git fetch is currently supported on Android only.',
-      );
-    }
     try {
-      final result = await _networkBridge.fetch(
+      final result = await _bridge.fetch(
         workDir: workDir,
         remoteName: remoteName,
         branch: branch,
@@ -330,7 +434,7 @@ class GitService {
         updatedRefs: ((result['updatedRefs'] as List?) ?? const [])
             .map((item) => item.toString())
             .toList(),
-        objectsReceived: (result['objectsReceived'] as int?) ?? 0,
+        objectsReceived: _asInt(result['objectsReceived']) ?? 0,
         error: result['error'] as String?,
       );
     } catch (error) {
@@ -349,31 +453,8 @@ class GitService {
     bool rebase = false,
     ResolvedGitAuth? auth,
   }) async {
-    final remote = await RemoteManager(_repo.gitDir).getRemote(remoteName);
-    if (remote == null) {
-      throw GitException('Remote not found: $remoteName');
-    }
-    if (remote.isLocal) {
-      return PullOperation(_repo).pull(
-        remoteName,
-        branch: branch,
-        rebase: rebase,
-      );
-    }
-    if (!_networkBridge.isSupported) {
-      return const PullResult(
-        success: false,
-        fetchResult: FetchResult(
-          success: false,
-          updatedRefs: [],
-          objectsReceived: 0,
-          error: 'Network git pull is currently supported on Android only.',
-        ),
-        error: 'Network git pull is currently supported on Android only.',
-      );
-    }
     try {
-      final result = await _networkBridge.pull(
+      final result = await _bridge.pull(
         workDir: workDir,
         remoteName: remoteName,
         branch: branch,
@@ -381,16 +462,34 @@ class GitService {
         auth: auth,
       );
       final fetchResult = FetchResult(
-        success: (result['fetchSuccess'] as bool?) ?? ((result['success'] as bool?) ?? true),
+        success: (result['fetchSuccess'] as bool?) ??
+            ((result['success'] as bool?) ?? true),
         updatedRefs: ((result['updatedRefs'] as List?) ?? const [])
             .map((item) => item.toString())
             .toList(),
-        objectsReceived: (result['objectsReceived'] as int?) ?? 0,
+        objectsReceived: _asInt(result['objectsReceived']) ?? 0,
         error: result['fetchError'] as String?,
       );
+      final conflicts = ((result['conflicts'] as List?) ?? const [])
+          .map((item) => item.toString())
+          .toList();
       return PullResult(
         success: (result['success'] as bool?) ?? true,
         fetchResult: fetchResult,
+        mergeResult: rebase
+            ? null
+            : MergeResult(
+                success: (result['success'] as bool?) ?? true,
+                conflicts: conflicts,
+                mergeCommit: result['mergeCommit'] as String?,
+              ),
+        rebaseResult: rebase
+            ? RebaseResult(
+                success: (result['success'] as bool?) ?? true,
+                conflicts: conflicts,
+                newHead: result['newHead'] as String?,
+              )
+            : null,
         error: result['error'] as String?,
       );
     } catch (error) {
@@ -412,26 +511,8 @@ class GitService {
     bool force = false,
     ResolvedGitAuth? auth,
   }) async {
-    final remote = await RemoteManager(_repo.gitDir).getRemote(remoteName);
-    if (remote == null) {
-      throw GitException('Remote not found: $remoteName');
-    }
-    if (remote.isLocal) {
-      return PushOperation(_repo).push(
-        remoteName,
-        refspec: refspec,
-        force: force,
-      );
-    }
-    if (!_networkBridge.isSupported) {
-      return const PushResult(
-        success: false,
-        pushedRefs: [],
-        error: 'Network git push is currently supported on Android only.',
-      );
-    }
     try {
-      final result = await _networkBridge.push(
+      final result = await _bridge.push(
         workDir: workDir,
         remoteName: remoteName,
         refspec: refspec,
@@ -454,223 +535,150 @@ class GitService {
     }
   }
 
-  Future<RebaseResult> rebase(String targetRef) =>
-      RebaseOperation(_repo).rebase(targetRef);
+  Future<RebaseResult> rebase(String targetRef) async {
+    final result =
+        await _bridge.rebase(workDir: workDir, targetRef: targetRef);
+    final conflicts = ((result['conflicts'] as List?) ?? const [])
+        .map((item) => item.toString())
+        .toList();
+    final success = (result['success'] as bool?) ?? true;
+    if (!success && conflicts.isEmpty) {
+      throw GitException(result['error'] as String? ?? 'Rebase failed.');
+    }
+    return RebaseResult(
+      success: success,
+      conflicts: conflicts,
+      newHead: result['newHead'] as String?,
+    );
+  }
 
-  // ---------------------------------------------------------------------------
-  // Diff  (working tree vs HEAD)
-  // ---------------------------------------------------------------------------
-
-  /// Returns a human-readable diff between the working tree and HEAD.
-  /// Only handles text files; binary files are reported but not diffed.
   Future<String> diff({List<String>? paths}) async {
-    final st = await status();
-    final filter = paths?.toSet();
-    final stagedEntries = _filterEntries(st.staged, filter);
-    final unstagedEntries = _filterEntries(st.unstaged, filter);
-    final untrackedEntries = _filterEntries(st.untracked, filter);
-    if (stagedEntries.isEmpty &&
-        unstagedEntries.isEmpty &&
-        untrackedEntries.isEmpty) {
-      return 'No changes.';
-    }
-
-    final headCommitHash = await _repo.getCurrentCommit();
-    Map<String, String>? headTree;
-    if (headCommitHash != null) {
-      headTree = {};
-      final commit = await _repo.readCommit(headCommitHash);
-      final tree = await _repo.readTree(commit.tree);
-      await _collectPaths(tree, '', headTree);
-    }
-
-    final indexEntries = await _repo.index.read();
-    final indexMap = <String, String>{};
-    for (final entry in indexEntries) {
-      indexMap[entry.path] = entry.hash;
-    }
-
-    final buf = StringBuffer();
-    await _appendDiffGroup(
-      buf: buf,
-      title: 'Staged changes',
-      entries: stagedEntries,
-      oldBlobHashes: headTree,
-      newBlobHashes: indexMap,
-      allowWorkingTreeReads: false,
-    );
-    await _appendDiffGroup(
-      buf: buf,
-      title: 'Unstaged changes',
-      entries: unstagedEntries,
-      oldBlobHashes: indexMap,
-      newBlobHashes: null,
-      allowWorkingTreeReads: true,
-    );
-    await _appendDiffGroup(
-      buf: buf,
-      title: 'Untracked files',
-      entries: untrackedEntries,
-      oldBlobHashes: const {},
-      newBlobHashes: null,
-      allowWorkingTreeReads: true,
-    );
-    final result = buf.toString().trimRight();
-    return result.isEmpty ? 'No changes.' : result;
+    final result = await _bridge.diff(workDir: workDir, paths: paths);
+    _throwIfBridgeFailed(result, fallback: 'Diff failed.');
+    return result['diff'] as String? ?? 'No changes.';
   }
-
-  Future<void> _appendDiffGroup({
-    required StringBuffer buf,
-    required String title,
-    required List<StatusEntry> entries,
-    required Map<String, String>? oldBlobHashes,
-    required Map<String, String>? newBlobHashes,
-    required bool allowWorkingTreeReads,
-  }) async {
-    if (entries.isEmpty) {
-      return;
-    }
-
-    buf.writeln('$title:');
-    for (final entry in entries) {
-      buf.writeln('--- ${entry.status.name}: ${entry.path}');
-      try {
-        final oldContent = await _readBlobContent(
-          path: entry.path,
-          hashes: oldBlobHashes,
-        );
-        final newContent = await _readNewSideContent(
-          path: entry.path,
-          hashes: newBlobHashes,
-          allowWorkingTreeReads: allowWorkingTreeReads,
-        );
-
-        if (entry.status == FileStatus.added ||
-            entry.status == FileStatus.untracked) {
-          _writeAddedContent(newContent, buf);
-        } else if (entry.status == FileStatus.deleted) {
-          _writeDeletedContent(oldContent, buf);
-        } else {
-          _simpleDiff(oldContent ?? '', newContent ?? '', buf);
-        }
-      } catch (_) {
-        buf.writeln('  (binary or unreadable)');
-      }
-      buf.writeln();
-    }
-  }
-
-  // ---------------------------------------------------------------------------
-  // Config helpers
-  // ---------------------------------------------------------------------------
 
   Future<String?> getConfigValue(String section, String key) async {
-    final cfg = await _repo.config;
-    final v = cfg.get(section, key);
-    return v?.toString();
+    final result = await _bridge.getConfigValue(
+      workDir: workDir,
+      section: section,
+      key: key,
+    );
+    _throwIfBridgeFailed(result, fallback: 'Config lookup failed.');
+    return result['value'] as String?;
   }
 
-  Future<void> setConfigValue(
-      String section, String key, String value) async {
-    final cfg = await _repo.config;
-    cfg.set(section, key, value);
-    await cfg.save();
+  Future<void> setConfigValue(String section, String key, String value) async {
+    final result = await _bridge.setConfigValue(
+      workDir: workDir,
+      section: section,
+      key: key,
+      value: value,
+    );
+    _throwIfBridgeFailed(result, fallback: 'Config update failed.');
   }
 
-  // ---------------------------------------------------------------------------
-  // Internal helpers
-  // ---------------------------------------------------------------------------
+  Future<String?> getRemoteUrl(String remoteName) async {
+    final result = await _bridge.getRemoteUrl(
+      workDir: workDir,
+      remoteName: remoteName,
+    );
+    _throwIfBridgeFailed(result, fallback: 'Remote lookup failed.');
+    return result['url'] as String?;
+  }
 
-  Future<void> _collectPaths(
-      GitTree tree, String prefix, Map<String, String> out) async {
-    for (final entry in tree.entries) {
-      final p = prefix.isEmpty ? entry.name : '$prefix/${entry.name}';
-      if (entry.isDirectory) {
-        final sub = await _repo.readTree(entry.hash);
-        await _collectPaths(sub, p, out);
-      } else {
-        out[p] = entry.hash;
-      }
+  static void _throwIfBridgeFailed(
+    Map<String, dynamic> result, {
+    required String fallback,
+  }) {
+    if ((result['success'] as bool?) == false) {
+      throw GitException(result['error'] as String? ?? fallback);
     }
   }
 
-  static bool _looksLikeNetworkRemote(String url) {
-    final trimmed = url.trim();
-    return trimmed.startsWith('ssh://') ||
-        trimmed.startsWith('http://') ||
-        trimmed.startsWith('https://') ||
-        RegExp(r'^[^@/\s]+@[^:/\s]+:.+$').hasMatch(trimmed);
-  }
-
-  List<StatusEntry> _filterEntries(List<StatusEntry> entries, Set<String>? filter) {
-    final sorted = List<StatusEntry>.from(entries)
+  static List<StatusEntry> _statusEntries(dynamic raw) {
+    final input = raw as List?;
+    if (input == null) {
+      return const <StatusEntry>[];
+    }
+    return input.map((item) {
+      final map = Map<String, dynamic>.from(item as Map);
+      return StatusEntry(
+        path: map['path'] as String? ?? '',
+        status: _fileStatusFromString(map['status'] as String? ?? 'modified'),
+        oldPath: map['oldPath'] as String?,
+      );
+    }).toList()
       ..sort((a, b) => a.path.compareTo(b.path));
-    if (filter == null || filter.isEmpty) {
-      return sorted;
-    }
-    return sorted.where((entry) => filter.contains(entry.path)).toList();
   }
 
-  Future<String?> _readBlobContent({
-    required String path,
-    required Map<String, String>? hashes,
-  }) async {
-    final hash = hashes?[path];
-    if (hash == null || hash.isEmpty) {
-      return null;
-    }
-    final blob = await _repo.readBlob(hash);
-    return blob.contentAsString;
-  }
-
-  Future<String?> _readNewSideContent({
-    required String path,
-    required Map<String, String>? hashes,
-    required bool allowWorkingTreeReads,
-  }) async {
-    final hash = hashes?[path];
-    if (hash != null) {
-      final blob = await _repo.readBlob(hash);
-      return blob.contentAsString;
-    }
-    if (!allowWorkingTreeReads) {
-      return null;
-    }
-    final file = File(_repo.getWorkPath(path));
-    if (!await file.exists()) {
-      return null;
-    }
-    return file.readAsString();
-  }
-
-  void _writeAddedContent(String? content, StringBuffer buf) {
-    for (final line in (content ?? '').split('\n')) {
-      buf.writeln('+$line');
+  static FileStatus _fileStatusFromString(String value) {
+    switch (value) {
+      case 'untracked':
+        return FileStatus.untracked;
+      case 'added':
+        return FileStatus.added;
+      case 'deleted':
+        return FileStatus.deleted;
+      case 'renamed':
+        return FileStatus.renamed;
+      case 'copied':
+        return FileStatus.copied;
+      case 'unmerged':
+        return FileStatus.unmerged;
+      case 'modified':
+      default:
+        return FileStatus.modified;
     }
   }
 
-  void _writeDeletedContent(String? content, StringBuffer buf) {
-    for (final line in (content ?? '').split('\n')) {
-      buf.writeln('-$line');
-    }
+  static GitCommit _commitFromMap(
+    Map<String, dynamic> map, {
+    String? fallbackMessage,
+    String? fallbackAuthorName,
+    String? fallbackAuthorEmail,
+  }) {
+    return GitCommit(
+      hash: map['hash'] as String? ?? '',
+      tree: map['tree'] as String? ?? '',
+      parents: ((map['parents'] as List?) ?? const [])
+          .map((item) => item.toString())
+          .toList(),
+      author: GitAuthor(
+        name: map['authorName'] as String? ?? (fallbackAuthorName ?? 'Unknown'),
+        email: map['authorEmail'] as String? ??
+            (fallbackAuthorEmail ?? 'unknown@example.com'),
+        timestamp: DateTime.fromMillisecondsSinceEpoch(
+          _asInt(map['authorTimestampMs']) ??
+              DateTime.now().millisecondsSinceEpoch,
+        ),
+        timezone: map['authorTimezone'] as String?,
+      ),
+      committer: GitAuthor(
+        name:
+            map['committerName'] as String? ?? (fallbackAuthorName ?? 'Unknown'),
+        email: map['committerEmail'] as String? ??
+            (fallbackAuthorEmail ?? 'unknown@example.com'),
+        timestamp: DateTime.fromMillisecondsSinceEpoch(
+          _asInt(map['committerTimestampMs']) ??
+              DateTime.now().millisecondsSinceEpoch,
+        ),
+        timezone: map['committerTimezone'] as String?,
+      ),
+      message: map['message'] as String? ?? fallbackMessage ?? '',
+    );
   }
 
-  /// Minimal line-level diff (no Myers — just enough for AI context).
-  void _simpleDiff(String old, String cur, StringBuffer buf) {
-    final oldLines = old.split('\n');
-    final curLines = cur.split('\n');
-    final maxLen = oldLines.length > curLines.length
-        ? oldLines.length
-        : curLines.length;
-    for (var i = 0; i < maxLen; i++) {
-      final o = i < oldLines.length ? oldLines[i] : null;
-      final c = i < curLines.length ? curLines[i] : null;
-      if (o == c) {
-        buf.writeln(' ${o ?? ''}');
-      } else {
-        if (o != null) buf.writeln('-$o');
-        if (c != null) buf.writeln('+$c');
-      }
+  static int? _asInt(dynamic value) {
+    if (value is int) {
+      return value;
     }
+    if (value is num) {
+      return value.toInt();
+    }
+    if (value is String) {
+      return int.tryParse(value);
+    }
+    return null;
   }
 }

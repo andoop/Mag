@@ -197,6 +197,54 @@ class SessionEngine {
     return promptAssembler.prewarmWorkspaceContext(workspace);
   }
 
+  Future<JsonMap> previewModelRequest({
+    required WorkspaceInfo workspace,
+    required SessionInfo session,
+  }) async {
+    final messages = await database.listMessages(session.id);
+    final parts = await database.listPartsForSession(session.id);
+    final modelConfig = ModelConfig.fromJson(
+      await database.getSetting('model_config') ??
+          ModelConfig.defaults().toJson(),
+    );
+    MessageInfo? latestUser;
+    for (var i = messages.length - 1; i >= 0; i--) {
+      if (messages[i].role == SessionRole.user) {
+        latestUser = messages[i];
+        break;
+      }
+    }
+    final conversation = await _buildConversation(
+      workspace: workspace,
+      messages: messages,
+      parts: parts,
+      currentStep: 1,
+      maxSteps: agentDefinition(session.agent).steps,
+      currentAgent: session.agent,
+      model: modelConfig.model,
+      summaryMessageId: session.summaryMessageId,
+    );
+    final toolModels = [
+      ...toolRegistry.availableForAgent(
+        agentDefinition(session.agent),
+        modelId: modelConfig.model,
+      ),
+      if (latestUser?.format?.type == OutputFormatType.jsonSchema)
+        ToolDefinitionModel(
+          id: 'StructuredOutput',
+          description: 'Return the final structured response as JSON.',
+          parameters:
+              latestUser!.format!.schema ?? <String, dynamic>{'type': 'object'},
+        ),
+    ];
+    return modelGateway.buildDebugPayload(
+      config: modelConfig,
+      messages: conversation,
+      tools: toolModels,
+      format: latestUser?.format,
+    );
+  }
+
   Future<SessionInfo> compactSession({
     required WorkspaceInfo workspace,
     required SessionInfo session,

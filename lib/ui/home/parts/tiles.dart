@@ -131,22 +131,28 @@ class _PartTile extends StatelessWidget {
       case PartType.tool:
         final toolState =
             Map<String, dynamic>.from(part.data['state'] as Map? ?? const {});
+        final rawInput =
+            Map<String, dynamic>.from(toolState['input'] as Map? ?? const {});
+        final rawOutput = toolState['output'] as String?;
         final attachments = (toolState['attachments'] as List? ?? const [])
             .map((item) => Map<String, dynamic>.from(item as Map))
             .toList();
         final toolName = part.data['tool'] as String? ?? '';
         final toolTitle = toolState['title'] as String?;
         final toolStatus = toolState['status'] as String? ?? 'pending';
+        final callId = part.data['callID'] as String?;
         if (toolName == 'todowrite') {
           return _TodoWriteToolPart(
             toolStatus: toolStatus,
             todos: _resolveTodoWriteTodos(toolState),
+            rawInput: rawInput,
+            rawOutput: rawOutput,
+            callId: callId,
           );
         }
         if (toolName == 'fileref') {
           final metadata =
               Map<String, dynamic>.from(toolState['metadata'] as Map? ?? const {});
-          final input = Map<String, dynamic>.from(toolState['input'] as Map? ?? const {});
           List<Map<String, dynamic>> refs;
           final metaRefs = metadata['refs'];
           if (metaRefs is List) {
@@ -155,7 +161,7 @@ class _PartTile extends StatelessWidget {
                 .map((e) => Map<String, dynamic>.from(e))
                 .toList();
           } else {
-            final ir = input['refs'];
+            final ir = rawInput['refs'];
             refs = ir is List
                 ? ir
                     .whereType<Map>()
@@ -166,6 +172,9 @@ class _PartTile extends StatelessWidget {
           return _FileRefToolPart(
             toolStatus: toolStatus,
             refs: refs,
+            rawInput: rawInput,
+            rawOutput: rawOutput,
+            callId: callId,
             controller: controller,
             workspace: workspace,
             onInsertPromptReference: onInsertPromptReference,
@@ -185,6 +194,9 @@ class _PartTile extends StatelessWidget {
               toolName: toolName,
               toolTitle: toolTitle,
               status: toolStatus,
+              callId: callId,
+              rawInput: rawInput,
+              rawOutput: rawOutput,
               output: truncatedOutput,
               attachments: attachments,
               controller: controller,
@@ -198,6 +210,9 @@ class _PartTile extends StatelessWidget {
             toolStatus: toolStatus,
             questions: questions,
             answers: _resolveQuestionToolAnswers(toolState),
+            rawInput: rawInput,
+            rawOutput: rawOutput,
+            callId: callId,
           );
         }
         final displayOutput = (toolState['displayOutput'] as String?) ??
@@ -210,6 +225,9 @@ class _PartTile extends StatelessWidget {
           toolName: toolName,
           toolTitle: toolTitle,
           status: toolStatus,
+          callId: callId,
+          rawInput: rawInput,
+          rawOutput: rawOutput,
           output: truncatedOutput,
           attachments: attachments,
           controller: controller,
@@ -280,6 +298,9 @@ class _ToolPartTile extends StatefulWidget {
     required this.toolName,
     required this.toolTitle,
     required this.status,
+    required this.callId,
+    required this.rawInput,
+    required this.rawOutput,
     required this.output,
     required this.attachments,
     required this.controller,
@@ -292,6 +313,9 @@ class _ToolPartTile extends StatefulWidget {
   final String toolName;
   final String? toolTitle;
   final String status;
+  final String? callId;
+  final JsonMap rawInput;
+  final String? rawOutput;
   final String? output;
   final List<Map<String, dynamic>> attachments;
   final AppController controller;
@@ -402,6 +426,19 @@ class _ToolPartTileState extends State<_ToolPartTile> {
                         overflow: TextOverflow.ellipsis,
                       ),
                     ],
+                  ),
+                ),
+                _CompactIconButton(
+                  icon: Icons.data_object_outlined,
+                  tooltip: l(context, '查看原始调用', 'View raw call'),
+                  small: true,
+                  quiet: true,
+                  onPressed: () => _openRawToolCallSheet(
+                    context,
+                    toolName: widget.toolName,
+                    callId: widget.callId,
+                    rawInput: widget.rawInput,
+                    rawOutput: widget.rawOutput,
                   ),
                 ),
                 Icon(
