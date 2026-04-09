@@ -326,7 +326,7 @@ class ToolRegistry {
       ToolDefinition(
         id: 'delete',
         description:
-            'Delete a file or directory in the workspace. Directories are removed recursively.$kMobileWorkspacePathSuffix',
+            'Delete a file or directory in the workspace. If `path` points to a directory, it is removed recursively. Use this for deleting files, deleting folders, or clearing a subtree.$kMobileWorkspacePathSuffix',
         parameters: {
           'type': 'object',
           'properties': {
@@ -342,7 +342,7 @@ class ToolRegistry {
       ToolDefinition(
         id: 'rename',
         description:
-            'Rename a file or directory within the same parent folder (provide `newName` only, not a path).$kMobileWorkspacePathSuffix',
+            'Rename a file or directory within the same parent folder. Provide `newName` only (a single final name segment, not a path). If the parent folder should change too, use `move` instead.$kMobileWorkspacePathSuffix',
         parameters: {
           'type': 'object',
           'properties': {
@@ -359,7 +359,7 @@ class ToolRegistry {
       ToolDefinition(
         id: 'move',
         description:
-            'Move or rename a file or directory to a new workspace-relative path (`toPath` is the final destination path).$kMobileWorkspacePathSuffix',
+            'Move or rename a file or directory to a new workspace-relative path. Use this when the parent folder changes or when you want the final path directly; `toPath` is the full destination path.$kMobileWorkspacePathSuffix',
         parameters: {
           'type': 'object',
           'properties': {
@@ -376,7 +376,7 @@ class ToolRegistry {
       ToolDefinition(
         id: 'copy',
         description:
-            'Copy a file or directory to another path within the workspace. Directory copies are recursive (subject to platform limits).$kMobileWorkspacePathSuffix',
+            'Copy a file or directory to another path within the workspace. Directory copies are recursive (subject to platform limits), so this can duplicate a whole folder tree as well as a single file.$kMobileWorkspacePathSuffix',
         parameters: {
           'type': 'object',
           'properties': {

@@ -8,12 +8,14 @@
 
 ## 按 Agent 可见性
 
-| Agent | 模式 | 可用工具 ID |
-|--------|------|-------------|
-| **build** | 主会话默认 | `read`, `list`, `write`, `edit`, `apply_patch`, `glob`, `grep`, `stat`, `delete`, `rename`, `move`, `copy`, `task`, `todowrite`, `question`, `webfetch`, `browser`, `skill`, `invalid`, `plan_exit` |
-| **general** | 子代理 | 与 build 相同（`todowrite` 在权限规则中可能被 deny，见 `agents.dart`） |
-| **plan** | 主会话规划 | `read`, `list`, `glob`, `grep`, `stat`, `question`, `webfetch`, `browser`, `skill`, `todowrite`, `task`, `plan_exit`, `invalid`（**无** `write` / `edit` / `apply_patch` 及 `delete` / `rename` / `move` / `copy`） |
-| **explore** | 子代理探索 | `read`, `list`, `glob`, `grep`, `stat`, `webfetch`, `browser`, `skill`, `question`, `invalid`（**无** 写类、`task`、`todowrite`、`plan_exit`） |
+
+| Agent       | 模式    | 可用工具 ID                                                                                                                                                                                                         |
+| ----------- | ----- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **build**   | 主会话默认 | `read`, `list`, `write`, `edit`, `apply_patch`, `glob`, `grep`, `stat`, `delete`, `rename`, `move`, `copy`, `task`, `todowrite`, `question`, `webfetch`, `browser`, `skill`, `invalid`, `plan_exit`             |
+| **general** | 子代理   | 与 build 相同（`todowrite` 在权限规则中可能被 deny，见 `agents.dart`）                                                                                                                                                          |
+| **plan**    | 主会话规划 | `read`, `list`, `glob`, `grep`, `stat`, `question`, `webfetch`, `browser`, `skill`, `todowrite`, `task`, `plan_exit`, `invalid`（**无** `write` / `edit` / `apply_patch` 及 `delete` / `rename` / `move` / `copy`） |
+| **explore** | 子代理探索 | `read`, `list`, `glob`, `grep`, `stat`, `webfetch`, `browser`, `skill`, `question`, `invalid`（**无** 写类、`task`、`todowrite`、`plan_exit`）                                                                          |
+
 
 默认权限规则要点（可被各 Agent 覆盖）：
 
@@ -51,11 +53,13 @@
 
 **参数**：
 
-| 参数 | 类型 | 说明 |
-|------|------|------|
-| `path` | string | 可选，相对工作区根的路径 |
-| `offset` | integer | 可选，从第几行（文件）或第几条（目录）开始，默认 `1` |
-| `limit` | integer | 可选，最多行数/条目数，默认 `2000`，上限 `5000` |
+
+| 参数       | 类型      | 说明                              |
+| -------- | ------- | ------------------------------- |
+| `path`   | string  | 可选，相对工作区根的路径                    |
+| `offset` | integer | 可选，从第几行（文件）或第几条（目录）开始，默认 `1`    |
+| `limit`  | integer | 可选，最多行数/条目数，默认 `2000`，上限 `5000` |
+
 
 **行为要点**：
 
@@ -82,15 +86,17 @@
 
 ### 2. `write`
 
-**作用**：新建或覆盖文件。执行前会走 **`edit` 权限**（含 diff 预览）。
+**作用**：新建或覆盖文件。执行前会走 `**edit` 权限**（含 diff 预览）。
 
 **参数**：
 
-| 参数 | 类型 | 说明 |
-|------|------|------|
-| `path` | string | **必填**，相对路径 |
-| `content` | string | 可选，直接写入的短文本 |
+
+| 参数           | 类型     | 说明                                                                |
+| ------------ | ------ | ----------------------------------------------------------------- |
+| `path`       | string | **必填**，相对路径                                                       |
+| `content`    | string | 可选，直接写入的短文本                                                       |
 | `contentRef` | string | 可选，对应同条助手消息中 `<write_content id="...">...</write_content>` 的 `id` |
+
 
 **行为要点**：
 
@@ -112,7 +118,7 @@
 ```dart
 void main() {}
 ```
-</write_content>
+
 ```
 
 再调用：
@@ -125,16 +131,18 @@ void main() {}
 
 ### 3. `edit`
 
-**作用**：在文件中用 `oldString` 替换为 `newString`。需 **`edit` 权限**。
+**作用**：在文件中用 `oldString` 替换为 `newString`。需 `**edit` 权限**。
 
 **参数**：
 
-| 参数 | 类型 | 说明 |
-|------|------|------|
-| `path` | string | **必填** |
-| `oldString` | string | **必填** |
-| `newString` | string | **必填** |
+
+| 参数           | 类型      | 说明                    |
+| ------------ | ------- | --------------------- |
+| `path`       | string  | **必填**                |
+| `oldString`  | string  | **必填**                |
+| `newString`  | string  | **必填**                |
 | `replaceAll` | boolean | 可选，默认 `false`（仅替换第一处） |
+
 
 **行为要点**：
 
@@ -158,18 +166,20 @@ void main() {}
 
 ### 4. `apply_patch`
 
-**作用**：按 Mag 风格补丁批量增删改移动文件。每段变更需 **`edit` 权限**。
+**作用**：按 Mag 风格补丁批量增删改移动文件。每段变更需 `**edit` 权限**。
 
 **参数**：
 
-| 参数 | 类型 | 说明 |
-|------|------|------|
+
+| 参数          | 类型     | 说明     |
+| ----------- | ------ | ------ |
 | `patchText` | string | **必填** |
+
 
 **补丁段落标记**（与 `tool_runtime.dart` 解析一致）：
 
 - `*** Add File: <path>` — 新增文件，内容行以 `+` 开头。
-- `*** Update File: <path>` — 修改；使用 `@@` 开始 hunk，行前缀：` `（上下文）、`-`（删）、`+`（增）。
+- `*** Update File: <path>` — 修改；使用 `@@` 开始 hunk，行前缀： ``（上下文）、`-`（删）、`+`（增）。
 - `*** Delete File: <path>` — 删除文件。
 - `*** Move to: <newpath>` — 与 Update 配合表示移动（先写目标路径行）。
 - `*** End of File` — 可放在 update hunk 内，表示该块应优先从文件尾定位。
@@ -201,10 +211,12 @@ void main() {}
 
 **参数**：
 
-| 参数 | 类型 | 说明 |
-|------|------|------|
-| `path` | string | 可选，子目录；空为根 |
-| `ignore` | string[] | 可选，额外忽略模式 |
+
+| 参数       | 类型       | 说明         |
+| -------- | -------- | ---------- |
+| `path`   | string   | 可选，子目录；空为根 |
+| `ignore` | string[] | 可选，额外忽略模式  |
+
 
 **注意**：结果最多约 **100** 个文件（`_kToolResultLimit`），超出会截断。
 
@@ -222,10 +234,12 @@ void main() {}
 
 **参数**：
 
-| 参数 | 类型 | 说明 |
-|------|------|------|
+
+| 参数        | 类型     | 说明                   |
+| --------- | ------ | -------------------- |
 | `pattern` | string | **必填**，如 `**/*.dart` |
-| `path` | string | 可选，限定搜索根子路径 |
+| `path`    | string | 可选，限定搜索根子路径          |
+
 
 **示例**：
 
@@ -241,14 +255,16 @@ void main() {}
 
 **参数**：
 
-| 参数 | 类型 | 说明 |
-|------|------|------|
-| `pattern` | string | **必填**，每行独立匹配 |
-| `path` | string | 可选，必须是工作区内的**目录**（不能传单个文件路径；搜单文件请 `read` 或传父目录 + `include`/`glob`） |
-| `include` | string | 可选，glob；与 **`glob` 二选一**（`include` 非空时优先） |
-| `glob` | string | 可选，**`include` 的别名**，方便与常见工具命名对齐 |
 
-**`include` / `glob` 语义**：按**整条工作区相对路径**匹配（如 `lib/main.dart`），不是仅文件名。子目录下按扩展名过滤请用 `**/*.dart`；仅用 `*.dart` 只会匹配根目录下一层文件名。
+| 参数        | 类型     | 说明                                                                 |
+| --------- | ------ | ------------------------------------------------------------------ |
+| `pattern` | string | **必填**，每行独立匹配                                                      |
+| `path`    | string | 可选，必须是工作区内的**目录**（不能传单个文件路径；搜单文件请 `read` 或传父目录 + `include`/`glob`） |
+| `include` | string | 可选，glob；与 `**glob` 二选一**（`include` 非空时优先）                          |
+| `glob`    | string | 可选，`**include` 的别名**，方便与常见工具命名对齐                                   |
+
+
+`**include` / `glob` 语义**：按**整条工作区相对路径**匹配（如 `lib/main.dart`），不是仅文件名。子目录下按扩展名过滤请用 `**/*.dart`；仅用 `*.dart` 只会匹配根目录下一层文件名。
 
 **示例**：
 
@@ -270,9 +286,11 @@ void main() {}
 
 **参数**：
 
-| 参数 | 类型 | 说明 |
-|------|------|------|
+
+| 参数     | 类型     | 说明               |
+| ------ | ------ | ---------------- |
 | `path` | string | **必填**，相对工作区根的路径 |
+
 
 **返回字段**：`path`、`name`、`isDirectory`、`size`、`lastModified`（毫秒时间戳）、`mimeType`（若有）。
 
@@ -286,13 +304,21 @@ void main() {}
 
 ### 9. `delete`
 
-**作用**：删除文件或目录（目录递归删除）。需 **`edit` 权限**。
+**作用**：删除文件或目录（目录递归删除）。需 `**edit` 权限**。
+
+**适用场景**：
+
+- 删除单个文件
+- 删除整个文件夹
+- 删除某个目录树下的所有内容（直接删该目录）
 
 **参数**：
 
-| 参数 | 类型 | 说明 |
-|------|------|------|
+
+| 参数     | 类型     | 说明     |
+| ------ | ------ | ------ |
 | `path` | string | **必填** |
+
 
 **示例**：
 
@@ -304,14 +330,22 @@ void main() {}
 
 ### 10. `rename`
 
-**作用**：在同一父目录下重命名（仅改文件名）。需 **`edit` 权限**。若需跨目录路径变更，请用 **`move`**。
+**作用**：在同一父目录下重命名（仅改文件名）。需 `**edit` 权限**。若需跨目录路径变更，请用 `**move`**。
 
 **参数**：
 
-| 参数 | 类型 | 说明 |
-|------|------|------|
-| `path` | string | **必填**，原相对路径 |
+
+| 参数        | 类型     | 说明                  |
+| --------- | ------ | ------------------- |
+| `path`    | string | **必填**，原相对路径        |
 | `newName` | string | **必填**，新文件名（不含 `/`） |
+
+
+**注意**：
+
+- `rename` 既可用于文件，也可用于目录。
+- `newName` 只能是最终名字，不能带路径分隔符。
+- 只改名、不换目录时优先用 `rename`；目录也要变化时改用 `move`。
 
 **示例**：
 
@@ -323,14 +357,22 @@ void main() {}
 
 ### 11. `move`
 
-**作用**：将文件或目录移动到新的工作区相对路径（`toPath` 为最终路径，含文件名）。需 **`edit` 权限**。Android 上优先使用 `DocumentsContract.moveDocument`（API 24+），否则回退为复制后删除源。
+**作用**：将文件或目录移动到新的工作区相对路径（`toPath` 为最终路径，含文件名）。需 `**edit` 权限**。Android 上优先使用 `DocumentsContract.moveDocument`（API 24+），否则回退为复制后删除源。
 
 **参数**：
 
-| 参数 | 类型 | 说明 |
-|------|------|------|
-| `fromPath` | string | **必填**，源路径 |
-| `toPath` | string | **必填**，目标路径 |
+
+| 参数         | 类型     | 说明          |
+| ---------- | ------ | ----------- |
+| `fromPath` | string | **必填**，源路径  |
+| `toPath`   | string | **必填**，目标路径 |
+
+
+**注意**：
+
+- `move` 同时适用于文件和目录。
+- 当你想“改路径”而不仅是“改名字”时，用 `move` 而不是 `rename`。
+- `toPath` 是最终完整目标路径，不只是目标目录。
 
 **示例**：
 
@@ -342,14 +384,21 @@ void main() {}
 
 ### 12. `copy`
 
-**作用**：复制文件或目录到另一路径（目录递归复制；平台限制深度与文件数）。需 **`edit` 权限**。
+**作用**：复制文件或目录到另一路径（目录递归复制；平台限制深度与文件数）。需 `**edit` 权限**。
 
 **参数**：
 
-| 参数 | 类型 | 说明 |
-|------|------|------|
-| `fromPath` | string | **必填**，源路径 |
-| `toPath` | string | **必填**，目标路径 |
+
+| 参数         | 类型     | 说明          |
+| ---------- | ------ | ----------- |
+| `fromPath` | string | **必填**，源路径  |
+| `toPath`   | string | **必填**，目标路径 |
+
+
+**注意**：
+
+- `copy` 可复制单个文件，也可递归复制整个目录。
+- 若目标已存在，工具会失败而不是覆盖。
 
 **示例**：
 
@@ -365,9 +414,11 @@ void main() {}
 
 **参数**：
 
-| 参数 | 类型 | 说明 |
-|------|------|------|
+
+| 参数      | 类型    | 说明                                                 |
+| ------- | ----- | -------------------------------------------------- |
 | `todos` | array | **必填**；每项至少含 `content`、`status`；可选 `id`、`priority` |
+
 
 **示例**：
 
@@ -388,9 +439,11 @@ void main() {}
 
 **参数**：
 
-| 参数 | 类型 | 说明 |
-|------|------|------|
+
+| 参数          | 类型    | 说明                                                                                       |
+| ----------- | ----- | ---------------------------------------------------------------------------------------- |
 | `questions` | array | **必填**；每项含 `question`、`header`、`options`（`label` + `description`），可选 `multiple`、`custom` |
+
 
 **示例**：
 
@@ -414,13 +467,15 @@ void main() {}
 
 ### 15. `webfetch`
 
-**作用**：HTTP GET 获取 URL 正文。需 **`webfetch` 权限**（默认多为询问）。
+**作用**：HTTP GET 获取 URL 正文。需 `**webfetch` 权限**（默认多为询问）。
 
 **参数**：
 
-| 参数 | 类型 | 说明 |
-|------|------|------|
+
+| 参数    | 类型     | 说明     |
+| ----- | ------ | ------ |
 | `url` | string | **必填** |
+
 
 **示例**：
 
@@ -436,9 +491,11 @@ void main() {}
 
 **参数**：
 
-| 参数 | 类型 | 说明 |
-|------|------|------|
+
+| 参数     | 类型     | 说明                                         |
+| ------ | ------ | ------------------------------------------ |
 | `path` | string | **必填**；可为目录，会尝试 `index.html` / `index.htm` |
+
 
 **示例**：
 
@@ -454,9 +511,11 @@ void main() {}
 
 **参数**：
 
-| 参数 | 类型 | 说明 |
-|------|------|------|
+
+| 参数     | 类型     | 说明                                             |
+| ------ | ------ | ---------------------------------------------- |
 | `name` | string | **必填**；当前实现：`android_workspace`、`mobile_agent` |
+
 
 **示例**：
 
@@ -472,10 +531,12 @@ void main() {}
 
 **参数**：
 
-| 参数 | 类型 | 说明 |
-|------|------|------|
-| `tool` | string | **必填** |
+
+| 参数      | 类型     | 说明     |
+| ------- | ------ | ------ |
+| `tool`  | string | **必填** |
 | `error` | string | **必填** |
+
 
 **示例**：
 
@@ -499,12 +560,14 @@ void main() {}
 
 **参数**：
 
-| 参数 | 类型 | 说明 |
-|------|------|------|
-| `description` | string | **必填**，任务标题 |
-| `prompt` | string | **必填**，子会话用户消息 |
+
+| 参数              | 类型     | 说明                                                                        |
+| --------------- | ------ | ------------------------------------------------------------------------- |
+| `description`   | string | **必填**，任务标题                                                               |
+| `prompt`        | string | **必填**，子会话用户消息                                                            |
 | `subagent_type` | string | 可选，默认 `general`；与 `AgentRegistry` 名称一致：`build`、`plan`、`general`、`explore` |
-| `task_id` | string | 可选；传入已有子会话 ID 时，会续跑该子任务而不是新建会话 |
+| `task_id`       | string | 可选；传入已有子会话 ID 时，会续跑该子任务而不是新建会话                                            |
+
 
 **示例**：
 
@@ -523,5 +586,6 @@ void main() {}
 
 - 工具注册：`lib/core/tool_runtime.dart` → `ToolRegistry.builtins()`。
 - Agent 与权限：`lib/core/agents.dart`。
-- 工作区桥接：`lib/core/workspace_bridge.dart`；`stat` / `delete` / `rename` / `move` / `copy` 对应 MethodChannel 方法名与 Android 实现见 `android/app/src/main/kotlin/.../MainActivity.kt` 中的 `renameEntry`、`moveEntry`、`copyEntry`（`deleteEntry` 已存在）。**当前仅 Android 侧实现；若在其他平台调用未实现的原生方法会失败。**
+- 工作区桥接：`lib/core/workspace_bridge.dart`；`stat` / `delete` / `rename` / `move` / `copy` 在本地路径模式下直接走 Dart 文件系统，在受限平台工作区下走原生 MethodChannel。当前 Android 与 iOS 都已支持这些工作区文件操作。
 - 若修改 `availableTools` 或 `PermissionRule`，请同步更新本文档。
+

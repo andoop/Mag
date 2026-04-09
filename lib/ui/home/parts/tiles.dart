@@ -134,6 +134,9 @@ class _PartTile extends StatelessWidget {
         final rawInput =
             Map<String, dynamic>.from(toolState['input'] as Map? ?? const {});
         final rawOutput = toolState['output'] as String?;
+        final rawDisplayOutput = toolState['displayOutput'] as String?;
+        final metadata =
+            Map<String, dynamic>.from(toolState['metadata'] as Map? ?? const {});
         final attachments = (toolState['attachments'] as List? ?? const [])
             .map((item) => Map<String, dynamic>.from(item as Map))
             .toList();
@@ -197,6 +200,8 @@ class _PartTile extends StatelessWidget {
               callId: callId,
               rawInput: rawInput,
               rawOutput: rawOutput,
+              hasDisplayOutput: rawDisplayOutput != null,
+              metadata: metadata,
               output: truncatedOutput,
               attachments: attachments,
               controller: controller,
@@ -228,6 +233,8 @@ class _PartTile extends StatelessWidget {
           callId: callId,
           rawInput: rawInput,
           rawOutput: rawOutput,
+          hasDisplayOutput: rawDisplayOutput != null,
+          metadata: metadata,
           output: truncatedOutput,
           attachments: attachments,
           controller: controller,
@@ -301,6 +308,8 @@ class _ToolPartTile extends StatefulWidget {
     required this.callId,
     required this.rawInput,
     required this.rawOutput,
+    required this.hasDisplayOutput,
+    required this.metadata,
     required this.output,
     required this.attachments,
     required this.controller,
@@ -316,6 +325,8 @@ class _ToolPartTile extends StatefulWidget {
   final String? callId;
   final JsonMap rawInput;
   final String? rawOutput;
+  final bool hasDisplayOutput;
+  final Map<String, dynamic> metadata;
   final String? output;
   final List<Map<String, dynamic>> attachments;
   final AppController controller;
@@ -354,13 +365,385 @@ class _ToolPartTileState extends State<_ToolPartTile> {
     return null;
   }
 
+  Map<String, dynamic>? _firstAttachmentOfType(String type) {
+    for (final item in widget.attachments) {
+      if (item['type'] == type) return item;
+    }
+    return null;
+  }
+
+  String _entryKindLabel(BuildContext context, bool isDirectory) {
+    return isDirectory ? l(context, '目录', 'directory') : l(context, '文件', 'file');
+  }
+
+  String? _localizedFileOpSummary(BuildContext context) {
+    final isDirectory = widget.metadata['isDirectory'] == true;
+    final objectKind = _entryKindLabel(context, isDirectory);
+    final path = (widget.metadata['path'] as String?) ??
+        (widget.rawInput['path'] as String?) ??
+        (widget.rawInput['toPath'] as String?);
+    final from = (widget.metadata['from'] as String?) ??
+        (widget.rawInput['fromPath'] as String?) ??
+        (widget.rawInput['path'] as String?);
+    switch (widget.toolName) {
+      case 'delete':
+        if (path == null || path.isEmpty) return null;
+        return l(context, '已删除$objectKind $path', 'Deleted $objectKind $path');
+      case 'rename':
+        if (from == null || from.isEmpty || path == null || path.isEmpty) return null;
+        return l(context, '已重命名$objectKind $from -> $path',
+            'Renamed $objectKind $from -> $path');
+      case 'move':
+        if (from == null || from.isEmpty || path == null || path.isEmpty) return null;
+        return l(context, '已移动$objectKind $from -> $path',
+            'Moved $objectKind $from -> $path');
+      case 'copy':
+        if (from == null || from.isEmpty || path == null || path.isEmpty) return null;
+        return l(context, '已复制$objectKind $from -> $path',
+            'Copied $objectKind $from -> $path');
+      default:
+        return null;
+    }
+  }
+
+  String? _localizedToolSummary(BuildContext context) {
+    final fileOpSummary = _localizedFileOpSummary(context);
+    if (fileOpSummary != null) return fileOpSummary;
+
+    switch (widget.toolName) {
+      case 'read':
+        final path = (widget.metadata['path'] as String?) ??
+            (widget.rawInput['path'] as String?) ??
+            '.';
+        final kind = widget.metadata['kind'] as String?;
+        if (kind == 'directory') {
+          return l(context, '已列出目录 $path', 'Listed directory $path');
+        }
+        if (kind == 'attachment') {
+          return l(context, '已读取附件 $path', 'Read attachment $path');
+        }
+        if (kind == 'file') {
+          final preview = _firstAttachmentOfType('text_preview');
+          final startLine = preview?['startLine'] as int?;
+          final endLine = preview?['endLine'] as int?;
+          final lineCount = preview?['lineCount'] as int? ?? widget.metadata['lineCount'] as int?;
+          if (startLine != null && endLine != null && lineCount != null) {
+            if (lineCount == 0) {
+              return l(context, '已读取文件 $path · 空文件', 'Read $path · empty file');
+            }
+            return l(context, '已读取文件 $path · 第 $startLine-$endLine 行 / 共 $lineCount 行',
+                'Read $path · lines $startLine-$endLine / $lineCount');
+          }
+          return l(context, '已读取文件 $path', 'Read file $path');
+        }
+        return null;
+      case 'write':
+        final path = (widget.metadata['path'] as String?) ??
+            (widget.rawInput['path'] as String?);
+        if (path == null || path.isEmpty) return null;
+        return l(context, '已写入文件 $path', 'Wrote file $path');
+      case 'edit':
+        final path = (widget.metadata['path'] as String?) ??
+            (widget.rawInput['path'] as String?);
+        if (path == null || path.isEmpty) return null;
+        return l(context, '已更新文件 $path', 'Updated file $path');
+      case 'apply_patch':
+        final files = widget.metadata['files'];
+        final count = files is List ? files.length : null;
+        if (count == null) return l(context, '已应用补丁', 'Applied patch');
+        return l(context, '已应用补丁 · $count 个文件', 'Applied patch · $count file(s)');
+      case 'grep':
+        final pattern = (widget.rawInput['pattern'] as String?) ?? '';
+        final count = (widget.metadata['count'] as int?) ??
+            (widget.metadata['matches'] as int?) ??
+            0;
+        final truncated = widget.metadata['truncated'] == true;
+        if (count == 0) {
+          return l(context, '搜索 $pattern · 0 个匹配', 'Grep $pattern · 0 matches');
+        }
+        return l(context, '搜索 $pattern · $count${truncated ? '+' : ''} 个匹配',
+            'Grep $pattern · $count${truncated ? '+' : ''} matches');
+      case 'list':
+        final path = (widget.rawInput['path'] as String?)?.trim();
+        final resolvedPath = (path == null || path.isEmpty) ? '.' : path;
+        final count = (widget.metadata['count'] as int?) ?? 0;
+        final truncated = widget.metadata['truncated'] == true;
+        return l(context, '已列出 $resolvedPath · $count${truncated ? '+' : ''} 个文件',
+            'Listed $resolvedPath · $count${truncated ? '+' : ''} files');
+      case 'glob':
+        final pattern = (widget.rawInput['pattern'] as String?) ?? '*';
+        final count = (widget.metadata['count'] as int?) ?? 0;
+        final truncated = widget.metadata['truncated'] == true;
+        return l(context, '通配搜索 $pattern · $count${truncated ? '+' : ''} 个匹配',
+            'Glob $pattern · $count${truncated ? '+' : ''} matches');
+      case 'stat':
+        final path = (widget.metadata['path'] as String?) ??
+            (widget.rawInput['path'] as String?) ??
+            '.';
+        final isDirectory = widget.metadata['isDirectory'] == true;
+        final kind = _entryKindLabel(context, isDirectory);
+        return l(context, '查看$kind信息 $path', 'Stat $kind $path');
+      case 'webfetch':
+        final attachment = _firstAttachmentOfType('webpage');
+        final url = (attachment?['url'] as String?) ??
+            (widget.rawInput['url'] as String?);
+        final statusCode = widget.metadata['statusCode'];
+        final contentType = widget.metadata['contentType'];
+        if (url == null || url.isEmpty) return null;
+        return l(context, '已抓取 $url · $statusCode · $contentType',
+            'Fetched $url · $statusCode · $contentType');
+      case 'browser':
+        final path = widget.metadata['path'] as String?;
+        if (path == null || path.isEmpty) return null;
+        return l(context, '已打开页面 $path', 'Opened page $path');
+      case 'skill':
+        final name = (widget.rawInput['name'] as String?) ?? '';
+        if (name.isEmpty) return l(context, '已读取内置技能', 'Loaded built-in skill');
+        return l(context, '已读取内置技能 $name', 'Loaded built-in skill $name');
+      case 'invalid':
+        final tool = (widget.rawInput['tool'] as String?) ?? 'unknown';
+        return l(context, '无效工具调用 $tool', 'Invalid tool call $tool');
+      case 'plan_exit':
+        return l(context, '准备切换到 build 模式', 'Switching to build mode');
+      case 'task':
+        final taskSessionId = widget.metadata['taskSessionId'] as String?;
+        if (taskSessionId == null || taskSessionId.isEmpty) {
+          return l(context, '子任务已完成', 'Subtask completed');
+        }
+        return l(context, '子任务已完成 · $taskSessionId',
+            'Subtask completed · $taskSessionId');
+      case 'git':
+        return _localizedGitSummary(context);
+      default:
+        return null;
+    }
+  }
+
+  String? _localizedGitSummary(BuildContext context) {
+    final title = widget.toolTitle ?? '';
+    if (title == 'git init') {
+      final workDir = widget.metadata['workDir'] as String?;
+      if (workDir == null || workDir.isEmpty) return null;
+      return l(context, '已初始化 Git 仓库 $workDir', 'Initialized git repository at $workDir');
+    }
+    if (title == 'git clone') {
+      final path = widget.metadata['path'] as String?;
+      final defaultBranch = widget.metadata['defaultBranch'] as String?;
+      if (path == null || path.isEmpty) return null;
+      if (defaultBranch != null && defaultBranch.isNotEmpty) {
+        return l(context, '已克隆到 $path · 分支 $defaultBranch',
+            'Cloned into $path · branch $defaultBranch');
+      }
+      return l(context, '已克隆到 $path', 'Cloned into $path');
+    }
+    if (title == 'git status') {
+      final clean = widget.metadata['clean'] == true;
+      if (clean) return l(context, '工作区干净', 'Working tree clean');
+      final staged = widget.metadata['staged'] ?? 0;
+      final unstaged = widget.metadata['unstaged'] ?? 0;
+      final untracked = widget.metadata['untracked'] ?? 0;
+      return l(context, '$staged 个已暂存，$unstaged 个未暂存，$untracked 个未跟踪',
+          '$staged staged, $unstaged unstaged, $untracked untracked');
+    }
+    if (title == 'git commit') {
+      final hash = (widget.metadata['hash'] as String?) ?? '';
+      if (hash.isEmpty) return null;
+      final shortHash = hash.length > 8 ? hash.substring(0, 8) : hash;
+      final amend = widget.rawInput['amend'] == true;
+      return amend
+          ? l(context, '已修订提交 $shortHash', 'Amended $shortHash')
+          : l(context, '已创建提交 $shortHash', 'Created $shortHash');
+    }
+    if (title == 'git log') {
+      final count = widget.metadata['count'];
+      if (count == null) return null;
+      return l(context, '$count 条提交记录', '$count commit(s)');
+    }
+    if (title == 'git show') {
+      final hash = (widget.metadata['hash'] as String?) ?? '';
+      if (hash.isEmpty) return null;
+      final shortHash = hash.length > 8 ? hash.substring(0, 8) : hash;
+      return l(context, '查看提交 $shortHash', 'Show commit $shortHash');
+    }
+    if (title == 'git add .') {
+      return l(context, '已暂存全部更改', 'Staged all changes');
+    }
+    if (title == 'git add') {
+      final paths = widget.metadata['paths'];
+      if (paths is List) {
+        return l(context, '已暂存 ${paths.length} 个路径', 'Staged ${paths.length} path(s)');
+      }
+    }
+    if (title == 'git branch') {
+      final action = ((widget.rawInput['action'] as String?) ?? 'list').trim().toLowerCase();
+      final name = (widget.rawInput['name'] as String?) ?? '';
+      if (action.isEmpty || action == 'list') {
+        final branches = widget.metadata['branches'];
+        if (branches is List) {
+          return l(context, '${branches.length} 个分支', '${branches.length} branch(es)');
+        }
+      }
+      if (action == 'create' && name.isNotEmpty) {
+        final startPoint = (widget.rawInput['startPoint'] as String?) ?? '';
+        return startPoint.isEmpty
+            ? l(context, '已创建分支 $name', 'Created branch $name')
+            : l(context, '已创建分支 $name · 基于 $startPoint',
+                'Created branch $name at $startPoint');
+      }
+      if (action == 'delete' && name.isNotEmpty) {
+        final force = widget.rawInput['force'] == true;
+        return force
+            ? l(context, '已强制删除分支 $name', 'Force deleted branch $name')
+            : l(context, '已删除分支 $name', 'Deleted branch $name');
+      }
+    }
+    if (title == 'git checkout -b') {
+      final target = (widget.rawInput['target'] as String?) ?? '';
+      if (target.isEmpty) return null;
+      return l(context, '已创建并切换到分支 $target',
+          'Created and switched to branch $target');
+    }
+    if (title == 'git checkout') {
+      final target = (widget.rawInput['target'] as String?) ?? '';
+      if (target.isEmpty) return null;
+      return l(context, '已切换到 $target', 'Switched to $target');
+    }
+    if (title == 'git merge') {
+      final conflicts = widget.metadata['conflicts'];
+      if (conflicts is List && conflicts.isNotEmpty) {
+        return l(context, '合并发生冲突 · ${conflicts.length} 个文件',
+            'Merge conflicts · ${conflicts.length} file(s)');
+      }
+      final branch = (widget.rawInput['branch'] as String?) ?? '';
+      final mergeCommit = widget.metadata['mergeCommit'] as String?;
+      if (mergeCommit != null && mergeCommit.isNotEmpty) {
+        final shortHash =
+            mergeCommit.length > 8 ? mergeCommit.substring(0, 8) : mergeCommit;
+        return branch.isEmpty
+            ? l(context, '已完成合并 $shortHash', 'Merged $shortHash')
+            : l(context, '已合并 $branch · $shortHash', 'Merged $branch · $shortHash');
+      }
+      if (branch.isNotEmpty) {
+        return l(context, '已合并 $branch', 'Merged $branch');
+      }
+    }
+    if (title == 'git fetch') {
+      final updatedRefs = widget.metadata['updatedRefs'];
+      final count = updatedRefs is List ? updatedRefs.length : 0;
+      if (count == 0) {
+        return l(context, '抓取完成，引用无更新', 'Fetched successfully, no refs updated');
+      }
+      return l(context, '已抓取 $count 个引用', 'Fetched $count ref(s)');
+    }
+    if (title == 'git pull') {
+      final useRebase = widget.rawInput['rebase'] == true;
+      final mergeCommit = widget.metadata['mergeCommit'] as String?;
+      final newHead = widget.metadata['newHead'] as String?;
+      if (useRebase) {
+        if (newHead != null && newHead.isNotEmpty) {
+          final shortHash = newHead.length > 8 ? newHead.substring(0, 8) : newHead;
+          return l(context, '拉取并变基完成 · $shortHash',
+              'Pulled and rebased · $shortHash');
+        }
+        return l(context, '拉取并变基完成', 'Pulled and rebased successfully');
+      }
+      if (mergeCommit != null && mergeCommit.isNotEmpty) {
+        final shortHash =
+            mergeCommit.length > 8 ? mergeCommit.substring(0, 8) : mergeCommit;
+        return l(context, '拉取并合并完成 · $shortHash',
+            'Pulled and merged · $shortHash');
+      }
+      return l(context, '拉取并合并完成', 'Pulled and merged successfully');
+    }
+    if (title == 'git push') {
+      final pushedRefs = widget.metadata['pushedRefs'];
+      if (pushedRefs is List && pushedRefs.isNotEmpty) {
+        return l(context, '已推送 ${pushedRefs.length} 个引用',
+            'Pushed ${pushedRefs.length} ref(s)');
+      }
+      return l(context, '推送完成', 'Pushed successfully');
+    }
+    if (title == 'git rebase') {
+      final conflicts = widget.metadata['conflicts'];
+      if (conflicts is List && conflicts.isNotEmpty) {
+        return l(context, '变基发生冲突 · ${conflicts.length} 个文件',
+            'Rebase conflicts · ${conflicts.length} file(s)');
+      }
+      final ref = (widget.rawInput['ref'] as String?) ?? '';
+      final newHead = widget.metadata['newHead'] as String?;
+      if (newHead != null && newHead.isNotEmpty) {
+        final shortHash = newHead.length > 8 ? newHead.substring(0, 8) : newHead;
+        return ref.isEmpty
+            ? l(context, '变基完成 · $shortHash', 'Rebased · $shortHash')
+            : l(context, '已变基到 $ref · $shortHash', 'Rebased onto $ref · $shortHash');
+      }
+      if (ref.isNotEmpty) {
+        return l(context, '已变基到 $ref', 'Rebased onto $ref');
+      }
+    }
+    return null;
+  }
+
+  String _localizedToolLabel(BuildContext context) {
+    final title = widget.toolTitle;
+    switch (title) {
+      case 'Apply Patch':
+        return l(context, '应用补丁', 'Apply Patch');
+      case 'WebFetch':
+        return l(context, '网页抓取', 'WebFetch');
+      case 'Browser':
+        return l(context, '页面预览', 'Browser');
+      case 'Skill':
+        return l(context, '内置技能', 'Skill');
+      case 'Invalid':
+        return l(context, '无效调用', 'Invalid');
+      case 'Plan Exit':
+        return l(context, '退出计划模式', 'Plan Exit');
+    }
+
+    switch (widget.toolName) {
+      case 'list':
+        return l(context, '文件列表', 'File List');
+      case 'glob':
+        return l(context, '通配搜索', 'Glob Search');
+      case 'grep':
+        return l(context, '文本搜索', 'Text Search');
+      case 'stat':
+        return l(context, '文件信息', 'File Info');
+      case 'read':
+        return l(context, '读取文件', 'Read File');
+      case 'write':
+        return l(context, '写入文件', 'Write File');
+      case 'edit':
+        return l(context, '编辑文件', 'Edit File');
+      case 'apply_patch':
+        return l(context, '应用补丁', 'Apply Patch');
+      case 'webfetch':
+        return l(context, '网页抓取', 'WebFetch');
+      case 'browser':
+        return l(context, '页面预览', 'Browser');
+      case 'skill':
+        return l(context, '内置技能', 'Skill');
+      case 'invalid':
+        return l(context, '无效调用', 'Invalid');
+      case 'plan_exit':
+        return l(context, '退出计划模式', 'Plan Exit');
+      default:
+        return title ?? widget.toolName;
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     final isRunning = widget.status == 'running' || widget.status == 'pending';
     final isError = widget.status == 'error';
-    final label = widget.toolTitle ?? widget.toolName;
+    final label = _localizedToolLabel(context);
     final expanded = _expanded ?? _defaultExpanded();
-    final collapsedSummary = widget.output?.split('\n').first.trim();
+    final localizedSummary = _localizedToolSummary(context);
+    final collapsedOutput = localizedSummary ?? widget.output;
+    final expandedOutput =
+        widget.hasDisplayOutput ? (localizedSummary ?? widget.output) : widget.output;
+    final collapsedSummary = collapsedOutput?.split('\n').first.trim();
     final diffSuffix = _diffStatSuffix();
     final oc = context.oc;
     return Container(
@@ -418,7 +801,7 @@ class _ToolPartTileState extends State<_ToolPartTile> {
                                 collapsedSummary != null &&
                                 collapsedSummary.isNotEmpty)
                             ? collapsedSummary
-                            : label,
+                            : (localizedSummary ?? label),
                         style: Theme.of(context)
                             .textTheme
                             .labelSmall
@@ -450,8 +833,8 @@ class _ToolPartTileState extends State<_ToolPartTile> {
             ),
           ),
           if (expanded &&
-              widget.output != null &&
-              widget.output!.isNotEmpty) ...[
+              expandedOutput != null &&
+              expandedOutput.isNotEmpty) ...[
             const SizedBox(height: 6),
             Container(
               width: double.infinity,
@@ -461,7 +844,7 @@ class _ToolPartTileState extends State<_ToolPartTile> {
                 borderRadius: BorderRadius.circular(8),
               ),
               child: Text(
-                widget.output!,
+                expandedOutput,
                 style: const TextStyle(
                     fontFamily: 'monospace', fontSize: 11, height: 1.4),
               ),

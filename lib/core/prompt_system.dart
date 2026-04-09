@@ -191,6 +191,7 @@ class PromptAssembler {
               'Before any `edit` or `apply_patch` on an existing file, you MUST call `read` on that file and use the fresh contents to choose the location, `oldString`, context, and patch.',
               'If you just changed a file and need to modify the same file again, read it again first. Do not reuse stale snippets from before the previous edit.',
               'Prefer `edit` or `apply_patch` for modifying existing files.',
+              'For workspace file operations: `delete` can remove files or directories (directories are recursive); `rename` only changes the final name within the same parent folder; use `move` for path changes or cross-folder moves; `copy` can duplicate files or whole directory trees.',
               'For large writes or code with many quotes/braces, do not inline the full file body in tool JSON.',
               'Instead, put the body in assistant text using `<write_content id="name">...</write_content>` and call `write` with `path` plus `contentRef: "name"`.',
               '',

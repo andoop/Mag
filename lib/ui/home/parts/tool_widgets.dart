@@ -120,13 +120,13 @@ class _RawToolCallSheetState extends State<_RawToolCallSheet> {
                     runSpacing: 6,
                     children: [
                       ChoiceChip(
-                        label: const Text('input'),
+                        label: Text(l(context, '输入', 'Input')),
                         selected: _view == 'input',
                         onSelected: (_) => setState(() => _view = 'input'),
                       ),
                       if (hasOutput)
                         ChoiceChip(
-                          label: const Text('output'),
+                          label: Text(l(context, '输出', 'Output')),
                           selected: _view == 'output',
                           onSelected: (_) => setState(() => _view = 'output'),
                         ),
@@ -216,6 +216,11 @@ class _FileRefToolPart extends StatelessWidget {
     final isRunning = toolStatus == 'running' || toolStatus == 'pending';
     final isError = toolStatus == 'error';
     final ws = workspace;
+    final subtitle = isRunning && refs.isEmpty
+        ? l(context, '正在登记文件引用…', 'Registering file references…')
+        : refs.isEmpty
+            ? l(context, '暂无文件引用', 'No file references')
+            : l(context, '${refs.length} 个路径', '${refs.length} path(s)');
 
     final oc = context.oc;
     return Container(
@@ -251,13 +256,26 @@ class _FileRefToolPart extends StatelessWidget {
                       size: 14, color: Colors.red.shade700),
                 ),
               Expanded(
-                child: Text(
-                  l(context, '文件引用', 'File references'),
-                  style: TextStyle(
-                    fontWeight: FontWeight.w600,
-                    fontSize: 11.5,
-                    color: oc.foreground,
-                  ),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      l(context, '文件引用', 'File references'),
+                      style: TextStyle(
+                        fontWeight: FontWeight.w600,
+                        fontSize: 11.5,
+                        color: oc.foreground,
+                      ),
+                    ),
+                    const SizedBox(height: 2),
+                    Text(
+                      subtitle,
+                      style: Theme.of(context)
+                          .textTheme
+                          .labelSmall
+                          ?.copyWith(color: oc.foregroundHint, height: 1.2),
+                    ),
+                  ],
                 ),
               ),
               _CompactIconButton(
@@ -285,8 +303,8 @@ class _FileRefToolPart extends StatelessWidget {
                 final kind = (r['kind'] as String?) ?? 'modified';
                 final exists = r['exists'] as bool? ?? true;
                 final label = kind == 'created'
-                    ? l(context, '新建', 'new')
-                    : l(context, '修改', 'mod');
+                    ? l(context, '新建', 'created')
+                    : l(context, '修改', 'modified');
                 return Material(
                   color: Colors.transparent,
                   child: InkWell(
@@ -383,7 +401,9 @@ class _TodoWriteToolPart extends StatelessWidget {
         .where((t) => (t['status'] as String?) == 'completed')
         .length;
     final total = todos.length;
-    final ratioSubtitle = total > 0 ? '$completed/$total' : '';
+    final ratioSubtitle = total > 0
+        ? l(context, '已完成 $completed/$total', 'Completed $completed/$total')
+        : '';
 
     final oc = context.oc;
     return Container(
@@ -438,7 +458,9 @@ class _TodoWriteToolPart extends StatelessWidget {
                       Text(
                         isRunning && total == 0
                             ? l(context, '正在更新任务…', 'Updating todos…')
-                            : ratioSubtitle,
+                            : ratioSubtitle.isNotEmpty
+                                ? ratioSubtitle
+                                : l(context, '暂无任务', 'No todos'),
                         style: Theme.of(context)
                             .textTheme
                             .labelSmall
@@ -550,6 +572,11 @@ class _QuestionToolPartState extends State<_QuestionToolPart> {
   String _subtitle(BuildContext context) {
     final count = widget.questions.length;
     if (count == 0) return '';
+    if (widget.toolStatus == 'running' || widget.toolStatus == 'pending') {
+      return count == 1
+          ? l(context, '等待 1 个回答', 'Waiting for 1 answer')
+          : l(context, '等待 $count 个回答', 'Waiting for $count answers');
+    }
     if (_completed()) {
       return l(context, '$count 已回答', '$count answered');
     }

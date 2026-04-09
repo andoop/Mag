@@ -239,11 +239,12 @@ Future<ToolExecutionResult> _deleteTool(
     treeUri: ctx.workspace.treeUri,
     relativePath: filePath,
   );
+  final targetKind = existing.isDirectory ? 'directory' : 'file';
   return ToolExecutionResult(
     title: filePath,
-    output: 'Deleted successfully.',
-    displayOutput: 'Deleted $filePath',
-    metadata: {'path': filePath},
+    output: 'Deleted $targetKind `$filePath` successfully.',
+    displayOutput: 'Deleted $targetKind $filePath',
+    metadata: {'path': filePath, 'isDirectory': existing.isDirectory},
   );
 }
 
@@ -295,11 +296,12 @@ Future<ToolExecutionResult> _renameTool(
     relativePath: filePath,
     newName: newName,
   );
+  final targetKind = existing.isDirectory ? 'directory' : 'file';
   return ToolExecutionResult(
     title: newPath,
-    output: 'Renamed to ${_formatStatEntry(entry)}',
-    displayOutput: 'Renamed $filePath → $newPath',
-    metadata: {'path': entry.path, 'from': filePath},
+    output: 'Renamed $targetKind `$filePath` to `$newPath`.\n\n${_formatStatEntry(entry)}',
+    displayOutput: 'Renamed $targetKind $filePath → $newPath',
+    metadata: {'path': entry.path, 'from': filePath, 'isDirectory': existing.isDirectory},
   );
 }
 
@@ -345,11 +347,12 @@ Future<ToolExecutionResult> _moveTool(
     fromPath: fromPath,
     toPath: toPath,
   );
+  final targetKind = existing.isDirectory ? 'directory' : 'file';
   return ToolExecutionResult(
     title: toPath,
-    output: _formatStatEntry(entry),
-    displayOutput: 'Moved $fromPath → $toPath',
-    metadata: {'path': entry.path, 'from': fromPath},
+    output: 'Moved $targetKind `$fromPath` to `$toPath`.\n\n${_formatStatEntry(entry)}',
+    displayOutput: 'Moved $targetKind $fromPath → $toPath',
+    metadata: {'path': entry.path, 'from': fromPath, 'isDirectory': existing.isDirectory},
   );
 }
 
@@ -395,11 +398,12 @@ Future<ToolExecutionResult> _copyTool(
     fromPath: fromPath,
     toPath: toPath,
   );
+  final targetKind = existing.isDirectory ? 'directory' : 'file';
   return ToolExecutionResult(
     title: toPath,
-    output: _formatStatEntry(entry),
-    displayOutput: 'Copied $fromPath → $toPath',
-    metadata: {'path': entry.path, 'from': fromPath},
+    output: 'Copied $targetKind `$fromPath` to `$toPath`.\n\n${_formatStatEntry(entry)}',
+    displayOutput: 'Copied $targetKind $fromPath → $toPath',
+    metadata: {'path': entry.path, 'from': fromPath, 'isDirectory': existing.isDirectory},
   );
 }
 
