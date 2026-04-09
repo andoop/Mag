@@ -10,14 +10,20 @@ const int kOpenCodeCompactionBuffer = 20000;
 int estimateOpenCodeCharsAsTokens(int charCount) =>
     math.max(0, (charCount / 4).round());
 
-/// 对即将发给模型的 `messages` JSON 做**偏保守**的 token 粗估。
+/// 对即将发给模型的 `messages` JSON 做 token 粗估。
 ///
-/// 换模型后上一家的 `usage` 与当前服务商对同一段文本的计数可能不一致（例如 12 万 vs 14 万），
-/// 仅靠 `isOverflow` 会漏压；此估算法刻意略偏高以减少「请求已发出才报错」的情况。
+/// 旧版用 `max(bytes/3, chars/2)` 对中文过度高估（中文 UTF-8 每字 3 字节，
+/// 导致估算约为 1 char = 1 token，而实际 CJK tokenizer 约 1.5-2 字符/token），
+/// 引发不必要的频繁压缩。新版对 CJK 密集文本使用更宽松的系数。
 int estimateSerializedMessagesTokens(List<Map<String, dynamic>> messages) {
   if (messages.isEmpty) return 0;
   final json = jsonEncode(messages);
   final bytes = utf8.encode(json).length;
+  final cjkRatio = bytes > 0 ? (bytes - json.length) / bytes : 0.0;
+  // High CJK ratio (>30%): multi-byte chars dominate, use gentler divisor
+  if (cjkRatio > 0.30) {
+    return (bytes / 4.5).ceil();
+  }
   final fromBytes = (bytes / 3).ceil();
   final fromChars = (json.length / 2).ceil();
   return math.max(fromBytes, fromChars);

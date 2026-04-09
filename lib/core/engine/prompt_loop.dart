@@ -180,7 +180,9 @@ extension SessionEnginePrompt on SessionEngine {
         }
       }
 
-      /// OpenCode `prompt.ts`：每轮 assistant 前用**当前**模型与上一轮用量判断 `isOverflow`，超限则先压缩。
+      var lastSummarizeAt = 0;
+      const summarizeCooldownMs = 30000; // 30s cooldown between compactions
+
       Future<void> ensureWithinContextBeforeStep(int stepIdx) async {
         final usageCheck = stepIdx == 1
             ? (modelUsageFromLatestCompletedAssistant(
@@ -197,6 +199,13 @@ extension SessionEnginePrompt on SessionEngine {
         )) {
           return;
         }
+        final now = DateTime.now().millisecondsSinceEpoch;
+        if (lastSummarizeAt > 0 && now - lastSummarizeAt < summarizeCooldownMs) {
+          _debugLog('compaction', 'skipping — cooldown active '
+              '(${now - lastSummarizeAt}ms since last)');
+          return;
+        }
+        lastSummarizeAt = now;
         activeSession = await summarize(
           workspace: workspace,
           session: activeSession,
@@ -207,9 +216,35 @@ extension SessionEnginePrompt on SessionEngine {
       }
 
       final maxSteps = definition.steps;
+      const hardMaxSteps = 256;
+      const maxElapsedMs = 10 * 60 * 1000; // 10 min safety net
+      final recentToolSignatures = <String>[];
+      const repetitionWindow = 6;
+      const repetitionThreshold = 3;
+
+      bool _isRepetitiveToolPattern(List<ToolCall> calls) {
+        if (calls.isEmpty) return false;
+        final sig = calls.map((c) => '${c.name}:${c.arguments.keys.join(",")}').join('|');
+        recentToolSignatures.add(sig);
+        if (recentToolSignatures.length < repetitionThreshold) return false;
+        final window = recentToolSignatures.length > repetitionWindow
+            ? recentToolSignatures.sublist(recentToolSignatures.length - repetitionWindow)
+            : recentToolSignatures;
+        final counts = <String, int>{};
+        for (final s in window) {
+          counts[s] = (counts[s] ?? 0) + 1;
+        }
+        return counts.values.any((c) => c >= repetitionThreshold);
+      }
+
       var ranOutOfSteps = true;
-      for (var step = 1; maxSteps == null || step <= maxSteps; step++) {
+      for (var step = 1; (maxSteps == null || step <= maxSteps) && step <= hardMaxSteps; step++) {
         cancelToken.throwIfCancelled();
+        final elapsed = DateTime.now().millisecondsSinceEpoch - promptStartedAt;
+        if (elapsed > maxElapsedMs) {
+          _debugLog('prompt', 'elapsed time limit reached (${elapsed}ms)');
+          break;
+        }
         await ensureWithinContextBeforeStep(step);
         _emitSessionStatus(
           sessionId: session.id,
@@ -228,7 +263,7 @@ extension SessionEnginePrompt on SessionEngine {
           model: modelConfig.model,
           summaryMessageId: activeSession.summaryMessageId,
         );
-        const maxPreSendCompact = 8;
+        const maxPreSendCompact = 3;
         final inputBudget = usableInputTokensForModel(modelConfig.model);
         for (var preSendRound = 0;
             preSendRound < maxPreSendCompact;
@@ -238,6 +273,7 @@ extension SessionEnginePrompt on SessionEngine {
           final summaryBefore = activeSession.summaryMessageId;
           _debugLog('compaction', 'pre-send over budget',
               {'estimate': est, 'budget': inputBudget, 'round': preSendRound});
+          lastSummarizeAt = DateTime.now().millisecondsSinceEpoch;
           activeSession = await summarize(
             workspace: workspace,
             session: activeSession,
@@ -554,6 +590,12 @@ extension SessionEnginePrompt on SessionEngine {
           ranOutOfSteps = false;
           break;
         }
+        if (_isRepetitiveToolPattern(response.toolCalls)) {
+          _debugLog('prompt',
+              'repetitive tool call pattern detected at step $step — breaking');
+          ranOutOfSteps = false;
+          break;
+        }
       }
       if (ranOutOfSteps && maxSteps != null) {
         _debugLog('prompt',
@@ -660,7 +702,9 @@ extension SessionEnginePrompt on SessionEngine {
           },
         ),
       );
-      if (_shouldAutoCompactAfterTurn(lastUsage, modelConfig.model)) {
+      final sinceLastSummarize = DateTime.now().millisecondsSinceEpoch - lastSummarizeAt;
+      if (_shouldAutoCompactAfterTurn(lastUsage, modelConfig.model) &&
+          (lastSummarizeAt == 0 || sinceLastSummarize >= summarizeCooldownMs)) {
         activeSession = await summarize(
           workspace: workspace,
           session: activeSession,

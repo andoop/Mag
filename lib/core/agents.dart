@@ -17,6 +17,7 @@ class AgentRegistry {
             'Default agent. Executes tools inside configured permissions.',
         descriptionZh: '默认智能体，可读写文件、执行工具，完成编码任务。',
         mode: AgentMode.primary,
+        steps: 128,
         permissionRules: _defaultRules(
           overrides: [
             PermissionRule(
