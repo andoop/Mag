@@ -199,6 +199,27 @@ extension SessionEnginePrompt on SessionEngine {
         )) {
           return;
         }
+        // For step 1 the usageCheck comes from the *previous* turn's
+        // stepFinish, recorded BEFORE any post-turn compaction.  If
+        // compaction already ran at the end of the last turn the actual
+        // conversation may now be well within budget — verify with a
+        // cheap token estimate before triggering another (redundant)
+        // summarize round.
+        if (stepIdx == 1 && activeSession.summaryMessageId.isNotEmpty) {
+          final probe = _messagesToConversation(
+            messages: cachedMessages,
+            parts: cachedParts,
+            currentAgent: currentAgent,
+            summaryMessageId: activeSession.summaryMessageId,
+          );
+          final est = estimateSerializedMessagesTokens(probe);
+          final budget = usableInputTokensForModel(modelConfig.model);
+          if (est < budget) {
+            _debugLog('compaction', 'skipping step-1 — stale usage but '
+                'actual estimate $est < budget $budget');
+            return;
+          }
+        }
         final now = DateTime.now().millisecondsSinceEpoch;
         if (lastSummarizeAt > 0 && now - lastSummarizeAt < summarizeCooldownMs) {
           _debugLog('compaction', 'skipping — cooldown active '
