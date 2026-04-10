@@ -102,10 +102,67 @@ class LocalServer {
               ModelConfig.defaults().toJson(),
         );
         final catalog = await _loadModelsDevCatalog();
-        final response = _buildProviderListResponse(
+        final selectedConnection = config.currentConnection;
+        final selectedMatch = selectedConnection == null
+            ? const ProviderCatalogModelMatch(source: 'fallback')
+            : resolveCatalogModelMatch(
+                catalog: catalog,
+                providerId: selectedConnection.id,
+                modelId: config.model,
+              );
+        final response = buildProviderListResponse(
           catalog: catalog,
           config: config,
         );
+        for (final connection in config.connections) {
+          final modelIds = connection.id == 'mag'
+              ? filterMagZenFreeModels(connection.models)
+              : connection.models;
+          final provider = response.all
+              .cast<ProviderInfo?>()
+              .firstWhere((item) => item?.id == connection.id, orElse: () => null);
+          for (final modelId in modelIds) {
+            final match = resolveCatalogModelMatch(
+              catalog: catalog,
+              providerId: connection.id,
+              modelId: modelId,
+            );
+            final resolved = provider?.models[modelId];
+            // ignore: avoid_print
+            print('[provider-limit][merge] ${jsonEncode({
+              'provider': connection.id,
+              'model': modelId,
+              'source': match.source,
+              if (match.matchedProviderId != null)
+                'catalogProvider': match.matchedProviderId,
+              if (match.matchedModelId != null) 'catalogModel': match.matchedModelId,
+              'context': resolved?.limit.context,
+              'input': resolved?.limit.input,
+              'output': resolved?.limit.output,
+            })}');
+          }
+        }
+        final selectedProvider = response.all
+            .cast<ProviderInfo?>()
+            .firstWhere(
+              (item) => item?.id == config.provider,
+              orElse: () => null,
+            );
+        final selectedModel = selectedProvider?.models[config.model];
+        // ignore: avoid_print
+        print('[provider-limit][selected] ${jsonEncode({
+          'provider': config.provider,
+          'model': config.model,
+          'providerFound': selectedProvider != null,
+          'source': selectedMatch.source,
+          if (selectedMatch.matchedProviderId != null)
+            'catalogProvider': selectedMatch.matchedProviderId,
+          if (selectedMatch.matchedModelId != null)
+            'catalogModel': selectedMatch.matchedModelId,
+          'context': selectedModel?.limit.context,
+          'input': selectedModel?.limit.input,
+          'output': selectedModel?.limit.output,
+        })}');
         await _json(request.response, response.toJson());
         return;
       }
@@ -115,7 +172,7 @@ class LocalServer {
               ModelConfig.defaults().toJson(),
         );
         final catalog = await _loadModelsDevCatalog();
-        final response = _buildProviderListResponse(
+        final response = buildProviderListResponse(
           catalog: catalog,
           config: config,
         );
@@ -622,70 +679,6 @@ class LocalServer {
     } finally {
       client.close(force: true);
     }
-  }
-
-  ProviderListResponse _buildProviderListResponse({
-    required List<ProviderInfo> catalog,
-    required ModelConfig config,
-  }) {
-    final connectedIds = config.connections.map((item) => item.id).toSet();
-    final merged = <String, ProviderInfo>{
-      for (final provider in catalog) provider.id: provider,
-    };
-
-    for (final connection in config.connections) {
-      final existing = merged[connection.id];
-      final mergedModels = <String, ProviderModelInfo>{};
-      if (existing != null) {
-        mergedModels.addAll(existing.models);
-      }
-      final modelIds = connection.id == 'mag'
-          ? filterMagZenFreeModels(connection.models)
-          : connection.models;
-      for (final modelId in modelIds) {
-        final known = existing?.models[modelId];
-        mergedModels[modelId] = known ??
-            ProviderModelInfo(
-              id: modelId,
-              name: modelId,
-              cost: connection.id == 'mag'
-                  ? const ProviderModelCost(input: 0, output: 0)
-                  : const ProviderModelCost(),
-              limit: ProviderModelLimit(context: inferContextWindow(modelId)),
-            );
-      }
-      merged[connection.id] = (existing ??
-              ProviderInfo(
-                id: connection.id,
-                name: connection.name,
-                api: connection.baseUrl,
-                env: const [],
-                models: const {},
-                custom: connection.custom,
-              ))
-          .copyWith(
-        name: connection.name,
-        api: connection.baseUrl,
-        models: mergedModels,
-        custom: connection.custom,
-        connected: true,
-      );
-    }
-
-    final all = normalizeProviderCatalog(merged.values.toList())
-      ..sort((a, b) => a.name.toLowerCase().compareTo(b.name.toLowerCase()));
-    final defaults = <String, String>{};
-    for (final provider in all) {
-      final defaultModel = defaultModelIdForProvider(provider);
-      if (defaultModel != null) {
-        defaults[provider.id] = defaultModel;
-      }
-    }
-    return ProviderListResponse(
-      all: all,
-      connected: connectedIds.toList()..sort(),
-      defaultModels: defaults,
-    );
   }
 
   Map<String, List<ProviderAuthMethod>> _buildProviderAuthResponse(

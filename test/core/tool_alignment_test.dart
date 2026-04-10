@@ -173,7 +173,7 @@ void main() {
     }
   });
 
-  test('write requires prior read for existing files', () async {
+  test('write rejects existing files and asks for edit tool', () async {
     final target = File('${tempDir.path}/note.txt');
     await target.writeAsString('old\n');
 
@@ -188,11 +188,103 @@ void main() {
       throwsA(
         predicate(
           (error) =>
-              error.toString().contains('you must read the file note.txt'),
+              error
+                  .toString()
+                  .contains('Use `edit` or `apply_patch` instead of `write`'),
         ),
       ),
     );
     expect(permissionRequests, isEmpty);
+  });
+
+  test('provider list keeps catalog models for connected providers', () {
+    final catalog = [
+      ProviderInfo(
+        id: 'openai',
+        name: 'OpenAI',
+        api: 'https://api.openai.com/v1',
+        env: const [],
+        models: {
+          'gpt-4.1': const ProviderModelInfo(
+            id: 'gpt-4.1',
+            name: 'GPT-4.1',
+            limit: ProviderModelLimit(context: 1047576, output: 32768),
+          ),
+          'gpt-4.1-mini': const ProviderModelInfo(
+            id: 'gpt-4.1-mini',
+            name: 'GPT-4.1 Mini',
+            limit: ProviderModelLimit(context: 1047576, output: 32768),
+          ),
+        },
+      ),
+    ];
+    final config = ModelConfig(
+      currentProviderId: 'openai',
+      currentModelId: 'gpt-4.1-mini',
+      connections: [
+        ProviderConnection(
+          id: 'openai',
+          name: 'OpenAI',
+          baseUrl: 'https://api.openai.com/v1',
+          apiKey: 'sk-test',
+          models: const ['gpt-4.1-mini'],
+        ),
+      ],
+      visibilityRules: const [],
+    );
+
+    final response = buildProviderListResponse(catalog: catalog, config: config);
+    final provider = response.all.singleWhere((item) => item.id == 'openai');
+
+    expect(provider.connected, isTrue);
+    expect(provider.models.keys, containsAll(['gpt-4.1', 'gpt-4.1-mini']));
+    expect(response.connected, ['openai']);
+  });
+
+  test('provider list does not alias alibaba-cn to qwen catalog', () {
+    final catalog = [
+      ProviderInfo(
+        id: 'qwen',
+        name: 'Qwen',
+        api: 'https://dashscope.aliyuncs.com/compatible-mode/v1',
+        env: const [],
+        models: {
+          'qwen3-plus': const ProviderModelInfo(
+            id: 'qwen3-plus',
+            name: 'Qwen3 Plus',
+            limit: ProviderModelLimit(context: 1000000, output: 65536),
+          ),
+        },
+      ),
+    ];
+    final config = ModelConfig(
+      currentProviderId: 'alibaba-cn',
+      currentModelId: 'qwen3-plus',
+      connections: [
+        ProviderConnection(
+          id: 'alibaba-cn',
+          name: 'Alibaba',
+          baseUrl: 'https://dashscope.aliyuncs.com/compatible-mode/v1',
+          apiKey: 'sk-test',
+          models: const ['qwen3-plus'],
+        ),
+      ],
+      visibilityRules: const [],
+    );
+
+    final response = buildProviderListResponse(catalog: catalog, config: config);
+    final provider = response.all.singleWhere((item) => item.id == 'alibaba-cn');
+    final match = resolveCatalogModelMatch(
+      catalog: catalog,
+      providerId: 'alibaba-cn',
+      modelId: 'qwen3-plus',
+    );
+
+    expect(match.source, 'fallback');
+    expect(provider.models['qwen3-plus']?.limit.context,
+        inferContextWindow('qwen3-plus'));
+    expect(provider.models['qwen3-plus']?.limit.output,
+        inferMaxOutputTokens('qwen3-plus'));
   });
 
   test('read returns hashline-tagged text lines', () async {
@@ -210,129 +302,18 @@ void main() {
     expect(result.output, contains(RegExp(r'2#[A-Z]{2}\|beta')));
   });
 
-  test('write rejects stale read ledger', () async {
-    final target = File('${tempDir.path}/stale.txt');
-    await target.writeAsString('old\n');
-    final initial = await bridge.stat(
-      treeUri: workspace.treeUri,
-      relativePath: 'stale.txt',
-    );
-    await seedReadLedger(
-      filePath: 'stale.txt',
-      lastModified: initial!.lastModified,
-    );
-    await Future<void>.delayed(const Duration(milliseconds: 20));
-    await target.writeAsString('changed externally\n');
-
-    await expectLater(
-      writeTool.execute(
-        {
-          'path': 'stale.txt',
-          'content': 'agent write\n',
-        },
-        makeContext(),
-      ),
-      throwsA(
-        predicate(
-          (error) => error
-              .toString()
-              .contains('has been modified since it was last read'),
-        ),
-      ),
-    );
-    expect(permissionRequests, isEmpty);
-  });
-
-  test('write succeeds with fresh read ledger and records a new ledger',
-      () async {
-    final target = File('${tempDir.path}/fresh.txt');
-    await target.writeAsString('old\n');
-    final initial = await bridge.stat(
-      treeUri: workspace.treeUri,
-      relativePath: 'fresh.txt',
-    );
-    await seedReadLedger(
-      filePath: 'fresh.txt',
-      lastModified: initial!.lastModified,
-    );
-
+  test('write accepts empty content for new files', () async {
     final result = await writeTool.execute(
       {
-        'path': 'fresh.txt',
-        'content': 'new\n',
+        'path': 'empty.txt',
+        'content': '',
       },
       makeContext(),
     );
 
-    expect(await target.readAsString(), 'new\n');
+    expect(await File('${tempDir.path}/empty.txt').readAsString(), '');
     expect(permissionRequests, hasLength(1));
-    expect(result.metadata['exists'], isTrue);
-    final readLedger =
-        Map<String, dynamic>.from(result.metadata['readLedger'] as Map);
-    expect(readLedger['path'], 'fresh.txt');
-    expect((readLedger['lastModified'] as num).toInt(), greaterThan(0));
-  });
-
-  test('write accepts contentRef from the same assistant message', () async {
-    final assistantMessage = MessageInfo(
-      id: newId('message'),
-      sessionId: session.id,
-      role: SessionRole.assistant,
-      agent: 'build',
-      createdAt: DateTime.now().millisecondsSinceEpoch,
-      text: '',
-    );
-    await database.saveMessage(assistantMessage);
-    await database.savePart(
-      MessagePart(
-        id: newId('part'),
-        sessionId: session.id,
-        messageId: assistantMessage.id,
-        type: PartType.text,
-        createdAt: DateTime.now().millisecondsSinceEpoch,
-        data: {
-          'rawText':
-              '<write_content id="note-body">\nhello from ref\n</write_content>',
-          'text': '[write_content:note-body omitted]',
-        },
-      ),
-    );
-
-    final result = await writeTool.execute(
-      {
-        'path': 'note.txt',
-        'contentRef': 'note-body',
-      },
-      ToolRuntimeContext(
-        workspace: workspace,
-        session: session,
-        message: assistantMessage,
-        agent: 'build',
-        agentDefinition: AgentRegistry.build,
-        bridge: bridge,
-        database: database,
-        askPermission: (request) async {
-          permissionRequests.add(request);
-        },
-        askQuestion: (_) async => const [],
-        resolveInstructionReminder: (_) async => '',
-        runSubtask: ({
-          required SessionInfo session,
-          required String description,
-          required String prompt,
-          required String subagentType,
-          String? taskId,
-        }) async {
-          throw UnimplementedError('runSubtask should not be used here');
-        },
-        saveTodos: (_) async {},
-      ),
-    );
-
-    expect(await File('${tempDir.path}/note.txt').readAsString(),
-        'hello from ref');
-    expect(permissionRequests, hasLength(1));
-    expect(result.displayOutput, 'Wrote note.txt');
+    expect(result.displayOutput, 'Wrote empty.txt');
   });
 
   test('edit failure tells the model to re-read after prior edits', () async {

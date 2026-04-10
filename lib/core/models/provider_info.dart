@@ -244,6 +244,69 @@ class ProviderListResponse {
       );
 }
 
+ProviderListResponse buildProviderListResponse({
+  required List<ProviderInfo> catalog,
+  required ModelConfig config,
+}) {
+  final catalogMap = <String, ProviderInfo>{
+    for (final provider in catalog) provider.id: provider,
+  };
+  final connected = <String, ProviderInfo>{};
+  for (final connection in config.connections) {
+    final existing = catalogMap[connection.id];
+    final models = <String, ProviderModelInfo>{
+      ...?existing?.models,
+    };
+    final modelIds = connection.id == 'mag'
+        ? filterMagZenFreeModels(connection.models)
+        : connection.models;
+    for (final modelId in modelIds) {
+      models.putIfAbsent(
+        modelId,
+        () => fallbackProviderModelInfo(
+          modelId,
+          cost: connection.id == 'mag'
+              ? const ProviderModelCost(input: 0, output: 0)
+              : const ProviderModelCost(),
+        ),
+      );
+    }
+    connected[connection.id] = (existing ??
+            ProviderInfo(
+              id: connection.id,
+              name: connection.name.isNotEmpty ? connection.name : connection.id,
+              api: connection.baseUrl,
+              env: const [],
+              models: const {},
+              custom: connection.custom,
+            ))
+        .copyWith(
+      name: connection.name.isNotEmpty ? connection.name : (existing?.name ?? connection.id),
+      api: connection.baseUrl.isNotEmpty ? connection.baseUrl : existing?.api,
+      models: models,
+      custom: connection.custom,
+      connected: true,
+    );
+  }
+  final providers = <String, ProviderInfo>{
+    ...catalogMap,
+    ...connected,
+  };
+  final all = normalizeProviderCatalog(providers.values.toList());
+  final defaults = <String, String>{};
+  for (final provider in all) {
+    final defaultModel = defaultModelIdForProvider(provider);
+    if (defaultModel != null) {
+      defaults[provider.id] = defaultModel;
+    }
+  }
+  return ProviderListResponse(
+    all: all,
+    connected: config.connections.map((item) => item.id).toList(),
+    defaultModels: defaults,
+  );
+}
+
 List<ProviderInfo> normalizeProviderCatalog(List<ProviderInfo> input) {
   return input.map((provider) {
     final models = Map<String, ProviderModelInfo>.from(provider.models)
@@ -288,6 +351,66 @@ String? defaultModelIdForProvider(ProviderInfo provider) {
   return sorted.first.id;
 }
 
+ProviderModelLimit inferProviderModelLimitFallback(String modelId) {
+  final context = inferContextWindow(modelId);
+  final output = inferMaxOutputTokens(modelId);
+  return ProviderModelLimit(
+    context: context,
+    input: context > 0 ? math.max(0, context - output) : null,
+    output: output,
+  );
+}
+
+ProviderModelInfo fallbackProviderModelInfo(
+  String modelId, {
+  ProviderModelCost cost = const ProviderModelCost(),
+}) {
+  return ProviderModelInfo(
+    id: modelId,
+    name: modelId,
+    cost: cost,
+    limit: inferProviderModelLimitFallback(modelId),
+  );
+}
+
+class ProviderCatalogModelMatch {
+  const ProviderCatalogModelMatch({
+    required this.source,
+    this.matchedProviderId,
+    this.matchedModelId,
+  });
+
+  final String source;
+  final String? matchedProviderId;
+  final String? matchedModelId;
+}
+
+ProviderCatalogModelMatch resolveCatalogModelMatch({
+  required List<ProviderInfo> catalog,
+  required String providerId,
+  required String modelId,
+}) {
+  final catalogProvider = catalog.cast<ProviderInfo?>().firstWhere(
+        (provider) => provider?.id == providerId,
+        orElse: () => null,
+      );
+  if (catalogProvider == null) {
+    return const ProviderCatalogModelMatch(source: 'fallback');
+  }
+  final catalogModel = catalogProvider.models[modelId];
+  if (catalogModel == null) {
+    return ProviderCatalogModelMatch(
+      source: 'fallback',
+      matchedProviderId: catalogProvider.id,
+    );
+  }
+  return ProviderCatalogModelMatch(
+    source: 'catalog',
+    matchedProviderId: catalogProvider.id,
+    matchedModelId: catalogModel.id,
+  );
+}
+
 List<ProviderInfo> fallbackProviderCatalog() {
   final ids = [
     'mag',
@@ -320,9 +443,8 @@ List<ProviderInfo> fallbackProviderCatalog() {
           models: id == 'mag'
               ? {
                   for (final item in _defaultConnectedModelsForProvider('mag'))
-                    item: ProviderModelInfo(
-                      id: item,
-                      name: item,
+                    item: fallbackProviderModelInfo(
+                      item,
                       cost: const ProviderModelCost(input: 0, output: 0),
                     ),
                 }

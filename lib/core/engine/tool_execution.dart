@@ -153,6 +153,12 @@ extension SessionEngineTools on SessionEngine {
     );
     try {
       _debugLog('tool', 'execute ${call.name}');
+      _debugLog('tool-start', 'tool execution starting', {
+        'callId': call.id,
+        'tool': call.name,
+        'argKeys': call.arguments.keys.toList(),
+        'args': call.arguments,
+      });
       await _updateToolState(
         workspace: workspace,
         sessionId: session.id,
@@ -183,11 +189,26 @@ extension SessionEngineTools on SessionEngine {
         toolPartCache: toolPartCache,
         onPartSaved: onPartSaved,
       );
+      _debugLog('tool-done', 'tool execution completed', {
+        'callId': call.id,
+        'tool': call.name,
+        'title': result.title,
+        'metadata': result.metadata,
+        'outputPreview': result.output.length > 200
+            ? '${result.output.substring(0, 200)}...'
+            : result.output,
+      });
       return result;
     } on CancelledException {
       rethrow;
     } catch (error) {
       _debugLog('tool', 'error ${call.name}: $error');
+      _debugLog('tool-fail', 'tool execution failed', {
+        'callId': call.id,
+        'tool': call.name,
+        'error': error.toString(),
+        'args': call.arguments,
+      });
       final errText = error.toString();
       final toolOutput =
           'Tool `${call.name}` failed — the model should read this and fix the issue.\n\n$errText';
@@ -236,7 +257,11 @@ extension SessionEngineTools on SessionEngine {
     final missing = <String>[];
     for (final key in required) {
       final value = args[key];
-      if (value == null || (value is String && value.trim().isEmpty)) {
+      final allowsEmptyString = call.name == 'write' && key == 'content';
+      if (value == null ||
+          (value is String &&
+              value.trim().isEmpty &&
+              !allowsEmptyString)) {
         missing.add(key);
       }
     }

@@ -93,18 +93,17 @@
 **参数**：
 
 
-| 参数           | 类型     | 说明                                                                |
-| ------------ | ------ | ----------------------------------------------------------------- |
-| `path`       | string | **必填**，相对路径                                                       |
-| `content`    | string | 可选，直接写入的短文本                                                       |
-| `contentRef` | string | 可选，对应同条助手消息中 `<write_content id="...">...</write_content>` 的 `id` |
+| 参数        | 类型     | 说明                |
+| --------- | ------ | ----------------- |
+| `path`    | string | **必填**，相对路径       |
+| `content` | string | **必填**，要写入文件的完整内容 |
 
 
 **行为要点**：
 
-- 若目标文件已存在，必须先用 `read` 读取；否则工具会直接失败。
-- 若上次 `read` 之后文件又被外部修改，工具也会拒绝写入，要求重新 `read` 最新内容。
-- `content` 与 `contentRef` 二选一即可；大段内容更推荐 `contentRef`。
+- `write` 只用于创建新文件。
+- 若目标文件已存在，`write` 会直接拒绝，要求改用 `edit` 或 `apply_patch`。
+- `write` 必须同时传 `path`/`filePath` 和完整 `content`。
 - 成功写入后，会把该文件的最新时间戳回写到会话 ledger，供后续 `edit` / `apply_patch` 继续使用。
 
 **示例（短内容）**：
@@ -113,20 +112,10 @@
 { "path": "docs/note.md", "content": "# Hello" }
 ```
 
-**示例（大块内容）**：助手正文先输出：
-
-```xml
-<write_content id="main-dart">
-```dart
-void main() {}
-```
-
-```
-
-再调用：
+**示例（完整内容）**：
 
 ```json
-{ "path": "lib/main.dart", "contentRef": "main-dart" }
+{ "path": "lib/main.dart", "content": "void main() {}\n" }
 ```
 
 ---
@@ -138,15 +127,15 @@ void main() {}
 **参数**：
 
 
-| 参数 | 类型 | 说明 |
-| --- | --- | --- |
-| `path` / `filePath` | string | 目标文件，相对路径 |
-| `edits` | array | hashline 编辑操作数组，推荐用法 |
-| `delete` | boolean | 可选，删除文件 |
-| `rename` | string | 可选，编辑后另存/移动到新路径 |
-| `oldString` | string | 兼容旧接口时使用 |
-| `newString` | string | 兼容旧接口时使用 |
-| `replaceAll` | boolean | 兼容旧接口时使用 |
+| 参数                  | 类型      | 说明                   |
+| ------------------- | ------- | -------------------- |
+| `path` / `filePath` | string  | 目标文件，相对路径            |
+| `edits`             | array   | hashline 编辑操作数组，推荐用法 |
+| `delete`            | boolean | 可选，删除文件              |
+| `rename`            | string  | 可选，编辑后另存/移动到新路径      |
+| `oldString`         | string  | 兼容旧接口时使用             |
+| `newString`         | string  | 兼容旧接口时使用             |
+| `replaceAll`        | boolean | 兼容旧接口时使用             |
 
 
 **行为要点**：

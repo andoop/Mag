@@ -357,14 +357,47 @@ class ModelGateway {
         final map = Map<String, dynamic>.from(item as Map);
         final index = (map['index'] as int?) ?? 0;
         final buffer = toolBuffers.putIfAbsent(index, () => _ToolCallBuffer());
-        buffer.id = map['id'] as String? ?? buffer.id;
+        final incomingId = (map['id'] as String?)?.trim() ?? '';
+        if (incomingId.isNotEmpty) {
+          buffer.id = incomingId;
+        }
         final function =
             Map<String, dynamic>.from(map['function'] as Map? ?? const {});
-        buffer.name = function['name'] as String? ?? buffer.name;
+        final incomingName = (function['name'] as String?)?.trim() ?? '';
+        if (incomingName.isNotEmpty) {
+          buffer.name = incomingName;
+        }
         final args = function['arguments'] as String? ?? '';
         if (args.isNotEmpty) {
           buffer.arguments.write(args);
         }
+      }
+      if (toolCalls.isNotEmpty || choice['finish_reason'] != null) {
+        _debugLog('gateway-chunk', 'tool chunk / finish reason', {
+          'eventCount': eventCount,
+          'finishReason': choice['finish_reason'],
+          'toolChunkCount': toolCalls.length,
+          'toolChunks': toolCalls.map((item) {
+            final map = Map<String, dynamic>.from(item as Map);
+            final function =
+                Map<String, dynamic>.from(map['function'] as Map? ?? const {});
+            final args = function['arguments'] as String? ?? '';
+            return {
+              'id': map['id'],
+              'index': map['index'],
+              'name': function['name'],
+              'argsFragmentLength': args.length,
+            };
+          }).toList(),
+          'bufferStates': toolBuffers.entries
+              .map((entry) => {
+                    'index': entry.key,
+                    'id': entry.value.id,
+                    'name': entry.value.name,
+                    'argumentsLength': entry.value.arguments.length,
+                  })
+              .toList(),
+        });
       }
 
       if (choice['finish_reason'] != null) break;
@@ -375,12 +408,27 @@ class ModelGateway {
 
     final toolCalls = toolBuffers.entries.map((entry) {
       final buffer = entry.value;
+      final callId = (buffer.id ?? '').trim();
       return ToolCall(
-        id: buffer.id ?? newId('toolcall'),
+        id: callId.isNotEmpty ? callId : newId('toolcall'),
         name: buffer.name ?? 'invalid',
         arguments: _decodeArguments(buffer.arguments.toString()),
       );
     }).toList();
+    _debugLog('gateway-result', 'assembled model response', {
+      'finishReason': finishReason,
+      'toolCallCount': toolCalls.length,
+      'toolCalls': toolCalls
+          .map((call) => {
+                'id': call.id,
+                'name': call.name,
+                'argKeys': call.arguments.keys.toList(),
+                'hasRaw': call.arguments.containsKey('raw'),
+              })
+          .toList(),
+      'textLength': text.length,
+      'reasoningLength': reasoning.length,
+    });
 
     return ModelResponse(
       text: text.toString(),

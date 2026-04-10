@@ -25,7 +25,7 @@ part 'engine/summarize.dart';
 part 'engine/conversation.dart';
 part 'engine/tool_execution.dart';
 
-const bool _kDebugEngine = false;
+const bool _kDebugEngine = true;
 
 void _debugLog(String tag, String message, [JsonMap? data]) {
   if (!_kDebugEngine) return;

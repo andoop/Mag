@@ -183,15 +183,10 @@ class ToolRegistry {
             },
             'content': {
               'type': 'string',
-              'description': 'The content to write to the file',
-            },
-            'contentRef': {
-              'type': 'string',
-              'description':
-                  'Optional id of a <write_content id="..."> block from the same assistant message',
+              'description': 'The full content to write to the file',
             },
           },
-          'required': ['filePath'],
+          'required': ['filePath', 'content'],
           'additionalProperties': false,
         },
         execute: _writeTool,

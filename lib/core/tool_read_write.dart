@@ -18,62 +18,14 @@ String _normalizeWriteContent(Object? value) {
   return value.toString();
 }
 
-String? _extractWriteContentRef(String source, String contentRef) {
-  if (source.isEmpty || contentRef.isEmpty) {
-    return null;
-  }
-  final pattern = RegExp(
-    r"""<write_content\s+id=(?:"([^"]+)"|'([^']+)')\s*>([\s\S]*?)</write_content>""",
-    multiLine: true,
-  );
-  for (final match in pattern.allMatches(source)) {
-    final id = match.group(1) ?? match.group(2) ?? '';
-    if (id != contentRef) {
-      continue;
-    }
-    var body = match.group(3) ?? '';
-    body = body.replaceFirst(RegExp(r'^\r?\n'), '');
-    body = body.replaceFirst(RegExp(r'\r?\n$'), '');
-    final trimmed = body.trim();
-    final fenced = RegExp(
-      r'^```[^\n]*\n([\s\S]*?)\n```$',
-      multiLine: true,
-    ).firstMatch(trimmed);
-    if (fenced != null) {
-      return fenced.group(1) ?? '';
-    }
-    return body;
-  }
-  return null;
-}
-
 Future<String> _resolveWriteContent(
     JsonMap args, ToolRuntimeContext ctx) async {
-  final inlineContent = args['content'];
-  if (inlineContent != null) {
-    final normalized = _normalizeWriteContent(inlineContent);
-    if (normalized.trim().isNotEmpty) return normalized;
-  }
-  // Legacy contentRef fallback (not advertised in schema but still handled)
-  final contentRef = (args['contentRef'] as String? ?? '').trim();
-  if (contentRef.isNotEmpty) {
-    final parts = await ctx.database.listPartsForMessage(ctx.message.id);
-    final source = parts
-        .where((item) => item.type == PartType.text)
-        .map((item) =>
-            (item.data['rawText'] ?? item.data['text']) as String? ?? '')
-        .join('\n');
-    final resolved = _extractWriteContentRef(source, contentRef);
-    if (resolved != null && resolved.trim().isNotEmpty) return resolved;
-  }
-  // Also try extracting from `path` field (old alias)
-  if (args.containsKey('path') && !args.containsKey('filePath')) {
-    // AI might have used 'path' instead of 'filePath' — already handled by
-    // _toolFilePathArg, but guard the content resolution path.
+  if (args.containsKey('content')) {
+    return _normalizeWriteContent(args['content']);
   }
   throw Exception(
-    'The write tool requires a `content` parameter with the file content. '
-    'Please call write again with both `filePath` and `content`.',
+    'The write tool requires both `filePath` and `content`. '
+    'Provide the full file body in `content` and call write again.',
   );
 }
 
@@ -373,19 +325,20 @@ Future<ToolExecutionResult> _writeTool(
     throw Exception('Missing required `path`.');
   }
   var existing = '';
-  var exists = false;
-  try {
+  final entry = await ctx.bridge.stat(
+    treeUri: ctx.workspace.treeUri,
+    relativePath: filePath,
+  );
+  final exists = entry != null && !entry.isDirectory;
+  if (exists) {
     existing = await ctx.bridge.readText(
       treeUri: ctx.workspace.treeUri,
       relativePath: filePath,
     );
-    exists = true;
-  } catch (_) {}
+  }
   if (exists) {
-    await _assertFreshReadForExistingFile(
-      ctx,
-      filePath,
-      toolName: 'write',
+    throw Exception(
+      'File already exists: $filePath. Use `edit` or `apply_patch` instead of `write` for existing files.',
     );
   }
   await ctx.askPermission(
@@ -741,6 +694,14 @@ Future<ToolExecutionResult> _editTool(
   final oldString = args['oldString'] as String? ?? '';
   final newString = args['newString'] as String? ?? '';
   final replaceAll = (args['replaceAll'] as bool?) ?? false;
+  // ignore: avoid_print
+  print('[mag-edit][start] ${jsonEncode({
+    'path': filePath,
+    'argKeys': args.keys.toList(),
+    'oldStringChars': oldString.length,
+    'newStringChars': newString.length,
+    'replaceAll': replaceAll,
+  })}');
   if (filePath.isEmpty) {
     throw Exception('Missing required `path`.');
   }
@@ -754,6 +715,11 @@ Future<ToolExecutionResult> _editTool(
     filePath,
     toolName: 'edit',
   );
+  // ignore: avoid_print
+  print('[mag-edit][fresh-read-ok] ${jsonEncode({
+    'path': filePath,
+    'sessionId': ctx.session.id,
+  })}');
   final existingRaw = await ctx.bridge.readText(
     treeUri: ctx.workspace.treeUri,
     relativePath: filePath,
@@ -777,6 +743,12 @@ Future<ToolExecutionResult> _editTool(
     mismatchLogArgs: Map<String, dynamic>.from(args),
   );
   final out = utf8Bom + updated;
+  // ignore: avoid_print
+  print('[mag-edit][replacement-ok] ${jsonEncode({
+    'path': filePath,
+    'beforeChars': existingRaw.length,
+    'afterChars': out.length,
+  })}');
   await ctx.askPermission(
     PermissionRequest(
       id: newId('perm'),

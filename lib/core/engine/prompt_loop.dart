@@ -222,9 +222,40 @@ extension SessionEnginePrompt on SessionEngine {
       const repetitionWindow = 6;
       const repetitionThreshold = 3;
 
+      dynamic _canonicalToolArgValue(dynamic value) {
+        if (value is Map) {
+          final normalized = <String, dynamic>{};
+          final entries = value.entries.toList()
+            ..sort((a, b) => a.key.compareTo(b.key));
+          for (final entry in entries) {
+            normalized[entry.key] = _canonicalToolArgValue(entry.value);
+          }
+          return normalized;
+        }
+        if (value is List) {
+          return value.map(_canonicalToolArgValue).toList();
+        }
+        if (value is String) {
+          if (value.length <= 80) return value;
+          return '${value.substring(0, 80)}...(${value.length} chars)';
+        }
+        return value;
+      }
+
+      String _toolSignature(ToolCall call) {
+        final normalizedArgs = Map<String, dynamic>.from(call.arguments);
+        final path = normalizedArgs['filePath'] ?? normalizedArgs['path'];
+        if (path != null) {
+          normalizedArgs['filePath'] = path;
+          normalizedArgs.remove('path');
+        }
+        final canonicalArgs = _canonicalToolArgValue(normalizedArgs);
+        return '${call.name}:${jsonEncode(canonicalArgs)}';
+      }
+
       bool _isRepetitiveToolPattern(List<ToolCall> calls) {
         if (calls.isEmpty) return false;
-        final sig = calls.map((c) => '${c.name}:${c.arguments.keys.join(",")}').join('|');
+        final sig = calls.map(_toolSignature).join('|');
         recentToolSignatures.add(sig);
         if (recentToolSignatures.length < repetitionThreshold) return false;
         final window = recentToolSignatures.length > repetitionWindow
@@ -234,7 +265,16 @@ extension SessionEnginePrompt on SessionEngine {
         for (final s in window) {
           counts[s] = (counts[s] ?? 0) + 1;
         }
-        return counts.values.any((c) => c >= repetitionThreshold);
+        final matched = counts.values.any((c) => c >= repetitionThreshold);
+        if (matched) {
+          _debugLog('prompt-stop', 'repetitive tool pattern matched', {
+            'signature': sig,
+            'window': window,
+            'counts': counts,
+            'threshold': repetitionThreshold,
+          });
+        }
+        return matched;
       }
 
       var ranOutOfSteps = true;
@@ -264,7 +304,17 @@ extension SessionEnginePrompt on SessionEngine {
           summaryMessageId: activeSession.summaryMessageId,
         );
         const maxPreSendCompact = 3;
+        final contextWindow = inferContextWindow(modelConfig.model);
+        final maxOutputTokens = inferMaxOutputTokens(modelConfig.model);
         final inputBudget = usableInputTokensForModel(modelConfig.model);
+        _debugLog('model-limit', 'computed model limits', {
+          'provider': modelConfig.provider,
+          'model': modelConfig.model,
+          'contextWindow': contextWindow,
+          'maxOutputTokens': maxOutputTokens,
+          'inputBudget': inputBudget,
+          'conversationEstimate': estimateSerializedMessagesTokens(conversation),
+        });
         for (var preSendRound = 0;
             preSendRound < maxPreSendCompact;
             preSendRound++) {
@@ -395,6 +445,14 @@ extension SessionEnginePrompt on SessionEngine {
         while (true) {
           try {
             cancelToken.throwIfCancelled();
+            _debugLog('prompt-step', 'requesting model completion', {
+              'step': step,
+              'provider': modelConfig.provider,
+              'model': modelConfig.model,
+              'conversationItems': conversation.length,
+              'toolCount': toolModels.length,
+              'currentAgent': currentAgent,
+            });
             response = await modelGateway.complete(
               config: modelConfig,
               messages: conversation,
@@ -498,6 +556,22 @@ extension SessionEnginePrompt on SessionEngine {
         await flushStreamingReasoning(force: true);
         lastFinishReason = response.finishReason;
         lastUsage = response.usage;
+        _debugLog('prompt-step', 'model response received', {
+          'step': step,
+          'finishReason': response.finishReason,
+          'toolCallCount': response.toolCalls.length,
+          'toolCalls': response.toolCalls
+              .map((call) => {
+                    'id': call.id,
+                    'name': call.name,
+                    'argKeys': call.arguments.keys.toList(),
+                    'hasRaw': call.arguments.containsKey('raw'),
+                  })
+              .toList(),
+          'textPreview': response.text.length > 160
+              ? '${response.text.substring(0, 160)}...'
+              : response.text,
+        });
         if (response.text.trim().isNotEmpty && streamingTextPart == null) {
           await saveTrackedPart(
             MessagePart(
@@ -511,12 +585,24 @@ extension SessionEnginePrompt on SessionEngine {
           );
         }
         if (response.toolCalls.isEmpty) {
+          _debugLog('prompt-stop', 'breaking because model returned no tool calls', {
+            'step': step,
+            'finishReason': response.finishReason,
+            'textLength': response.text.length,
+          });
           ranOutOfSteps = false;
           break;
         }
         var shouldBreak = false;
         for (final call in response.toolCalls) {
           cancelToken.throwIfCancelled();
+          _debugLog('prompt-tool', 'executing tool call', {
+            'step': step,
+            'callId': call.id,
+            'tool': call.name,
+            'argKeys': call.arguments.keys.toList(),
+            'args': call.arguments,
+          });
           if (call.name == 'StructuredOutput') {
             final structured = Map<String, dynamic>.from(call.arguments);
             final updatedAssistant = MessageInfo(
@@ -548,6 +634,10 @@ extension SessionEnginePrompt on SessionEngine {
               ),
             );
             shouldBreak = true;
+            _debugLog('prompt-stop', 'breaking because structured output returned', {
+              'step': step,
+              'keys': structured.keys.toList(),
+            });
             break;
           }
           final toolPart = MessagePart(
@@ -577,6 +667,15 @@ extension SessionEnginePrompt on SessionEngine {
             onPartSaved: upsertCachedPart,
           );
           final metadata = result.metadata;
+          _debugLog('prompt-tool', 'tool execution finished', {
+            'step': step,
+            'callId': call.id,
+            'tool': call.name,
+            'metadata': metadata,
+            'outputPreview': result.output.length > 200
+                ? '${result.output.substring(0, 200)}...'
+                : result.output,
+          });
           if (metadata['switchAgent'] == 'build') {
             currentAgent = 'build';
           }
@@ -712,6 +811,12 @@ extension SessionEnginePrompt on SessionEngine {
           currentAgent: currentAgent,
         );
       }
+      _debugLog('prompt-stop', 'turn finished', {
+        'ranOutOfSteps': ranOutOfSteps,
+        'lastFinishReason': lastFinishReason,
+        'maxSteps': maxSteps,
+        'assistantMessageId': assistant.id,
+      });
       _debugLog('prompt', 'success finishReason=$lastFinishReason');
       return assistant;
     } on CancelledException {
