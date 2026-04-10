@@ -179,11 +179,12 @@ class ToolRegistry {
             'filePath': {
               'type': 'string',
               'description':
-                  'The path to the file to write (workspace-relative)',
+                  'REQUIRED. Workspace-relative path for the new file. Must be present on every call; do not omit or rename this key.',
             },
             'content': {
               'type': 'string',
-              'description': 'The full content to write to the file',
+              'description':
+                  'REQUIRED. The full file body to write. Must be present on every call.',
             },
           },
           'required': ['filePath', 'content'],

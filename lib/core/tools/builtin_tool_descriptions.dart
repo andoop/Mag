@@ -22,9 +22,11 @@ Creates a NEW file on the local filesystem. This tool is ONLY for creating files
 
 CRITICAL CONSTRAINT: If the file already exists, this tool will REJECT the call with an error. You MUST use `edit` or `apply_patch` instead for existing files.
 
+CRITICAL — required arguments: Every call MUST include both `filePath` and `content` as top-level JSON keys. Omitting `filePath` (or using only `path` / a different key) will fail. `filePath` is the workspace-relative destination; `content` is the full file body.
+
 Usage:
 - ONLY use this tool to create brand-new files. It will fail on existing files.
-- You MUST provide the complete file body in the `content` parameter.
+- You MUST provide `filePath` (workspace-relative path) and the complete file body in `content`.
 - ALWAYS prefer editing existing files with `edit` or `apply_patch`. NEVER use `write` to modify existing files.
 - NEVER proactively create documentation files (*.md) or README files unless explicitly requested.
 - If this tool returns "file already exists", switch to `edit` or `apply_patch` — do NOT retry with `write`.
