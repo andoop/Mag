@@ -9,6 +9,95 @@ class ModelGateway {
   bool _allowsEmptyApiKey(ModelConfig config) =>
       config.provider == 'ollama' || config.isMagProvider;
 
+  // ---------------------------------------------------------------------------
+  // Provider-specific parameter inference (ported from opencode transform.ts)
+  // ---------------------------------------------------------------------------
+
+  double? _inferTemperature(String model) {
+    final lower = model.toLowerCase();
+    if (lower.contains('qwen') || lower.contains('qwq')) return 0.55;
+    if (lower.contains('gemini')) return 1.0;
+    if (lower.contains('glm-4')) return 1.0;
+    if (lower.contains('minimax')) return 1.0;
+    if (lower.contains('kimi-k2')) {
+      if (['thinking', 'k2.', 'k2p', 'k2-5'].any(lower.contains)) return 1.0;
+      return 0.6;
+    }
+    return null;
+  }
+
+  double? _inferTopP(String model) {
+    final lower = model.toLowerCase();
+    if (lower.contains('qwen') || lower.contains('qwq')) return 1;
+    if (['minimax-m2', 'gemini', 'kimi-k2.5', 'kimi-k2p5', 'kimi-k2-5']
+        .any(lower.contains)) return 0.95;
+    return null;
+  }
+
+  int? _inferTopK(String model) {
+    final lower = model.toLowerCase();
+    if (lower.contains('minimax-m2')) {
+      if (['m2.', 'm25', 'm21'].any(lower.contains)) return 40;
+      return 20;
+    }
+    if (lower.contains('gemini')) return 64;
+    return null;
+  }
+
+  /// Sanitize tool call IDs for Claude: only [a-zA-Z0-9_-] allowed.
+  String _sanitizeToolCallIdForClaude(String id) =>
+      id.replaceAll(RegExp(r'[^a-zA-Z0-9_-]'), '_');
+
+  /// Normalize tool call IDs for Mistral: exactly 9 alphanumeric chars.
+  String _normalizeToolCallIdForMistral(String id) =>
+      id.replaceAll(RegExp(r'[^a-zA-Z0-9]'), '').padRight(9, '0').substring(0, 9);
+
+  /// Normalize messages for OpenAI-compatible providers.
+  /// Handles tool call ID sanitization and sequence fixes.
+  List<Map<String, dynamic>> _normalizeOpenAiMessages(
+    List<Map<String, dynamic>> messages,
+    ModelConfig config,
+  ) {
+    final lower = config.model.toLowerCase();
+    final isMistral =
+        config.provider == 'mistral' || lower.contains('mistral') || lower.contains('devstral');
+    if (!isMistral) return messages;
+
+    final result = <Map<String, dynamic>>[];
+    for (var i = 0; i < messages.length; i++) {
+      final msg = Map<String, dynamic>.from(messages[i]);
+      final role = msg['role'] as String? ?? '';
+
+      // Normalize tool call IDs for Mistral
+      if (role == 'assistant') {
+        final toolCalls = (msg['tool_calls'] as List?)?.toList();
+        if (toolCalls != null) {
+          msg['tool_calls'] = toolCalls.map((tc) {
+            final m = Map<String, dynamic>.from(tc as Map);
+            final id = m['id'] as String? ?? '';
+            m['id'] = _normalizeToolCallIdForMistral(id);
+            return m;
+          }).toList();
+        }
+      }
+      if (role == 'tool') {
+        final callId = msg['tool_call_id'] as String? ?? '';
+        msg['tool_call_id'] = _normalizeToolCallIdForMistral(callId);
+      }
+
+      result.add(msg);
+
+      // Mistral: tool messages cannot be followed by user messages directly
+      if (role == 'tool' && i + 1 < messages.length) {
+        final nextRole = messages[i + 1]['role'] as String? ?? '';
+        if (nextRole == 'user') {
+          result.add({'role': 'assistant', 'content': 'Done.'});
+        }
+      }
+    }
+    return result;
+  }
+
   Map<String, dynamic> _buildOpenAiPayload({
     required ModelConfig config,
     required List<Map<String, dynamic>> messages,
@@ -16,13 +105,20 @@ class ModelGateway {
     required MessageFormat? format,
     required int maxOutputTokens,
   }) {
+    final normalized = _normalizeOpenAiMessages(messages, config);
     final payload = <String, dynamic>{
       'model': config.model,
-      'messages': messages,
+      'messages': normalized,
       'stream': true,
       'stream_options': {'include_usage': true},
       'max_tokens': maxOutputTokens,
     };
+    final temperature = _inferTemperature(config.model);
+    if (temperature != null) payload['temperature'] = temperature;
+    final topP = _inferTopP(config.model);
+    if (topP != null) payload['top_p'] = topP;
+    final topK = _inferTopK(config.model);
+    if (topK != null) payload['top_k'] = topK;
     if (tools.isNotEmpty) {
       payload['tools'] = tools
           .map(
@@ -53,6 +149,7 @@ class ModelGateway {
     required MessageFormat? format,
     required int maxOutputTokens,
   }) {
+    final isClaude = config.model.toLowerCase().contains('claude');
     final systemParts = <String>[];
     final conversation = <JsonMap>[];
 
@@ -64,15 +161,18 @@ class ModelGateway {
         continue;
       }
       if (role == 'tool') {
-        final toolUseId = message['tool_call_id'] as String? ?? '';
+        var toolUseId = message['tool_call_id'] as String? ?? '';
         if (toolUseId.isEmpty) continue;
+        if (isClaude) toolUseId = _sanitizeToolCallIdForClaude(toolUseId);
+        final content = _extractText(message['content']);
+        if (content.isEmpty) continue;
         conversation.add({
           'role': 'user',
           'content': [
             {
               'type': 'tool_result',
               'tool_use_id': toolUseId,
-              'content': _extractText(message['content']),
+              'content': content,
             },
           ],
         });
@@ -90,9 +190,11 @@ class ModelGateway {
           final map = Map<String, dynamic>.from(item as Map);
           final function =
               Map<String, dynamic>.from(map['function'] as Map? ?? const {});
+          var callId = map['id'] as String? ?? newId('toolcall');
+          if (isClaude) callId = _sanitizeToolCallIdForClaude(callId);
           blocks.add({
             'type': 'tool_use',
-            'id': map['id'] as String? ?? newId('toolcall'),
+            'id': callId,
             'name': function['name'] as String? ?? 'invalid',
             'input': _decodeArguments(
               function['arguments'] as String? ?? '{}',
@@ -107,11 +209,35 @@ class ModelGateway {
       });
     }
 
+    // Filter out empty assistant messages (Anthropic rejects empty content)
+    conversation.removeWhere((msg) {
+      if (msg['role'] != 'assistant' && msg['role'] != 'user') return false;
+      final content = msg['content'];
+      if (content == null) return true;
+      if (content is String) return content.isEmpty;
+      if (content is List) {
+        final filtered = content.where((block) {
+          if (block is Map) {
+            final type = block['type'] as String? ?? '';
+            if (type == 'text') return (block['text'] as String? ?? '').isNotEmpty;
+            return true;
+          }
+          return true;
+        }).toList();
+        if (filtered.isEmpty) return true;
+        msg['content'] = filtered;
+        return false;
+      }
+      return false;
+    });
+
     final payload = <String, dynamic>{
       'model': config.model,
       'max_tokens': maxOutputTokens,
       'messages': conversation,
     };
+    final temperature = _inferTemperature(config.model);
+    if (temperature != null) payload['temperature'] = temperature;
     if (systemParts.isNotEmpty) {
       payload['system'] = systemParts.join('\n\n');
     }

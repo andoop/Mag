@@ -147,7 +147,10 @@ extension SessionEngineConversation on SessionEngine {
         for (final part in toolParts) {
           final state =
               Map<String, dynamic>.from(part.data['state'] as Map? ?? const {});
-          final output = state['output'] as String? ?? '';
+          final status = state['status'] as String? ?? '';
+          final output = (status == 'pending' || status == 'running')
+              ? '[Tool execution was interrupted]'
+              : state['output'] as String? ?? '';
           conversation.add({
             'role': 'tool',
             'tool_call_id': part.data['callID'],
