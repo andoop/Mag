@@ -9,8 +9,8 @@ Future<ToolExecutionResult> _gitTool(
     return ToolExecutionResult(
       title: 'git',
       output: 'Missing required parameter: command.  '
-          'Supported: status, add, commit, log, diff, branch, checkout, '
-          'merge, init, show, clone, fetch, pull, push, rebase.',
+          'Supported: status, add, restore, reset, commit, log, diff, branch, checkout, '
+          'merge, cherry-pick, init, show, clone, fetch, pull, push, rebase, config, remote-url, remote.',
     );
   }
 
@@ -157,6 +157,70 @@ Future<ToolExecutionResult> _gitTool(
         title: 'git add',
         output:
             'Provide `paths` (array) or set `all` to true to stage all files.',
+      );
+
+    // ------------------------------------------------------------------
+    case 'restore':
+      final rawPaths = args['paths'];
+      if (rawPaths is List && rawPaths.isNotEmpty) {
+        final paths = rawPaths
+            .map((e) => e.toString().trim())
+            .where((e) => e.isNotEmpty)
+            .toList();
+        if (paths.isEmpty) {
+          return ToolExecutionResult(
+            title: 'git restore',
+            output: 'Provide `paths` (array) with tracked files to restore.',
+          );
+        }
+        for (final path in paths) {
+          await git.restoreFile(path);
+        }
+        return ToolExecutionResult(
+          title: 'git restore',
+          output: 'Restored ${paths.length} path(s) from HEAD: ${paths.join(', ')}',
+          metadata: {'paths': paths},
+        );
+      }
+      return ToolExecutionResult(
+        title: 'git restore',
+        output: 'Provide `paths` (array) with tracked files to restore.',
+      );
+
+    // ------------------------------------------------------------------
+    case 'reset':
+      final rawPaths = args['paths'];
+      final mode = (args['mode'] as String? ?? 'mixed').trim().toLowerCase();
+      if (!const {'soft', 'mixed', 'hard'}.contains(mode)) {
+        return ToolExecutionResult(
+          title: 'git reset',
+          output: 'Unknown reset mode: $mode. Use soft, mixed, or hard.',
+        );
+      }
+      if (rawPaths is List && rawPaths.isNotEmpty) {
+        final paths = rawPaths
+            .map((e) => e.toString().trim())
+            .where((e) => e.isNotEmpty)
+            .toList();
+        if (paths.isEmpty) {
+          return ToolExecutionResult(
+            title: 'git reset',
+            output: 'Provide non-empty `paths` or a `target` to reset to.',
+          );
+        }
+        await git.reset(paths: paths, mode: mode);
+        return ToolExecutionResult(
+          title: 'git reset',
+          output: 'Reset ${paths.length} path(s) from the index: ${paths.join(', ')}',
+          metadata: {'paths': paths, 'mode': mode},
+        );
+      }
+      final target = (args['target'] as String? ?? 'HEAD').trim();
+      await git.reset(target: target, mode: mode);
+      return ToolExecutionResult(
+        title: 'git reset',
+        output: 'Reset $mode to $target.',
+        metadata: {'target': target, 'mode': mode},
       );
 
     // ------------------------------------------------------------------
@@ -312,27 +376,52 @@ Future<ToolExecutionResult> _gitTool(
 
     // ------------------------------------------------------------------
     case 'merge':
+      final action = (args['action'] as String? ?? 'start').trim().toLowerCase();
+      if (!const {'start', 'continue', 'abort'}.contains(action)) {
+        return ToolExecutionResult(
+          title: 'git merge',
+          output: 'Unknown action: $action. Use start, continue, or abort.',
+        );
+      }
       final branch = (args['branch'] as String? ?? '').trim();
-      if (branch.isEmpty) {
+      if (action == 'start' && branch.isEmpty) {
         return ToolExecutionResult(
           title: 'git merge',
           output: 'Missing required parameter: branch.',
         );
       }
-      final mr = await git.merge(branch);
+      final message = (args['message'] as String?)?.trim();
+      final mr = await git.merge(
+        action == 'start' ? branch : null,
+        action: action,
+        message: message != null && message.isNotEmpty ? message : null,
+      );
       if (mr.hasConflicts) {
         return ToolExecutionResult(
           title: 'git merge',
           output:
               'Merge conflicts in ${mr.conflicts.length} file(s):\n${mr.conflicts.join('\n')}',
-          metadata: {'conflicts': mr.conflicts, 'success': false},
+          metadata: {
+            'action': action,
+            'conflicts': mr.conflicts,
+            'success': false,
+          },
         );
       }
       return ToolExecutionResult(
         title: 'git merge',
-        output: 'Merged $branch successfully.'
-            '${mr.mergeCommit != null ? ' (${mr.mergeCommit!.substring(0, 8)})' : ''}',
-        metadata: {'success': true, 'mergeCommit': mr.mergeCommit},
+        output: action == 'abort'
+            ? 'Aborted merge successfully.'
+            : action == 'continue'
+                ? 'Continued merge successfully.'
+            : 'Merged $branch successfully.'
+                '${mr.mergeCommit != null ? ' (${mr.mergeCommit!.substring(0, 8)})' : ''}',
+        metadata: {
+          'action': action,
+          if (message != null && message.isNotEmpty) 'message': message,
+          'success': true,
+          'mergeCommit': mr.mergeCommit,
+        },
       );
 
     case 'fetch':
@@ -450,21 +539,77 @@ Future<ToolExecutionResult> _gitTool(
         metadata: {'pushedRefs': pushed.pushedRefs},
       );
 
-    case 'rebase':
+    case 'cherry-pick':
+      final action = (args['action'] as String? ?? 'start').trim().toLowerCase();
+      if (!const {'start', 'continue', 'abort'}.contains(action)) {
+        return ToolExecutionResult(
+          title: 'git cherry-pick',
+          output: 'Unknown action: $action. Use start, continue, or abort.',
+        );
+      }
       final ref = (args['ref'] as String? ?? '').trim();
-      if (ref.isEmpty) {
+      if (action == 'start' && ref.isEmpty) {
+        return ToolExecutionResult(
+          title: 'git cherry-pick',
+          output: 'Missing required parameter: ref.',
+        );
+      }
+      final message = (args['message'] as String?)?.trim();
+      final picked = await git.cherryPick(
+        action == 'start' ? ref : null,
+        action: action,
+        message: message != null && message.isNotEmpty ? message : null,
+      );
+      if (!picked.success) {
+        return ToolExecutionResult(
+          title: 'git cherry-pick',
+          output:
+              'Cherry-pick stopped with conflicts in ${picked.conflicts.length} file(s):\n${picked.conflicts.join('\n')}',
+          metadata: {
+            'action': action,
+            'conflicts': picked.conflicts,
+            'newHead': picked.newHead,
+          },
+        );
+      }
+      return ToolExecutionResult(
+        title: 'git cherry-pick',
+        output: action == 'abort'
+            ? 'Aborted cherry-pick successfully.'
+            : action == 'continue'
+                ? 'Continued cherry-pick successfully.'
+                : 'Cherry-picked $ref successfully.',
+        metadata: {
+          'action': action,
+          'ref': ref,
+          'newHead': picked.newHead,
+        },
+      );
+
+    case 'rebase':
+      final action = (args['action'] as String? ?? 'start').trim().toLowerCase();
+      if (!const {'start', 'continue', 'skip', 'abort'}.contains(action)) {
+        return ToolExecutionResult(
+          title: 'git rebase',
+          output: 'Unknown action: $action. Use start, continue, skip, or abort.',
+        );
+      }
+      final ref = (args['ref'] as String? ?? '').trim();
+      if (action == 'start' && ref.isEmpty) {
         return ToolExecutionResult(
           title: 'git rebase',
           output: 'Missing required parameter: ref.',
         );
       }
-      final rebased = await git.rebase(ref);
+      final rebased =
+          await git.rebase(action == 'start' ? ref : null, action: action);
       if (!rebased.success) {
         return ToolExecutionResult(
           title: 'git rebase',
           output:
               'Rebase stopped with conflicts in ${rebased.conflicts.length} file(s):\n${rebased.conflicts.join('\n')}',
           metadata: {
+            'action': action,
             'conflicts': rebased.conflicts,
             'newHead': rebased.newHead,
           },
@@ -472,8 +617,181 @@ Future<ToolExecutionResult> _gitTool(
       }
       return ToolExecutionResult(
         title: 'git rebase',
-        output: 'Rebased successfully onto $ref.',
-        metadata: {'newHead': rebased.newHead},
+        output: action == 'abort'
+            ? 'Aborted rebase successfully.'
+            : action == 'continue'
+                ? 'Continued rebase successfully.'
+                : action == 'skip'
+                    ? 'Skipped the current rebase commit successfully.'
+                : 'Rebased successfully onto $ref.',
+        metadata: {
+          'action': action,
+          'ref': ref,
+          'newHead': rebased.newHead,
+        },
+      );
+
+    // ------------------------------------------------------------------
+    case 'config':
+      final action = (args['action'] as String? ?? 'get').trim().toLowerCase();
+      final section = (args['section'] as String? ?? '').trim();
+      final key = (args['key'] as String? ?? '').trim();
+      if (section.isEmpty || key.isEmpty) {
+        return ToolExecutionResult(
+          title: 'git config',
+          output: 'Missing required parameters: section and key.',
+        );
+      }
+      if (action == 'get' || action.isEmpty) {
+        final value = await git.getConfigValue(section, key);
+        return ToolExecutionResult(
+          title: 'git config',
+          output: value == null
+              ? 'Config is not set: $section.$key'
+              : '$section.$key=$value',
+          metadata: {
+            'action': 'get',
+            'section': section,
+            'key': key,
+            'value': value,
+            'found': value != null,
+          },
+        );
+      }
+      if (action == 'set') {
+        final value = (args['value'] as String? ?? '').trim();
+        if (value.isEmpty) {
+          return ToolExecutionResult(
+            title: 'git config',
+            output: 'Missing required parameter: value.',
+          );
+        }
+        await git.setConfigValue(section, key, value);
+        return ToolExecutionResult(
+          title: 'git config',
+          output: 'Updated $section.$key.',
+          metadata: {
+            'action': 'set',
+            'section': section,
+            'key': key,
+            'value': value,
+          },
+        );
+      }
+      return ToolExecutionResult(
+        title: 'git config',
+        output: 'Unknown action: $action. Use get or set.',
+      );
+
+    // ------------------------------------------------------------------
+    case 'remote-url':
+      final remote = (args['remote'] as String? ?? 'origin').trim();
+      final effectiveRemote = remote.isEmpty ? 'origin' : remote;
+      final url = await git.getRemoteUrl(effectiveRemote);
+      return ToolExecutionResult(
+        title: 'git remote-url',
+        output: url == null
+            ? 'Remote $effectiveRemote has no configured URL.'
+            : '$effectiveRemote $url',
+        metadata: {'remote': effectiveRemote, 'url': url},
+      );
+
+    // ------------------------------------------------------------------
+    case 'remote':
+      final action = (args['action'] as String? ?? 'list').trim().toLowerCase();
+      final remote = (args['remote'] as String? ?? 'origin').trim();
+      final effectiveRemote = remote.isEmpty ? 'origin' : remote;
+      if (action.isEmpty || action == 'list') {
+        final remotes = await git.listRemotes();
+        final names = remotes.keys.toList()..sort();
+        final output = names.isEmpty
+            ? 'No remotes configured.'
+            : names
+                .map((name) => remotes[name] == null ? name : '$name ${remotes[name]}')
+                .join('\n');
+        return ToolExecutionResult(
+          title: 'git remote',
+          output: output,
+          metadata: {
+            'action': 'list',
+            'count': names.length,
+            'remotes': names
+                .map((name) => {'name': name, 'url': remotes[name]})
+                .toList(),
+          },
+        );
+      }
+      if (action == 'get-url') {
+        final url = await git.getRemoteUrl(effectiveRemote);
+        return ToolExecutionResult(
+          title: 'git remote',
+          output: url == null
+              ? 'Remote $effectiveRemote has no configured URL.'
+              : '$effectiveRemote $url',
+          metadata: {
+            'action': 'get-url',
+            'remote': effectiveRemote,
+            'url': url,
+          },
+        );
+      }
+      if (action == 'add') {
+        final url = (args['url'] as String? ?? '').trim();
+        if (url.isEmpty) {
+          return ToolExecutionResult(
+            title: 'git remote',
+            output: 'Missing required parameter: url.',
+          );
+        }
+        await git.addRemote(effectiveRemote, url);
+        return ToolExecutionResult(
+          title: 'git remote',
+          output: 'Added remote $effectiveRemote.',
+          metadata: {'action': 'add', 'remote': effectiveRemote, 'url': url},
+        );
+      }
+      if (action == 'set-url') {
+        final url = (args['url'] as String? ?? '').trim();
+        if (url.isEmpty) {
+          return ToolExecutionResult(
+            title: 'git remote',
+            output: 'Missing required parameter: url.',
+          );
+        }
+        await git.setRemoteUrl(effectiveRemote, url);
+        return ToolExecutionResult(
+          title: 'git remote',
+          output: 'Updated remote $effectiveRemote URL.',
+          metadata: {'action': 'set-url', 'remote': effectiveRemote, 'url': url},
+        );
+      }
+      if (action == 'remove') {
+        await git.removeRemote(effectiveRemote);
+        return ToolExecutionResult(
+          title: 'git remote',
+          output: 'Removed remote $effectiveRemote.',
+          metadata: {'action': 'remove', 'remote': effectiveRemote},
+        );
+      }
+      if (action == 'rename') {
+        final oldName = (args['oldName'] as String? ?? '').trim();
+        final newName = (args['newName'] as String? ?? '').trim();
+        if (oldName.isEmpty || newName.isEmpty) {
+          return ToolExecutionResult(
+            title: 'git remote',
+            output: 'Missing required parameters: oldName and newName.',
+          );
+        }
+        await git.renameRemote(oldName, newName);
+        return ToolExecutionResult(
+          title: 'git remote',
+          output: 'Renamed remote $oldName to $newName.',
+          metadata: {'action': 'rename', 'oldName': oldName, 'newName': newName},
+        );
+      }
+      return ToolExecutionResult(
+        title: 'git remote',
+        output: 'Unknown action: $action. Use list, get-url, add, set-url, remove, or rename.',
       );
 
     // ------------------------------------------------------------------
@@ -497,8 +815,8 @@ Future<ToolExecutionResult> _gitTool(
         return ToolExecutionResult(
           title: 'git',
           output: 'Unknown git command: $command.  '
-              'Supported: status, add, commit, log, diff, branch, '
-              'checkout, merge, init, show, clone, fetch, pull, push, rebase.',
+              'Supported: status, add, restore, reset, commit, log, diff, branch, '
+              'checkout, merge, cherry-pick, init, show, clone, fetch, pull, push, rebase, config, remote-url, remote.',
         );
     }
   } on GitException catch (e) {

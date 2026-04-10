@@ -263,23 +263,43 @@ class GitNetworkBridge {
     });
   }
 
+  Future<Map<String, dynamic>> reset({
+    required String workDir,
+    String? target,
+    String? mode,
+    List<String>? paths,
+  }) {
+    return _invoke('resetRepository', {
+      'workDir': workDir,
+      'target': target,
+      'mode': mode,
+      'paths': paths,
+    });
+  }
+
   Future<Map<String, dynamic>> merge({
     required String workDir,
-    required String branch,
+    String? branch,
+    String? action,
+    String? message,
   }) {
     return _invoke('mergeRepositoryBranch', {
       'workDir': workDir,
       'branch': branch,
+      'action': action,
+      'message': message,
     });
   }
 
   Future<Map<String, dynamic>> rebase({
     required String workDir,
-    required String targetRef,
+    String? targetRef,
+    String? action,
   }) {
     return _invoke('rebaseRepositoryTarget', {
       'workDir': workDir,
       'targetRef': targetRef,
+      'action': action,
     });
   }
 
@@ -316,6 +336,74 @@ class GitNetworkBridge {
     return _invoke('getRepositoryRemoteUrl', {
       'workDir': workDir,
       'remoteName': remoteName,
+    });
+  }
+
+  Future<Map<String, dynamic>> listRemotes({
+    required String workDir,
+  }) {
+    return _invoke('listRepositoryRemotes', {
+      'workDir': workDir,
+    });
+  }
+
+  Future<Map<String, dynamic>> addRemote({
+    required String workDir,
+    required String remoteName,
+    required String url,
+  }) {
+    return _invoke('addRepositoryRemote', {
+      'workDir': workDir,
+      'remoteName': remoteName,
+      'url': url,
+    });
+  }
+
+  Future<Map<String, dynamic>> setRemoteUrl({
+    required String workDir,
+    required String remoteName,
+    required String url,
+  }) {
+    return _invoke('setRepositoryRemoteUrl', {
+      'workDir': workDir,
+      'remoteName': remoteName,
+      'url': url,
+    });
+  }
+
+  Future<Map<String, dynamic>> removeRemote({
+    required String workDir,
+    required String remoteName,
+  }) {
+    return _invoke('removeRepositoryRemote', {
+      'workDir': workDir,
+      'remoteName': remoteName,
+    });
+  }
+
+  Future<Map<String, dynamic>> renameRemote({
+    required String workDir,
+    required String oldName,
+    required String newName,
+  }) {
+    return _invoke('renameRepositoryRemote', {
+      'workDir': workDir,
+      'oldName': oldName,
+      'newName': newName,
+    });
+  }
+
+  Future<Map<String, dynamic>> cherryPick({
+    required String workDir,
+    String? ref,
+    String? action,
+    String? message,
+  }) {
+    return _invoke('cherryPickRepositoryCommit', {
+      'workDir': workDir,
+      'ref': ref,
+      'action': action,
+      'message': message,
     });
   }
 

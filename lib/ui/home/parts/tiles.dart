@@ -573,6 +573,25 @@ class _ToolPartTileState extends State<_ToolPartTile> {
         return l(context, '已暂存 ${paths.length} 个路径', 'Staged ${paths.length} path(s)');
       }
     }
+    if (title == 'git restore') {
+      final paths = widget.metadata['paths'];
+      if (paths is List) {
+        return l(context, '已恢复 ${paths.length} 个路径', 'Restored ${paths.length} path(s)');
+      }
+    }
+    if (title == 'git reset') {
+      final paths = widget.metadata['paths'];
+      if (paths is List && paths.isNotEmpty) {
+        return l(context, '已重置 ${paths.length} 个路径', 'Reset ${paths.length} path(s)');
+      }
+      final target = (widget.metadata['target'] as String?) ?? '';
+      final mode = (widget.metadata['mode'] as String?) ?? '';
+      if (target.isNotEmpty) {
+        return mode.isEmpty
+            ? l(context, '已重置到 $target', 'Reset to $target')
+            : l(context, '已 $mode 重置到 $target', 'Reset $mode to $target');
+      }
+    }
     if (title == 'git branch') {
       final action = ((widget.rawInput['action'] as String?) ?? 'list').trim().toLowerCase();
       final name = (widget.rawInput['name'] as String?) ?? '';
@@ -608,6 +627,14 @@ class _ToolPartTileState extends State<_ToolPartTile> {
       return l(context, '已切换到 $target', 'Switched to $target');
     }
     if (title == 'git merge') {
+      final action = (widget.metadata['action'] as String?) ??
+          ((widget.rawInput['action'] as String?) ?? 'start');
+      if (action == 'abort') {
+        return l(context, '已中止合并', 'Aborted merge');
+      }
+      if (action == 'continue') {
+        return l(context, '已继续合并', 'Continued merge');
+      }
       final conflicts = widget.metadata['conflicts'];
       if (conflicts is List && conflicts.isNotEmpty) {
         return l(context, '合并发生冲突 · ${conflicts.length} 个文件',
@@ -662,7 +689,44 @@ class _ToolPartTileState extends State<_ToolPartTile> {
       }
       return l(context, '推送完成', 'Pushed successfully');
     }
+    if (title == 'git cherry-pick') {
+      final action = (widget.metadata['action'] as String?) ??
+          ((widget.rawInput['action'] as String?) ?? 'start');
+      if (action == 'abort') {
+        return l(context, '已中止拣选', 'Aborted cherry-pick');
+      }
+      if (action == 'continue') {
+        return l(context, '已继续拣选', 'Continued cherry-pick');
+      }
+      final conflicts = widget.metadata['conflicts'];
+      if (conflicts is List && conflicts.isNotEmpty) {
+        return l(context, '拣选发生冲突 · ${conflicts.length} 个文件',
+            'Cherry-pick conflicts · ${conflicts.length} file(s)');
+      }
+      final ref = (widget.rawInput['ref'] as String?) ?? '';
+      final newHead = widget.metadata['newHead'] as String?;
+      if (newHead != null && newHead.isNotEmpty) {
+        final shortHash = newHead.length > 8 ? newHead.substring(0, 8) : newHead;
+        return ref.isEmpty
+            ? l(context, '拣选完成 · $shortHash', 'Cherry-picked · $shortHash')
+            : l(context, '已拣选 $ref · $shortHash', 'Cherry-picked $ref · $shortHash');
+      }
+      if (ref.isNotEmpty) {
+        return l(context, '已拣选 $ref', 'Cherry-picked $ref');
+      }
+    }
     if (title == 'git rebase') {
+      final action = (widget.metadata['action'] as String?) ??
+          ((widget.rawInput['action'] as String?) ?? 'start');
+      if (action == 'abort') {
+        return l(context, '已中止变基', 'Aborted rebase');
+      }
+      if (action == 'continue') {
+        return l(context, '已继续变基', 'Continued rebase');
+      }
+      if (action == 'skip') {
+        return l(context, '已跳过当前提交', 'Skipped current commit');
+      }
       final conflicts = widget.metadata['conflicts'];
       if (conflicts is List && conflicts.isNotEmpty) {
         return l(context, '变基发生冲突 · ${conflicts.length} 个文件',
@@ -678,6 +742,54 @@ class _ToolPartTileState extends State<_ToolPartTile> {
       }
       if (ref.isNotEmpty) {
         return l(context, '已变基到 $ref', 'Rebased onto $ref');
+      }
+    }
+    if (title == 'git config') {
+      final action = (widget.metadata['action'] as String?) ?? '';
+      final section = (widget.metadata['section'] as String?) ?? '';
+      final key = (widget.metadata['key'] as String?) ?? '';
+      final label = [section, key].where((part) => part.isNotEmpty).join('.');
+      if (action == 'set' && label.isNotEmpty) {
+        return l(context, '已更新配置 $label', 'Updated config $label');
+      }
+      if (action == 'get' && label.isNotEmpty) {
+        return l(context, '已读取配置 $label', 'Read config $label');
+      }
+    }
+    if (title == 'git remote-url') {
+      final remote = (widget.metadata['remote'] as String?) ?? '';
+      if (remote.isNotEmpty) {
+        return l(context, '已读取远程 $remote', 'Read remote $remote');
+      }
+    }
+    if (title == 'git remote') {
+      final action = (widget.metadata['action'] as String?) ?? '';
+      final remote = (widget.metadata['remote'] as String?) ?? '';
+      if (action == 'list') {
+        final count = widget.metadata['count'];
+        if (count != null) {
+          return l(context, '$count 个远程', '$count remote(s)');
+        }
+      }
+      if (remote.isNotEmpty) {
+        if (action == 'add') {
+          return l(context, '已添加远程 $remote', 'Added remote $remote');
+        }
+        if (action == 'set-url') {
+          return l(context, '已更新远程 $remote', 'Updated remote $remote');
+        }
+        if (action == 'remove') {
+          return l(context, '已删除远程 $remote', 'Removed remote $remote');
+        }
+        if (action == 'get-url') {
+          return l(context, '已读取远程 $remote', 'Read remote $remote');
+        }
+      }
+      final oldName = (widget.metadata['oldName'] as String?) ?? '';
+      final newName = (widget.metadata['newName'] as String?) ?? '';
+      if (action == 'rename' && oldName.isNotEmpty && newName.isNotEmpty) {
+        return l(context, '已重命名远程 $oldName -> $newName',
+            'Renamed remote $oldName -> $newName');
       }
     }
     return null;

@@ -22,6 +22,8 @@ import org.eclipse.jgit.api.FetchCommand
 import org.eclipse.jgit.api.Git
 import org.eclipse.jgit.api.PullCommand
 import org.eclipse.jgit.api.PushCommand
+import org.eclipse.jgit.api.RebaseCommand
+import org.eclipse.jgit.api.ResetCommand
 import org.eclipse.jgit.diff.DiffEntry
 import org.eclipse.jgit.diff.DiffFormatter
 import org.eclipse.jgit.diff.RawTextComparator
@@ -39,6 +41,7 @@ import org.eclipse.jgit.transport.sshd.SshdSessionFactoryBuilder
 import org.eclipse.jgit.transport.PushResult
 import org.eclipse.jgit.transport.RefSpec
 import org.eclipse.jgit.transport.SshTransport
+import org.eclipse.jgit.transport.URIish
 import org.eclipse.jgit.transport.UsernamePasswordCredentialsProvider
 
 class GitNetworkBridge(
@@ -74,14 +77,21 @@ class GitNetworkBridge(
             "checkoutRepositoryTarget" -> runGitCall(result) { handleCheckoutRepositoryTarget(call) }
             "checkoutRepositoryNewBranch" -> runGitCall(result) { handleCheckoutRepositoryNewBranch(call) }
             "restoreRepositoryFile" -> runGitCall(result) { handleRestoreRepositoryFile(call) }
+            "resetRepository" -> runGitCall(result) { handleResetRepository(call) }
             "mergeRepositoryBranch" -> runGitCall(result) { handleMergeRepositoryBranch(call) }
             "fetchRepository" -> runGitCall(result) { handleFetchRepository(call) }
             "pullRepository" -> runGitCall(result) { handlePullRepository(call) }
             "pushRepository" -> runGitCall(result) { handlePushRepository(call) }
             "rebaseRepositoryTarget" -> runGitCall(result) { handleRebaseRepositoryTarget(call) }
+            "cherryPickRepositoryCommit" -> runGitCall(result) { handleCherryPickRepositoryCommit(call) }
             "getRepositoryConfigValue" -> runGitCall(result) { handleGetRepositoryConfigValue(call) }
             "setRepositoryConfigValue" -> runGitCall(result) { handleSetRepositoryConfigValue(call) }
             "getRepositoryRemoteUrl" -> runGitCall(result) { handleGetRepositoryRemoteUrl(call) }
+            "listRepositoryRemotes" -> runGitCall(result) { handleListRepositoryRemotes(call) }
+            "addRepositoryRemote" -> runGitCall(result) { handleAddRepositoryRemote(call) }
+            "setRepositoryRemoteUrl" -> runGitCall(result) { handleSetRepositoryRemoteUrl(call) }
+            "removeRepositoryRemote" -> runGitCall(result) { handleRemoveRepositoryRemote(call) }
+            "renameRepositoryRemote" -> runGitCall(result) { handleRenameRepositoryRemote(call) }
             else -> result.notImplemented()
         }
     }
@@ -487,14 +497,88 @@ class GitNetworkBridge(
         }
     }
 
+    private fun handleResetRepository(call: MethodCall): Map<String, Any?> {
+        val workDir = requireString(call, "workDir")
+        val target = call.argument<String>("target")?.trim().orEmpty().ifEmpty { null }
+        val mode = call.argument<String>("mode")?.trim().orEmpty().ifEmpty { "mixed" }.lowercase()
+        val paths = (call.argument<List<String>>("paths") ?: emptyList())
+            .map { it.trim() }
+            .filter { it.isNotEmpty() }
+        Git.open(File(workDir)).use { git ->
+            if (paths.isNotEmpty()) {
+                val command = git.reset()
+                paths.forEach { command.addPath(it) }
+                command.call()
+            } else {
+                val resetType = when (mode) {
+                    "soft" -> ResetCommand.ResetType.SOFT
+                    "mixed" -> ResetCommand.ResetType.MIXED
+                    "hard" -> ResetCommand.ResetType.HARD
+                    else -> throw IllegalArgumentException("Unknown reset mode: $mode")
+                }
+                val command = git.reset().setMode(resetType)
+                if (target != null) {
+                    command.setRef(target)
+                }
+                command.call()
+            }
+            return mapOf(
+                "success" to true,
+                "head" to git.repository.resolve(Constants.HEAD)?.name,
+            )
+        }
+    }
+
     private fun handleMergeRepositoryBranch(call: MethodCall): Map<String, Any?> {
         val workDir = requireString(call, "workDir")
-        val branch = requireString(call, "branch")
+        val action = call.argument<String>("action")?.trim().orEmpty().ifEmpty { "start" }.lowercase()
+        val branch = call.argument<String>("branch")?.trim().orEmpty().ifEmpty { null }
+        val message = call.argument<String>("message")?.trim().orEmpty().ifEmpty { "Merge commit" }
         Git.open(File(workDir)).use { git ->
-            val ref = git.repository.findRef(branch)
-                ?: git.repository.findRef("refs/heads/$branch")
-                ?: git.repository.findRef("refs/remotes/$branch")
-                ?: throw IllegalArgumentException("Unknown ref: $branch")
+            if (action == "abort") {
+                git.reset()
+                    .setRef(Constants.HEAD)
+                    .setMode(ResetCommand.ResetType.HARD)
+                    .call()
+                return mapOf(
+                    "success" to true,
+                    "conflicts" to emptyList<String>(),
+                    "mergeCommit" to git.repository.resolve(Constants.HEAD)?.name,
+                    "status" to "ABORTED",
+                    "action" to action,
+                    "error" to null,
+                )
+            }
+            if (action == "continue") {
+                val status = git.status().call()
+                val conflicts = status.conflicting.toList().sorted()
+                if (conflicts.isNotEmpty()) {
+                    return mapOf(
+                        "success" to false,
+                        "conflicts" to conflicts,
+                        "mergeCommit" to null,
+                        "status" to "CONFLICTING",
+                        "action" to action,
+                        "error" to "Merge failed: CONFLICTING",
+                    )
+                }
+                val commit = git.commit()
+                    .setMessage(message)
+                    .call()
+                return mapOf(
+                    "success" to true,
+                    "conflicts" to emptyList<String>(),
+                    "mergeCommit" to commit.name,
+                    "status" to "MERGED",
+                    "action" to action,
+                    "error" to null,
+                )
+            }
+            val effectiveBranch = branch ?: throw IllegalArgumentException("Missing required parameter: branch")
+            val ref = git.repository.findRef(effectiveBranch)
+                ?: git.repository.findRef("refs/heads/$effectiveBranch")
+                ?: git.repository.findRef("refs/remotes/$effectiveBranch")
+                ?: throw IllegalArgumentException("Unknown ref: $effectiveBranch")
             val result = git.merge().include(ref).call()
             val conflicts = result.conflicts?.keys?.sorted() ?: emptyList()
             val mergeStatus = result.mergeStatus.name
@@ -503,6 +587,7 @@ class GitNetworkBridge(
                 "conflicts" to conflicts,
                 "mergeCommit" to result.newHead?.name,
                 "status" to mergeStatus,
+                "action" to action,
                 "error" to if (mergeStatus in setOf("FAILED", "CONFLICTING", "NOT_SUPPORTED")) "Merge failed: $mergeStatus" else null,
             )
         }
@@ -562,19 +647,107 @@ class GitNetworkBridge(
 
     private fun handleRebaseRepositoryTarget(call: MethodCall): Map<String, Any?> {
         val workDir = requireString(call, "workDir")
-        val targetRef = requireString(call, "targetRef")
+        val action = call.argument<String>("action")?.trim().orEmpty().ifEmpty { "start" }.lowercase()
+        val targetRef = call.argument<String>("targetRef")?.trim().orEmpty().ifEmpty { null }
         Git.open(File(workDir)).use { git ->
-            val result = git.rebase()
-                .setUpstream(targetRef)
-                .call()
+            val command = git.rebase()
+            when (action) {
+                "start" -> command.setUpstream(targetRef ?: throw IllegalArgumentException("Missing required parameter: targetRef"))
+                "abort" -> command.setOperation(RebaseCommand.Operation.ABORT)
+                "continue" -> command.setOperation(RebaseCommand.Operation.CONTINUE)
+                "skip" -> command.setOperation(RebaseCommand.Operation.SKIP)
+                else -> throw IllegalArgumentException("Unknown rebase action: $action")
+            }
+            val result = command.call()
             val conflicts = git.status().call().conflicting.toList().sorted()
             val rebaseStatus = result.status.name
             return mapOf(
                 "success" to (rebaseStatus !in setOf("STOPPED", "FAILED", "CONFLICTS", "UNCOMMITTED_CHANGES") && conflicts.isEmpty()),
                 "conflicts" to conflicts,
                 "newHead" to git.repository.resolve(Constants.HEAD)?.name,
+                "action" to action,
                 "status" to rebaseStatus,
                 "error" to if (rebaseStatus in setOf("STOPPED", "FAILED", "CONFLICTS", "UNCOMMITTED_CHANGES")) "Rebase failed: $rebaseStatus" else null,
+            )
+        }
+    }
+
+    private fun handleCherryPickRepositoryCommit(call: MethodCall): Map<String, Any?> {
+        val workDir = requireString(call, "workDir")
+        val action = call.argument<String>("action")?.trim().orEmpty().ifEmpty { "start" }.lowercase()
+        val ref = call.argument<String>("ref")?.trim().orEmpty().ifEmpty { null }
+        val message = call.argument<String>("message")?.trim().orEmpty().ifEmpty { "Cherry-pick commit" }
+        Git.open(File(workDir)).use { git ->
+            val cherryPickHead = File(git.repository.directory, "CHERRY_PICK_HEAD")
+            if (action == "abort") {
+                if (!cherryPickHead.exists()) {
+                    return mapOf(
+                        "success" to false,
+                        "conflicts" to emptyList<String>(),
+                        "action" to action,
+                        "error" to "No cherry-pick in progress",
+                    )
+                }
+                git.reset()
+                    .setRef(Constants.HEAD)
+                    .setMode(ResetCommand.ResetType.HARD)
+                    .call()
+                return mapOf(
+                    "success" to true,
+                    "conflicts" to emptyList<String>(),
+                    "action" to action,
+                    "newHead" to git.repository.resolve(Constants.HEAD)?.name,
+                )
+            }
+            if (action == "continue") {
+                if (!cherryPickHead.exists()) {
+                    return mapOf(
+                        "success" to false,
+                        "conflicts" to emptyList<String>(),
+                        "action" to action,
+                        "error" to "No cherry-pick in progress",
+                    )
+                }
+                val conflicts = git.status().call().conflicting.toList().sorted()
+                if (conflicts.isNotEmpty()) {
+                    return mapOf(
+                        "success" to false,
+                        "conflicts" to conflicts,
+                        "action" to action,
+                        "newHead" to git.repository.resolve(Constants.HEAD)?.name,
+                        "error" to "Cherry-pick failed: CONFLICTING",
+                    )
+                }
+                val commit = git.commit()
+                    .setMessage(message)
+                    .call()
+                return mapOf(
+                    "success" to true,
+                    "conflicts" to emptyList<String>(),
+                    "action" to action,
+                    "newHead" to commit.name,
+                    "cherryPickCommit" to commit.name,
+                )
+            }
+            val effectiveRef = ref ?: throw IllegalArgumentException("Missing required parameter: ref")
+            val objectId = git.repository.resolve(effectiveRef)
+                ?: throw IllegalArgumentException("Unknown ref: $effectiveRef")
+            val commit = RevWalk(git.repository).use { walk ->
+                walk.parseCommit(objectId)
+            }
+            val result = git.cherryPick()
+                .include(commit)
+                .call()
+            val conflicts = git.status().call().conflicting.toList().sorted()
+            val status = result.status.name
+            return mapOf(
+                "success" to (status !in setOf("FAILED", "CONFLICTING") && conflicts.isEmpty()),
+                "conflicts" to conflicts,
+                "action" to action,
+                "newHead" to git.repository.resolve(Constants.HEAD)?.name,
+                "cherryPickCommit" to git.repository.resolve(Constants.HEAD)?.name,
+                "status" to status,
+                "error" to if (status in setOf("FAILED", "CONFLICTING")) "Cherry-pick failed: $status" else null,
             )
         }
     }
@@ -611,6 +784,81 @@ class GitNetworkBridge(
                 "success" to true,
                 "url" to git.repository.config.getString("remote", remoteName, "url"),
             )
+        }
+    }
+
+    private fun handleListRepositoryRemotes(call: MethodCall): Map<String, Any?> {
+        val workDir = requireString(call, "workDir")
+        Git.open(File(workDir)).use { git ->
+            val remotes = git.remoteList().call()
+                .map { remote ->
+                    mapOf(
+                        "name" to remote.name,
+                        "url" to remote.urIs.firstOrNull()?.toString(),
+                    )
+                }
+                .sortedBy { it["name"]?.toString() ?: "" }
+            return mapOf(
+                "success" to true,
+                "remotes" to remotes,
+            )
+        }
+    }
+
+    private fun handleAddRepositoryRemote(call: MethodCall): Map<String, Any?> {
+        val workDir = requireString(call, "workDir")
+        val remoteName = requireString(call, "remoteName")
+        val url = requireString(call, "url")
+        Git.open(File(workDir)).use { git ->
+            git.remoteAdd()
+                .setName(remoteName)
+                .setUri(URIish(url))
+                .call()
+            return mapOf("success" to true)
+        }
+    }
+
+    private fun handleSetRepositoryRemoteUrl(call: MethodCall): Map<String, Any?> {
+        val workDir = requireString(call, "workDir")
+        val remoteName = requireString(call, "remoteName")
+        val url = requireString(call, "url")
+        Git.open(File(workDir)).use { git ->
+            git.remoteSetUrl()
+                .setRemoteName(remoteName)
+                .setRemoteUri(URIish(url))
+                .call()
+            return mapOf("success" to true)
+        }
+    }
+
+    private fun handleRemoveRepositoryRemote(call: MethodCall): Map<String, Any?> {
+        val workDir = requireString(call, "workDir")
+        val remoteName = requireString(call, "remoteName")
+        Git.open(File(workDir)).use { git ->
+            git.remoteRemove()
+                .setRemoteName(remoteName)
+                .call()
+            return mapOf("success" to true)
+        }
+    }
+
+    private fun handleRenameRepositoryRemote(call: MethodCall): Map<String, Any?> {
+        val workDir = requireString(call, "workDir")
+        val oldName = requireString(call, "oldName")
+        val newName = requireString(call, "newName")
+        Git.open(File(workDir)).use { git ->
+            val config = git.repository.config
+            val names = config.getNames("remote", oldName)
+            if (names.isEmpty()) {
+                throw IllegalArgumentException("Remote not found: $oldName")
+            }
+            for (name in names) {
+                val values = config.getStringList("remote", oldName, name)
+                config.setStringList("remote", newName, name, values.toList())
+            }
+            config.unsetSection("remote", oldName)
+            config.save()
+            return mapOf("success" to true)
         }
     }
 

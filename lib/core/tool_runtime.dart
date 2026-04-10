@@ -495,8 +495,8 @@ class ToolRegistry {
         id: 'git',
         description:
             'Run git operations on the workspace repository (pure-Dart, no CLI needed). '
-            'Set `command` to one of: status, add, commit, log, diff, branch, '
-            'checkout, merge, init, show, clone, fetch, pull, push, rebase. '
+            'Set `command` to one of: status, add, restore, reset, commit, log, diff, branch, '
+            'checkout, merge, cherry-pick, init, show, clone, fetch, pull, push, rebase, config, remote-url, remote. '
             'Each command accepts additional parameters — see per-command docs in the schema.',
         parameters: {
           'type': 'object',
@@ -504,13 +504,13 @@ class ToolRegistry {
             'command': {
               'type': 'string',
               'description':
-                  'Git sub-command: status | add | commit | log | diff | '
-                      'branch | checkout | merge | init | show | clone | fetch | pull | push | rebase',
+                  'Git sub-command: status | add | restore | reset | commit | log | diff | '
+                      'branch | checkout | merge | cherry-pick | init | show | clone | fetch | pull | push | rebase | config | remote-url | remote',
             },
             'paths': {
               'type': 'array',
               'items': {'type': 'string'},
-              'description': 'File paths (for add, diff)',
+              'description': 'File paths (for add, diff, restore, reset path mode)',
             },
             'all': {
               'type': 'boolean',
@@ -518,7 +518,7 @@ class ToolRegistry {
             },
             'message': {
               'type': 'string',
-              'description': 'Commit message (for commit)',
+              'description': 'Commit message (for commit, merge continue, cherry-pick continue)',
             },
             'amend': {
               'type': 'boolean',
@@ -545,7 +545,7 @@ class ToolRegistry {
             },
             'action': {
               'type': 'string',
-              'description': 'Sub-action: list | create | delete (for branch)',
+              'description': 'Sub-action: list | create | delete (for branch), get | set (for config), list | get-url | add | set-url | remove | rename (for remote), start | continue | abort (for merge), start | continue | abort (for cherry-pick), start | continue | skip | abort (for rebase)',
             },
             'name': {
               'type': 'string',
@@ -562,11 +562,15 @@ class ToolRegistry {
             },
             'target': {
               'type': 'string',
-              'description': 'Branch or commit to switch to (for checkout)',
+              'description': 'Branch or commit to switch to (for checkout) or reset to (for reset)',
             },
             'newBranch': {
               'type': 'boolean',
               'description': 'Create and switch to a new branch (for checkout)',
+            },
+            'mode': {
+              'type': 'string',
+              'description': 'Reset mode: soft | mixed | hard (for reset, default mixed)',
             },
             'branch': {
               'type': 'string',
@@ -576,11 +580,19 @@ class ToolRegistry {
             'remote': {
               'type': 'string',
               'description':
-                  'Remote name (for fetch/pull/push, default origin)',
+                  'Remote name (for fetch/pull/push/remote-url/remote, default origin)',
+            },
+            'oldName': {
+              'type': 'string',
+              'description': 'Existing remote name (for remote rename)',
+            },
+            'newName': {
+              'type': 'string',
+              'description': 'New remote name (for remote rename)',
             },
             'url': {
               'type': 'string',
-              'description': 'Remote URL or local repo path (for clone)',
+              'description': 'Remote URL or local repo path (for clone, remote add/set-url)',
             },
             'path': {
               'type': 'string',
@@ -599,7 +611,7 @@ class ToolRegistry {
             'ref': {
               'type': 'string',
               'description':
-                  'Commit or branch ref to show/rebase onto (for show/rebase, default HEAD)',
+                  'Commit or branch ref to show/rebase onto, or commit to cherry-pick (for show/rebase start/cherry-pick start, default HEAD)',
             },
             'authorName': {
               'type': 'string',
@@ -608,6 +620,18 @@ class ToolRegistry {
             'authorEmail': {
               'type': 'string',
               'description': 'Override author email (for commit)',
+            },
+            'section': {
+              'type': 'string',
+              'description': 'Config section name (for config)',
+            },
+            'key': {
+              'type': 'string',
+              'description': 'Config key name (for config)',
+            },
+            'value': {
+              'type': 'string',
+              'description': 'Config value to set (for config set)',
             },
           },
           'required': ['command'],

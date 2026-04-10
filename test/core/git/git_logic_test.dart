@@ -89,6 +89,51 @@ void main() {
       expect(await service.listBranches(), isNot(contains('feature')));
     });
 
+    test('restore clears deleted tracked files from working tree', () async {
+      final repoPath = '${tempDir.path}/repo';
+      final service = await GitService.init(repoPath);
+      backend.repo(repoPath).untracked.add('tracked.txt');
+      await service.add(['tracked.txt']);
+      await service.commit('base');
+
+      backend.repo(repoPath).unstagedDeleted.add('tracked.txt');
+      await service.restoreFile('tracked.txt');
+      final status = await service.status();
+
+      expect(status.isClean, isTrue);
+      expect(status.unstaged, isEmpty);
+    });
+
+    test('reset can unstage paths and hard reset to an older commit', () async {
+      final repoPath = '${tempDir.path}/repo';
+      final service = await GitService.init(repoPath);
+      final repo = backend.repo(repoPath);
+
+      repo.untracked.add('tracked.txt');
+      await service.add(['tracked.txt']);
+      final first = await service.commit('base');
+
+      repo.unstagedModified.add('tracked.txt');
+      await service.add(['tracked.txt']);
+      final stagedStatus = await service.status();
+      expect(stagedStatus.staged.single.path, 'tracked.txt');
+
+      await service.reset(paths: ['tracked.txt']);
+      final unstagedStatus = await service.status();
+      expect(unstagedStatus.staged, isEmpty);
+      expect(unstagedStatus.unstaged.single.path, 'tracked.txt');
+
+      await service.add(['tracked.txt']);
+      final second = await service.commit('next');
+      expect(second.hash, isNot(first.hash));
+
+      repo.unstagedModified.add('tracked.txt');
+      await service.reset(target: first.hash, mode: 'hard');
+      final resetStatus = await service.status();
+      expect(resetStatus.currentCommit, first.hash);
+      expect(resetStatus.isClean, isTrue);
+    });
+
     test('fetch, pull, and push route through native bridge', () async {
       final sourcePath = '${tempDir.path}/source';
       final clonePath = '${tempDir.path}/clone';
@@ -155,6 +200,65 @@ void main() {
       expect(rebase.newHead, isNotNull);
     });
 
+    test('rebase abort clears in-progress state', () async {
+      final repoPath = '${tempDir.path}/repo';
+      final service = await GitService.init(repoPath);
+      final repo = backend.repo(repoPath);
+      repo.untracked.add('tracked.txt');
+      await service.add(['tracked.txt']);
+      await service.commit('base');
+      await service.createBranch('feature');
+      repo.nextRebaseConflicts = ['tracked.txt'];
+
+      final failed = await service.rebase('feature');
+      expect(failed.success, isFalse);
+      expect(repo.rebaseInProgress, isTrue);
+
+      final aborted = await service.rebase(null, action: 'abort');
+      expect(aborted.success, isTrue);
+      expect(repo.rebaseInProgress, isFalse);
+    });
+
+    test('rebase continue resumes after conflicts are resolved', () async {
+      final repoPath = '${tempDir.path}/repo';
+      final service = await GitService.init(repoPath);
+      final repo = backend.repo(repoPath);
+      repo.untracked.add('tracked.txt');
+      await service.add(['tracked.txt']);
+      await service.commit('base');
+      await service.createBranch('feature');
+      repo.nextRebaseConflicts = ['tracked.txt'];
+
+      final failed = await service.rebase('feature');
+      expect(failed.success, isFalse);
+      expect(repo.rebaseInProgress, isTrue);
+
+      final continued = await service.rebase(null, action: 'continue');
+      expect(continued.success, isTrue);
+      expect(continued.newHead, isNotNull);
+      expect(repo.rebaseInProgress, isFalse);
+    });
+
+    test('rebase skip drops the current conflicted commit', () async {
+      final repoPath = '${tempDir.path}/repo';
+      final service = await GitService.init(repoPath);
+      final repo = backend.repo(repoPath);
+      repo.untracked.add('tracked.txt');
+      await service.add(['tracked.txt']);
+      await service.commit('base');
+      await service.createBranch('feature');
+      repo.nextRebaseConflicts = ['tracked.txt'];
+
+      final failed = await service.rebase('feature');
+      expect(failed.success, isFalse);
+      expect(repo.rebaseInProgress, isTrue);
+
+      final skipped = await service.rebase(null, action: 'skip');
+      expect(skipped.success, isTrue);
+      expect(skipped.newHead, isNotNull);
+      expect(repo.rebaseInProgress, isFalse);
+    });
+
     test('diff, config, and remote URL use the native bridge', () async {
       final repoPath = '${tempDir.path}/repo';
       final service = await GitService.init(repoPath);
@@ -172,6 +276,106 @@ void main() {
       expect(diff, contains('draft.txt'));
       expect(name, 'Magent');
       expect(remoteUrl, '${tempDir.path}/remote');
+    });
+
+    test('remote list/add/set/remove use the native bridge', () async {
+      final repoPath = '${tempDir.path}/repo';
+      final service = await GitService.init(repoPath);
+
+      await service.addRemote('origin', '${tempDir.path}/remote-a');
+      await service.addRemote('backup', '${tempDir.path}/remote-b');
+      final remotes = await service.listRemotes();
+      await service.setRemoteUrl('origin', '${tempDir.path}/remote-c');
+      final updatedOrigin = await service.getRemoteUrl('origin');
+      await service.removeRemote('backup');
+      final finalRemotes = await service.listRemotes();
+
+      expect(remotes.keys, containsAll(['origin', 'backup']));
+      expect(updatedOrigin, '${tempDir.path}/remote-c');
+      expect(finalRemotes.keys, isNot(contains('backup')));
+      expect(finalRemotes['origin'], '${tempDir.path}/remote-c');
+    });
+
+    test('remote rename and merge abort use the native bridge', () async {
+      final repoPath = '${tempDir.path}/repo';
+      final service = await GitService.init(repoPath);
+      final repo = backend.repo(repoPath);
+      repo.untracked.add('tracked.txt');
+      await service.add(['tracked.txt']);
+      await service.commit('base');
+      await service.createBranch('feature');
+
+      await service.addRemote('origin', '${tempDir.path}/remote-a');
+      await service.renameRemote('origin', 'upstream');
+      final remotes = await service.listRemotes();
+
+      repo.nextMergeConflicts = ['tracked.txt'];
+      final failedMerge = await service.merge('feature');
+      expect(failedMerge.success, isFalse);
+      expect(repo.mergeInProgress, isTrue);
+
+      final abortedMerge = await service.merge(null, action: 'abort');
+      expect(abortedMerge.success, isTrue);
+      expect(repo.mergeInProgress, isFalse);
+      expect(remotes.containsKey('origin'), isFalse);
+      expect(remotes['upstream'], '${tempDir.path}/remote-a');
+    });
+
+    test('merge continue creates a merge commit after conflicts are resolved', () async {
+      final repoPath = '${tempDir.path}/repo';
+      final service = await GitService.init(repoPath);
+      final repo = backend.repo(repoPath);
+      repo.untracked.add('tracked.txt');
+      await service.add(['tracked.txt']);
+      await service.commit('base');
+      await service.createBranch('feature');
+      repo.nextMergeConflicts = ['tracked.txt'];
+
+      final failed = await service.merge('feature');
+      expect(failed.success, isFalse);
+      expect(repo.mergeInProgress, isTrue);
+
+      final continued = await service.merge(null, action: 'continue');
+      expect(continued.success, isTrue);
+      expect(continued.mergeCommit, isNotNull);
+      expect(repo.mergeInProgress, isFalse);
+    });
+
+    test('cherry-pick start, continue, and abort use the native bridge', () async {
+      final repoPath = '${tempDir.path}/repo';
+      final service = await GitService.init(repoPath);
+      final repo = backend.repo(repoPath);
+      repo.untracked.add('tracked.txt');
+      await service.add(['tracked.txt']);
+      await service.commit('base');
+      await service.createBranch('feature');
+      await service.checkout('feature');
+      repo.unstagedModified.add('tracked.txt');
+      await service.add(['tracked.txt']);
+      final picked = await service.commit('picked');
+      await service.checkout('main');
+
+      final started = await service.cherryPick(picked.hash);
+      expect(started.success, isTrue);
+      expect(started.newHead, isNotNull);
+
+      repo.nextCherryPickConflicts = ['tracked.txt'];
+      final failed = await service.cherryPick(picked.hash);
+      expect(failed.success, isFalse);
+      expect(repo.cherryPickInProgress, isTrue);
+
+      final continued = await service.cherryPick(null, action: 'continue');
+      expect(continued.success, isTrue);
+      expect(repo.cherryPickInProgress, isFalse);
+
+      repo.nextCherryPickConflicts = ['tracked.txt'];
+      final failedAgain = await service.cherryPick(picked.hash);
+      expect(failedAgain.success, isFalse);
+      expect(repo.cherryPickInProgress, isTrue);
+
+      final aborted = await service.cherryPick(null, action: 'abort');
+      expect(aborted.success, isTrue);
+      expect(repo.cherryPickInProgress, isFalse);
     });
   });
 }
@@ -204,6 +408,8 @@ class _FakeNativeGitBackend {
           args['workDir'] as String? ?? '',
           args['path'] as String? ?? '',
         );
+      case 'resetRepository':
+        return _reset(args);
       case 'commitRepository':
         return _commit(args, amend: false);
       case 'amendCommitRepository':
@@ -238,12 +444,24 @@ class _FakeNativeGitBackend {
         return _push(args);
       case 'rebaseRepositoryTarget':
         return _rebase(args);
+      case 'cherryPickRepositoryCommit':
+        return _cherryPick(args);
       case 'getRepositoryConfigValue':
         return _getConfig(args);
       case 'setRepositoryConfigValue':
         return _setConfig(args);
       case 'getRepositoryRemoteUrl':
         return _getRemoteUrl(args);
+      case 'listRepositoryRemotes':
+        return _listRemotes(args);
+      case 'addRepositoryRemote':
+        return _addRemote(args);
+      case 'setRepositoryRemoteUrl':
+        return _setRemoteUrl(args);
+      case 'removeRepositoryRemote':
+        return _removeRemote(args);
+      case 'renameRepositoryRemote':
+        return _renameRemote(args);
       default:
         throw MissingPluginException('Unhandled ${call.method}');
     }
@@ -328,10 +546,70 @@ class _FakeNativeGitBackend {
 
   Map<String, dynamic> _unstage(String workDir, String path) {
     final repo = _requireRepo(workDir);
-    repo.stagedAdded.remove(path);
-    repo.stagedModified.remove(path);
-    repo.stagedDeleted.remove(path);
+    if (repo.stagedAdded.remove(path)) {
+      repo.untracked.add(path);
+    }
+    if (repo.stagedModified.remove(path)) {
+      repo.unstagedModified.add(path);
+    }
+    if (repo.stagedDeleted.remove(path)) {
+      repo.unstagedDeleted.add(path);
+    }
     return {'success': true};
+  }
+
+  Map<String, dynamic> _reset(Map<String, dynamic> args) {
+    final repo = _requireRepo(args['workDir'] as String? ?? '');
+    final paths = (args['paths'] as List? ?? const [])
+        .map((item) => item.toString().trim())
+        .where((item) => item.isNotEmpty)
+        .toList();
+    if (paths.isNotEmpty) {
+      for (final path in paths) {
+        _unstage(repo.workDir, path);
+      }
+      return {'success': true, 'head': repo.head};
+    }
+    final mode = (args['mode'] as String? ?? 'mixed').trim().toLowerCase();
+    final target = (args['target'] as String? ?? 'HEAD').trim();
+    final resolved = target == 'HEAD'
+        ? repo.head
+        : (repo.branches[target] ??
+            repo.remoteBranches[target] ??
+            (repo.commits.containsKey(target) ? target : null));
+    if (resolved == null) {
+      return {'success': false, 'error': 'Unknown ref: $target'};
+    }
+    repo.head = resolved;
+    repo.branches[repo.currentBranch] = resolved;
+    switch (mode) {
+      case 'soft':
+        break;
+      case 'mixed':
+        for (final path in repo.stagedAdded.toList()) {
+          repo.untracked.add(path);
+        }
+        for (final path in repo.stagedModified.toList()) {
+          repo.unstagedModified.add(path);
+        }
+        for (final path in repo.stagedDeleted.toList()) {
+          repo.unstagedDeleted.add(path);
+        }
+        repo.stagedAdded.clear();
+        repo.stagedModified.clear();
+        repo.stagedDeleted.clear();
+        break;
+      case 'hard':
+        repo.stagedAdded.clear();
+        repo.stagedModified.clear();
+        repo.stagedDeleted.clear();
+        repo.unstagedModified.clear();
+        repo.unstagedDeleted.clear();
+        break;
+      default:
+        return {'success': false, 'error': 'Unknown reset mode: $mode'};
+    }
+    return {'success': true, 'head': repo.head};
   }
 
   Map<String, dynamic> _commit(Map<String, dynamic> args, {required bool amend}) {
@@ -485,26 +763,74 @@ class _FakeNativeGitBackend {
 
   Map<String, dynamic> _merge(Map<String, dynamic> args) {
     final repo = _requireRepo(args['workDir'] as String? ?? '');
+    final action = (args['action'] as String? ?? 'start').trim().toLowerCase();
+    if (action == 'abort') {
+      repo.mergeInProgress = false;
+      repo.unstagedModified.clear();
+      repo.unstagedDeleted.clear();
+      repo.pendingMergeTarget = null;
+      return {
+        'success': true,
+        'conflicts': const [],
+        'mergeCommit': repo.head,
+        'action': action,
+      };
+    }
+    if (action == 'continue') {
+      if (!repo.mergeInProgress || repo.pendingMergeTarget == null || repo.head == null) {
+        return {
+          'success': true,
+          'conflicts': const [],
+          'mergeCommit': repo.head,
+          'action': action,
+        };
+      }
+      final current = repo.commits[repo.head!];
+      final hash = nextHash();
+      repo.commits[hash] = _FakeCommit(
+        hash: hash,
+        parents: [repo.head!, repo.pendingMergeTarget!],
+        message: args['message'] as String? ?? 'Merge commit',
+        authorName: current?.authorName ?? 'Unknown',
+        authorEmail: current?.authorEmail ?? 'unknown@example.com',
+      );
+      repo.head = hash;
+      repo.branches[repo.currentBranch] = hash;
+      repo.mergeInProgress = false;
+      repo.pendingMergeTarget = null;
+      return {
+        'success': true,
+        'conflicts': const [],
+        'mergeCommit': hash,
+        'action': action,
+      };
+    }
     final conflicts = repo.nextMergeConflicts;
     repo.nextMergeConflicts = const [];
+    final target = args['branch'] as String? ?? '';
+    final targetHead = repo.branches[target] ?? repo.remoteBranches[target];
     if (conflicts.isNotEmpty) {
+      repo.mergeInProgress = true;
+      repo.pendingMergeTarget = targetHead;
       return {
         'success': false,
         'conflicts': conflicts,
         'mergeCommit': null,
+        'action': action,
         'error': 'Merge failed',
       };
     }
-    final target = args['branch'] as String? ?? '';
-    final targetHead = repo.branches[target] ?? repo.remoteBranches[target];
     if (targetHead != null) {
       repo.head = targetHead;
       repo.branches[repo.currentBranch] = targetHead;
     }
+    repo.mergeInProgress = false;
+    repo.pendingMergeTarget = null;
     return {
       'success': true,
       'conflicts': const [],
       'mergeCommit': repo.head,
+      'action': action,
     };
   }
 
@@ -618,18 +944,82 @@ class _FakeNativeGitBackend {
 
   Map<String, dynamic> _rebase(Map<String, dynamic> args) {
     final repo = _requireRepo(args['workDir'] as String? ?? '');
+    final action = (args['action'] as String? ?? 'start').trim().toLowerCase();
+    if (action == 'abort') {
+      repo.rebaseInProgress = false;
+      repo.nextRebaseConflicts = const [];
+      repo.pendingRebaseTarget = null;
+      return {
+        'success': true,
+        'conflicts': const [],
+        'action': action,
+        'newHead': repo.head,
+      };
+    }
+    if (action == 'continue') {
+      if (!repo.rebaseInProgress) {
+        return {
+          'success': true,
+          'conflicts': const [],
+          'action': action,
+          'newHead': repo.head,
+        };
+      }
+      final targetHead = repo.pendingRebaseTarget;
+      if (targetHead == null || repo.head == null) {
+        repo.rebaseInProgress = false;
+        return {
+          'success': true,
+          'conflicts': const [],
+          'action': action,
+          'newHead': repo.head,
+        };
+      }
+      final current = repo.commits[repo.head!];
+      final rebasedHash = nextHash();
+      repo.commits[rebasedHash] = _FakeCommit(
+        hash: rebasedHash,
+        parents: [targetHead],
+        message: current?.message ?? 'rebased commit',
+        authorName: current?.authorName ?? 'Unknown',
+        authorEmail: current?.authorEmail ?? 'unknown@example.com',
+      );
+      repo.head = rebasedHash;
+      repo.branches[repo.currentBranch] = rebasedHash;
+      repo.rebaseInProgress = false;
+      repo.pendingRebaseTarget = null;
+      return {
+        'success': true,
+        'conflicts': const [],
+        'action': action,
+        'newHead': rebasedHash,
+      };
+    }
+    if (action == 'skip') {
+      repo.rebaseInProgress = false;
+      repo.pendingRebaseTarget = null;
+      return {
+        'success': true,
+        'conflicts': const [],
+        'action': action,
+        'newHead': repo.head,
+      };
+    }
     final conflicts = repo.nextRebaseConflicts;
     repo.nextRebaseConflicts = const [];
+    final target = args['targetRef'] as String? ?? '';
+    final targetHead = repo.branches[target] ?? repo.remoteBranches[target];
     if (conflicts.isNotEmpty) {
+      repo.rebaseInProgress = true;
+      repo.pendingRebaseTarget = targetHead;
       return {
         'success': false,
         'conflicts': conflicts,
+        'action': action,
         'newHead': repo.head,
         'error': 'Rebase failed',
       };
     }
-    final target = args['targetRef'] as String? ?? '';
-    final targetHead = repo.branches[target] ?? repo.remoteBranches[target];
     if (targetHead == null || repo.head == null) {
       return {'success': true, 'conflicts': const [], 'newHead': repo.head};
     }
@@ -644,10 +1034,95 @@ class _FakeNativeGitBackend {
     );
     repo.head = rebasedHash;
     repo.branches[repo.currentBranch] = rebasedHash;
+    repo.rebaseInProgress = false;
+    repo.pendingRebaseTarget = null;
     return {
       'success': true,
       'conflicts': const [],
+      'action': action,
       'newHead': rebasedHash,
+    };
+  }
+
+  Map<String, dynamic> _cherryPick(Map<String, dynamic> args) {
+    final repo = _requireRepo(args['workDir'] as String? ?? '');
+    final action = (args['action'] as String? ?? 'start').trim().toLowerCase();
+    if (action == 'abort') {
+      repo.cherryPickInProgress = false;
+      repo.pendingCherryPickRef = null;
+      return {
+        'success': true,
+        'conflicts': const [],
+        'action': action,
+        'newHead': repo.head,
+      };
+    }
+    if (action == 'continue') {
+      if (!repo.cherryPickInProgress || repo.head == null) {
+        return {
+          'success': true,
+          'conflicts': const [],
+          'action': action,
+          'newHead': repo.head,
+        };
+      }
+      final current = repo.commits[repo.head!];
+      final hash = nextHash();
+      repo.commits[hash] = _FakeCommit(
+        hash: hash,
+        parents: [repo.head!],
+        message: args['message'] as String? ?? 'Cherry-pick commit',
+        authorName: current?.authorName ?? 'Unknown',
+        authorEmail: current?.authorEmail ?? 'unknown@example.com',
+      );
+      repo.head = hash;
+      repo.branches[repo.currentBranch] = hash;
+      repo.cherryPickInProgress = false;
+      repo.pendingCherryPickRef = null;
+      return {
+        'success': true,
+        'conflicts': const [],
+        'action': action,
+        'newHead': hash,
+        'cherryPickCommit': hash,
+      };
+    }
+    final conflicts = repo.nextCherryPickConflicts;
+    repo.nextCherryPickConflicts = const [];
+    final ref = (args['ref'] as String? ?? '').trim();
+    final picked = repo.commits[ref];
+    if (picked == null || repo.head == null) {
+      return {'success': false, 'error': 'Unknown ref: $ref'};
+    }
+    if (conflicts.isNotEmpty) {
+      repo.cherryPickInProgress = true;
+      repo.pendingCherryPickRef = ref;
+      return {
+        'success': false,
+        'conflicts': conflicts,
+        'action': action,
+        'newHead': repo.head,
+        'error': 'Cherry-pick failed',
+      };
+    }
+    final hash = nextHash();
+    repo.commits[hash] = _FakeCommit(
+      hash: hash,
+      parents: [repo.head!],
+      message: picked.message,
+      authorName: picked.authorName,
+      authorEmail: picked.authorEmail,
+    );
+    repo.head = hash;
+    repo.branches[repo.currentBranch] = hash;
+    repo.cherryPickInProgress = false;
+    repo.pendingCherryPickRef = null;
+    return {
+      'success': true,
+      'conflicts': const [],
+      'action': action,
+      'newHead': hash,
+      'cherryPickCommit': hash,
     };
   }
 
@@ -678,6 +1153,75 @@ class _FakeNativeGitBackend {
     };
   }
 
+  Map<String, dynamic> _listRemotes(Map<String, dynamic> args) {
+    final repo = _requireRepo(args['workDir'] as String? ?? '');
+    final remotes = repo.remotes.entries
+        .map((entry) => {'name': entry.key, 'url': entry.value})
+        .toList()
+      ..sort((a, b) =>
+          (a['name'] as String).compareTo(b['name'] as String));
+    return {
+      'success': true,
+      'remotes': remotes,
+    };
+  }
+
+  Map<String, dynamic> _addRemote(Map<String, dynamic> args) {
+    final repo = _requireRepo(args['workDir'] as String? ?? '');
+    final remoteName = (args['remoteName'] as String? ?? '').trim();
+    final url = (args['url'] as String? ?? '').trim();
+    if (remoteName.isEmpty || url.isEmpty) {
+      return {'success': false, 'error': 'Missing remote name or url'};
+    }
+    repo.remotes[remoteName] = url;
+    return {'success': true};
+  }
+
+  Map<String, dynamic> _setRemoteUrl(Map<String, dynamic> args) {
+    final repo = _requireRepo(args['workDir'] as String? ?? '');
+    final remoteName = (args['remoteName'] as String? ?? '').trim();
+    final url = (args['url'] as String? ?? '').trim();
+    if (!repo.remotes.containsKey(remoteName)) {
+      return {'success': false, 'error': 'Remote not found: $remoteName'};
+    }
+    repo.remotes[remoteName] = url;
+    return {'success': true};
+  }
+
+  Map<String, dynamic> _removeRemote(Map<String, dynamic> args) {
+    final repo = _requireRepo(args['workDir'] as String? ?? '');
+    final remoteName = (args['remoteName'] as String? ?? '').trim();
+    repo.remotes.remove(remoteName);
+    repo.remoteBranches.removeWhere((key, _) => key.startsWith('refs/remotes/$remoteName/'));
+    return {'success': true};
+  }
+
+  Map<String, dynamic> _renameRemote(Map<String, dynamic> args) {
+    final repo = _requireRepo(args['workDir'] as String? ?? '');
+    final oldName = (args['oldName'] as String? ?? '').trim();
+    final newName = (args['newName'] as String? ?? '').trim();
+    final current = repo.remotes.remove(oldName);
+    if (current == null) {
+      return {'success': false, 'error': 'Remote not found: $oldName'};
+    }
+    repo.remotes[newName] = current;
+    final replacements = <String, String>{};
+    for (final entry in repo.remoteBranches.entries) {
+      final prefix = 'refs/remotes/$oldName/';
+      if (entry.key.startsWith(prefix)) {
+        replacements[entry.key] =
+            'refs/remotes/$newName/${entry.key.substring(prefix.length)}';
+      }
+    }
+    for (final entry in replacements.entries) {
+      final head = repo.remoteBranches.remove(entry.key);
+      if (head != null) {
+        repo.remoteBranches[entry.value] = head;
+      }
+    }
+    return {'success': true};
+  }
+
   _FakeRepo _requireRepo(String workDir) {
     final repo = _repos[workDir];
     if (repo == null) {
@@ -706,6 +1250,13 @@ class _FakeRepo {
   final Set<String> stagedDeleted = <String>{};
   List<String> nextMergeConflicts = const [];
   List<String> nextRebaseConflicts = const [];
+  List<String> nextCherryPickConflicts = const [];
+  bool mergeInProgress = false;
+  bool rebaseInProgress = false;
+  bool cherryPickInProgress = false;
+  String? pendingMergeTarget;
+  String? pendingRebaseTarget;
+  String? pendingCherryPickRef;
 
   bool get isClean =>
       untracked.isEmpty &&

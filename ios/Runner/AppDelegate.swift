@@ -762,6 +762,8 @@ private final class IOSGitNetworkBridge {
           value = try self.checkoutRepositoryNewBranch(arguments: arguments)
         case "restoreRepositoryFile":
           value = try self.restoreRepositoryFile(arguments: arguments)
+        case "resetRepository":
+          value = try self.resetRepository(arguments: arguments)
         case "mergeRepositoryBranch":
           value = try self.mergeRepositoryBranch(arguments: arguments)
         case "fetchRepository":
@@ -772,12 +774,24 @@ private final class IOSGitNetworkBridge {
           value = try self.pushRepository(arguments: arguments)
         case "rebaseRepositoryTarget":
           value = try self.rebaseRepositoryTarget(arguments: arguments)
+        case "cherryPickRepositoryCommit":
+          value = try self.cherryPickRepositoryCommit(arguments: arguments)
         case "getRepositoryConfigValue":
           value = try self.getRepositoryConfigValue(arguments: arguments)
         case "setRepositoryConfigValue":
           value = try self.setRepositoryConfigValue(arguments: arguments)
         case "getRepositoryRemoteUrl":
           value = try self.getRepositoryRemoteUrl(arguments: arguments)
+        case "listRepositoryRemotes":
+          value = try self.listRepositoryRemotes(arguments: arguments)
+        case "addRepositoryRemote":
+          value = try self.addRepositoryRemote(arguments: arguments)
+        case "setRepositoryRemoteUrl":
+          value = try self.setRepositoryRemoteUrl(arguments: arguments)
+        case "removeRepositoryRemote":
+          value = try self.removeRepositoryRemote(arguments: arguments)
+        case "renameRepositoryRemote":
+          value = try self.renameRepositoryRemote(arguments: arguments)
         default:
           DispatchQueue.main.async { result(FlutterMethodNotImplemented) }
           return
@@ -1267,15 +1281,86 @@ private final class IOSGitNetworkBridge {
     }
   }
 
+  private func resetRepository(arguments: [String: Any]) throws -> [String: Any?] {
+    let workDir = try requiredString("workDir", in: arguments)
+    let target = ((arguments["target"] as? String)?.trimmingCharacters(in: .whitespacesAndNewlines)).flatMap { $0.isEmpty ? nil : $0 }
+    let mode = ((arguments["mode"] as? String)?.trimmingCharacters(in: .whitespacesAndNewlines)).flatMap { $0.isEmpty ? nil : $0 }?.lowercased() ?? "mixed"
+    let paths = (arguments["paths"] as? [String] ?? []).map {
+      $0.trimmingCharacters(in: .whitespacesAndNewlines)
+    }.filter { !$0.isEmpty }
+    return try withRepository(path: workDir) { repository in
+      if !paths.isEmpty {
+        try withGitPathspecs(paths) { pathspec in
+          try check(git_reset_default(repository, nil, pathspec), "Reset failed")
+        }
+      } else {
+        let targetSpec = target ?? "HEAD"
+        guard let oid = try resolveObjectId(repository: repository, spec: targetSpec) else {
+          throw GitBridgeError("Unknown ref: \(targetSpec)")
+        }
+        var object: OpaquePointer?
+        defer {
+          if let object {
+            git_object_free(object)
+          }
+        }
+        var mutableOid = oid
+        try check(git_object_lookup(&object, repository, &mutableOid, GIT_OBJECT_ANY), "Object not found: \(oidDescription(oid))")
+        let resetMode: git_reset_t
+        switch mode {
+        case "soft":
+          resetMode = GIT_RESET_SOFT
+        case "mixed":
+          resetMode = GIT_RESET_MIXED
+        case "hard":
+          resetMode = GIT_RESET_HARD
+        default:
+          throw GitBridgeError("Unknown reset mode: \(mode)")
+        }
+        try check(git_reset(repository, object, resetMode, nil), "Reset failed")
+      }
+      return [
+        "success": true,
+        "head": try headOidString(repository: repository),
+      ]
+    }
+  }
+
   private func mergeRepositoryBranch(arguments: [String: Any]) throws -> [String: Any?] {
     let workDir = try requiredString("workDir", in: arguments)
-    let branch = try requiredString("branch", in: arguments)
+    let action = ((arguments["action"] as? String)?.trimmingCharacters(in: .whitespacesAndNewlines)).flatMap { $0.isEmpty ? nil : $0 }?.lowercased() ?? "start"
+    let branch = ((arguments["branch"] as? String)?.trimmingCharacters(in: .whitespacesAndNewlines)).flatMap { $0.isEmpty ? nil : $0 }
+    let message = ((arguments["message"] as? String)?.trimmingCharacters(in: .whitespacesAndNewlines)).flatMap { $0.isEmpty ? nil : $0 } ?? "Merge commit"
     return try withRepository(path: workDir) { repository in
+      if action == "abort" {
+        try abortMerge(repository: repository)
+        return [
+          "success": true,
+          "conflicts": [],
+          "mergeCommit": try headOidString(repository: repository),
+          "action": action,
+          "error": nil,
+        ]
+      }
+      if action == "continue" {
+        let commit = try continueMerge(repository: repository, message: message)
+        return [
+          "success": true,
+          "conflicts": [],
+          "mergeCommit": commit,
+          "action": action,
+          "error": nil,
+        ]
+      }
+      guard let branch else {
+        throw GitBridgeError("Missing required parameter: branch")
+      }
       let result = try performMerge(repository: repository, targetRef: branch, targetLabel: branch)
       return [
         "success": result.success,
         "conflicts": result.conflicts,
         "mergeCommit": result.mergeCommit,
+        "action": action,
         "error": result.success ? nil : "Merge failed",
       ]
     }
@@ -1352,14 +1437,58 @@ private final class IOSGitNetworkBridge {
 
   private func rebaseRepositoryTarget(arguments: [String: Any]) throws -> [String: Any?] {
     let workDir = try requiredString("workDir", in: arguments)
-    let targetRef = try requiredString("targetRef", in: arguments)
+    let action = ((arguments["action"] as? String)?.trimmingCharacters(in: .whitespacesAndNewlines)).flatMap { $0.isEmpty ? nil : $0 }?.lowercased() ?? "start"
+    let targetRef = ((arguments["targetRef"] as? String)?.trimmingCharacters(in: .whitespacesAndNewlines)).flatMap { $0.isEmpty ? nil : $0 }
     return try withRepository(path: workDir) { repository in
-      try performRebase(repository: repository, targetRef: targetRef)
+      switch action {
+      case "start":
+        guard let targetRef else {
+          throw GitBridgeError("Missing required parameter: targetRef")
+        }
+        try performRebase(repository: repository, targetRef: targetRef)
+      case "abort":
+        try abortRebase(repository: repository)
+      case "continue":
+        try continueRebase(repository: repository)
+      case "skip":
+        try skipRebase(repository: repository)
+      default:
+        throw GitBridgeError("Unknown rebase action: \(action)")
+      }
       return [
         "success": true,
         "conflicts": [],
+        "action": action,
         "newHead": try headOidString(repository: repository),
       ]
+    }
+  }
+
+  private func cherryPickRepositoryCommit(arguments: [String: Any]) throws -> [String: Any?] {
+    let workDir = try requiredString("workDir", in: arguments)
+    let action = ((arguments["action"] as? String)?.trimmingCharacters(in: .whitespacesAndNewlines)).flatMap { $0.isEmpty ? nil : $0 }?.lowercased() ?? "start"
+    let ref = ((arguments["ref"] as? String)?.trimmingCharacters(in: .whitespacesAndNewlines)).flatMap { $0.isEmpty ? nil : $0 }
+    let message = ((arguments["message"] as? String)?.trimmingCharacters(in: .whitespacesAndNewlines)).flatMap { $0.isEmpty ? nil : $0 } ?? "Cherry-pick commit"
+    return try withRepository(path: workDir) { repository in
+      switch action {
+      case "start":
+        guard let ref else {
+          throw GitBridgeError("Missing required parameter: ref")
+        }
+        return try startCherryPick(repository: repository, ref: ref, message: message)
+      case "continue":
+        return try continueCherryPick(repository: repository, message: message)
+      case "abort":
+        try abortCherryPick(repository: repository)
+        return [
+          "success": true,
+          "conflicts": [],
+          "action": action,
+          "newHead": try headOidString(repository: repository),
+        ]
+      default:
+        throw GitBridgeError("Unknown cherry-pick action: \(action)")
+      }
     }
   }
 
@@ -1394,6 +1523,97 @@ private final class IOSGitNetworkBridge {
         "success": true,
         "url": try configValue(repository: repository, section: "remote.\(remoteName)", key: "url"),
       ]
+    }
+  }
+
+  private func listRepositoryRemotes(arguments: [String: Any]) throws -> [String: Any?] {
+    let workDir = try requiredString("workDir", in: arguments)
+    return try withRepository(path: workDir) { repository in
+      var names = git_strarray()
+      defer {
+        git_strarray_dispose(&names)
+      }
+      try check(git_remote_list(&names, repository), "Failed to list remotes")
+      var remotes: [[String: Any?]] = []
+      remotes.reserveCapacity(Int(names.count))
+      for index in 0..<Int(names.count) {
+        guard let nameCString = names.strings?[index] else {
+          continue
+        }
+        let name = String(cString: nameCString)
+        remotes.append([
+          "name": name,
+          "url": try configValue(repository: repository, section: "remote.\(name)", key: "url"),
+        ])
+      }
+      remotes.sort { ($0["name"] as? String ?? "") < ($1["name"] as? String ?? "") }
+      return [
+        "success": true,
+        "remotes": remotes,
+      ]
+    }
+  }
+
+  private func addRepositoryRemote(arguments: [String: Any]) throws -> [String: Any?] {
+    let workDir = try requiredString("workDir", in: arguments)
+    let remoteName = try requiredString("remoteName", in: arguments)
+    let url = try requiredString("url", in: arguments)
+    return try withRepository(path: workDir) { repository in
+      var remote: OpaquePointer?
+      defer {
+        if let remote {
+          git_remote_free(remote)
+        }
+      }
+      try withGitCString(remoteName) { remoteNameCString in
+        try withGitCString(url) { urlCString in
+          try check(git_remote_create(&remote, repository, remoteNameCString, urlCString), "Failed to add remote")
+        }
+      }
+      return ["success": true]
+    }
+  }
+
+  private func setRepositoryRemoteUrl(arguments: [String: Any]) throws -> [String: Any?] {
+    let workDir = try requiredString("workDir", in: arguments)
+    let remoteName = try requiredString("remoteName", in: arguments)
+    let url = try requiredString("url", in: arguments)
+    return try withRepository(path: workDir) { repository in
+      try withGitCString(remoteName) { remoteNameCString in
+        try withGitCString(url) { urlCString in
+          try check(git_remote_set_url(repository, remoteNameCString, urlCString), "Failed to update remote URL")
+        }
+      }
+      return ["success": true]
+    }
+  }
+
+  private func removeRepositoryRemote(arguments: [String: Any]) throws -> [String: Any?] {
+    let workDir = try requiredString("workDir", in: arguments)
+    let remoteName = try requiredString("remoteName", in: arguments)
+    return try withRepository(path: workDir) { repository in
+      try withGitCString(remoteName) { remoteNameCString in
+        try check(git_remote_delete(repository, remoteNameCString), "Failed to remove remote")
+      }
+      return ["success": true]
+    }
+  }
+
+  private func renameRepositoryRemote(arguments: [String: Any]) throws -> [String: Any?] {
+    let workDir = try requiredString("workDir", in: arguments)
+    let oldName = try requiredString("oldName", in: arguments)
+    let newName = try requiredString("newName", in: arguments)
+    return try withRepository(path: workDir) { repository in
+      var problems = git_strarray()
+      defer {
+        git_strarray_dispose(&problems)
+      }
+      try withGitCString(oldName) { oldNameCString in
+        try withGitCString(newName) { newNameCString in
+          try check(git_remote_rename(&problems, repository, oldNameCString, newNameCString), "Failed to rename remote")
+        }
+      }
+      return ["success": true]
     }
   }
 
@@ -1615,11 +1835,14 @@ private final class IOSGitNetworkBridge {
 
   private func performMerge(repository: OpaquePointer?, targetRef: String, targetLabel: String) throws -> MergeOutcome {
     var annotated: OpaquePointer?
+    var shouldCleanupState = false
     defer {
       if let annotated {
         git_annotated_commit_free(annotated)
       }
-      git_repository_state_cleanup(repository)
+      if shouldCleanupState {
+        git_repository_state_cleanup(repository)
+      }
     }
     try withGitCString(targetRef) { targetRefCString in
       try check(git_annotated_commit_from_revspec(&annotated, repository, targetRefCString), "Reference not found: \(targetRef)")
@@ -1670,6 +1893,7 @@ private final class IOSGitNetworkBridge {
       signature: signature,
       extraParents: [mergeHead]
     )
+    shouldCleanupState = true
     return MergeOutcome(success: true, conflicts: [], mergeCommit: oidDescription(oid))
   }
 
@@ -1678,12 +1902,15 @@ private final class IOSGitNetworkBridge {
     var branchAnnotated: OpaquePointer?
     var upstreamAnnotated: OpaquePointer?
     var rebase: OpaquePointer?
+    var shouldCleanupState = false
     defer {
       if let headRef { git_reference_free(headRef) }
       if let branchAnnotated { git_annotated_commit_free(branchAnnotated) }
       if let upstreamAnnotated { git_annotated_commit_free(upstreamAnnotated) }
       if let rebase { git_rebase_free(rebase) }
-      git_repository_state_cleanup(repository)
+      if shouldCleanupState {
+        git_repository_state_cleanup(repository)
+      }
     }
     try check(git_repository_head(&headRef, repository), "Cannot rebase in detached HEAD state")
     try check(git_annotated_commit_from_ref(&branchAnnotated, repository, headRef), "Rebase failed")
@@ -1725,6 +1952,272 @@ private final class IOSGitNetworkBridge {
       try check(commitCode, "Rebase failed")
     }
     try check(git_rebase_finish(rebase, nil), "Rebase failed")
+    shouldCleanupState = true
+  }
+
+  private func abortMerge(repository: OpaquePointer?) throws {
+    var checkoutOptions = git_checkout_options()
+    try check(git_checkout_init_options(&checkoutOptions, UInt32(GIT_CHECKOUT_OPTIONS_VERSION)), "Failed to initialize checkout options")
+    checkoutOptions.checkout_strategy = UInt32(GIT_CHECKOUT_FORCE.rawValue)
+    try check(git_checkout_head(repository, &checkoutOptions), "Merge abort failed")
+    git_repository_state_cleanup(repository)
+  }
+
+  private func continueMerge(repository: OpaquePointer?, message: String) throws -> String {
+    var index: OpaquePointer?
+    var signature: UnsafeMutablePointer<git_signature>?
+    defer {
+      if let index {
+        git_index_free(index)
+      }
+      if let signature {
+        git_signature_free(signature)
+      }
+      git_repository_state_cleanup(repository)
+    }
+    try check(git_repository_index(&index, repository), "Merge continue failed")
+    if git_index_has_conflicts(index) != 0 {
+      throw GitBridgeError("Merge failed: CONFLICTING")
+    }
+    try signatureNow(repository: repository, name: nil, email: nil, output: &signature)
+    let mergeHead = try mergeHeadOid(repository: repository)
+    let oid = try createCommitFromIndex(
+      repository: repository,
+      message: message,
+      signature: signature,
+      extraParents: [mergeHead]
+    )
+    return oidDescription(oid)
+  }
+
+  private func abortRebase(repository: OpaquePointer?) throws {
+    var rebase: OpaquePointer?
+    defer {
+      if let rebase {
+        git_rebase_free(rebase)
+      }
+      git_repository_state_cleanup(repository)
+    }
+    var options = git_rebase_options()
+    try check(git_rebase_init_options(&options, UInt32(GIT_REBASE_OPTIONS_VERSION)), "Failed to initialize rebase options")
+    try check(git_rebase_open(&rebase, repository, &options), "No rebase in progress")
+    try check(git_rebase_abort(rebase), "Rebase abort failed")
+  }
+
+  private func continueRebase(repository: OpaquePointer?) throws {
+    var rebase: OpaquePointer?
+    var shouldCleanupState = false
+    defer {
+      if let rebase {
+        git_rebase_free(rebase)
+      }
+      if shouldCleanupState {
+        git_repository_state_cleanup(repository)
+      }
+    }
+    var options = git_rebase_options()
+    try check(git_rebase_init_options(&options, UInt32(GIT_REBASE_OPTIONS_VERSION)), "Failed to initialize rebase options")
+    try check(git_rebase_open(&rebase, repository, &options), "No rebase in progress")
+
+    var index: OpaquePointer?
+    defer {
+      if let index {
+        git_index_free(index)
+      }
+    }
+    try check(git_repository_index(&index, repository), "Rebase failed")
+    if git_index_has_conflicts(index) != 0 {
+      throw GitBridgeError("Rebase failed: conflicts")
+    }
+
+    var signature: UnsafeMutablePointer<git_signature>?
+    defer {
+      if let signature {
+        git_signature_free(signature)
+      }
+    }
+    try signatureNow(repository: repository, name: nil, email: nil, output: &signature)
+
+    var oid = git_oid()
+    let currentCommit = git_rebase_commit(&oid, rebase, nil, signature, nil, nil)
+    if currentCommit != GIT_EAPPLIED.rawValue {
+      try check(currentCommit, "Rebase failed")
+    }
+
+    var operation: UnsafeMutablePointer<git_rebase_operation>?
+    while true {
+      let nextCode = git_rebase_next(&operation, rebase)
+      if nextCode == GIT_ITEROVER.rawValue {
+        break
+      }
+      try check(nextCode, "Rebase failed")
+      try check(git_repository_index(&index, repository), "Rebase failed")
+      if git_index_has_conflicts(index) != 0 {
+        throw GitBridgeError("Rebase failed: conflicts")
+      }
+      var nextOid = git_oid()
+      let commitCode = git_rebase_commit(&nextOid, rebase, nil, signature, nil, nil)
+      if commitCode == GIT_EAPPLIED.rawValue {
+        continue
+      }
+      try check(commitCode, "Rebase failed")
+    }
+    try check(git_rebase_finish(rebase, nil), "Rebase failed")
+    shouldCleanupState = true
+  }
+
+  private func skipRebase(repository: OpaquePointer?) throws {
+    var rebase: OpaquePointer?
+    var shouldCleanupState = false
+    defer {
+      if let rebase {
+        git_rebase_free(rebase)
+      }
+      if shouldCleanupState {
+        git_repository_state_cleanup(repository)
+      }
+    }
+    var options = git_rebase_options()
+    try check(git_rebase_init_options(&options, UInt32(GIT_REBASE_OPTIONS_VERSION)), "Failed to initialize rebase options")
+    try check(git_rebase_open(&rebase, repository, &options), "No rebase in progress")
+
+    var checkoutOptions = git_checkout_options()
+    try check(git_checkout_init_options(&checkoutOptions, UInt32(GIT_CHECKOUT_OPTIONS_VERSION)), "Failed to initialize checkout options")
+    checkoutOptions.checkout_strategy = UInt32(GIT_CHECKOUT_FORCE.rawValue)
+    try check(git_checkout_head(repository, &checkoutOptions), "Rebase skip failed")
+
+    var operation: UnsafeMutablePointer<git_rebase_operation>?
+    while true {
+      let nextCode = git_rebase_next(&operation, rebase)
+      if nextCode == GIT_ITEROVER.rawValue {
+        break
+      }
+      try check(nextCode, "Rebase failed")
+      var index: OpaquePointer?
+      defer {
+        if let index {
+          git_index_free(index)
+        }
+      }
+      try check(git_repository_index(&index, repository), "Rebase failed")
+      if git_index_has_conflicts(index) != 0 {
+        throw GitBridgeError("Rebase failed: conflicts")
+      }
+      var signature: UnsafeMutablePointer<git_signature>?
+      defer {
+        if let signature {
+          git_signature_free(signature)
+        }
+      }
+      try signatureNow(repository: repository, name: nil, email: nil, output: &signature)
+      var oid = git_oid()
+      let commitCode = git_rebase_commit(&oid, rebase, nil, signature, nil, nil)
+      if commitCode == GIT_EAPPLIED.rawValue {
+        continue
+      }
+      try check(commitCode, "Rebase failed")
+    }
+    try check(git_rebase_finish(rebase, nil), "Rebase failed")
+    shouldCleanupState = true
+  }
+
+  private func startCherryPick(repository: OpaquePointer?, ref: String, message: String) throws -> [String: Any?] {
+    guard let oid = try resolveObjectId(repository: repository, spec: ref) else {
+      throw GitBridgeError("Unknown ref: \(ref)")
+    }
+    var commit: OpaquePointer?
+    var index: OpaquePointer?
+    var shouldCleanupState = false
+    defer {
+      if let commit { git_commit_free(commit) }
+      if let index { git_index_free(index) }
+      if shouldCleanupState {
+        git_repository_state_cleanup(repository)
+      }
+    }
+    var mutableOid = oid
+    try check(git_commit_lookup(&commit, repository, &mutableOid), "Object not found: \(oidDescription(oid))")
+    var options = git_cherrypick_options()
+    try check(git_cherrypick_options_init(&options, UInt32(GIT_CHERRYPICK_OPTIONS_VERSION)), "Failed to initialize cherry-pick options")
+    options.checkout_opts.checkout_strategy = UInt32(GIT_CHECKOUT_SAFE.rawValue)
+    try check(git_cherrypick(repository, commit, &options), "Cherry-pick failed")
+    try check(git_repository_index(&index, repository), "Cherry-pick failed")
+    if git_index_has_conflicts(index) != 0 {
+      return [
+        "success": false,
+        "conflicts": try conflictPaths(index: index),
+        "action": "start",
+        "newHead": try headOidString(repository: repository),
+        "error": "Cherry-pick failed: CONFLICTING",
+      ]
+    }
+    var signature: UnsafeMutablePointer<git_signature>?
+    defer {
+      if let signature { git_signature_free(signature) }
+    }
+    try signatureNow(repository: repository, name: nil, email: nil, output: &signature)
+    let oid = try createCommitFromIndex(
+      repository: repository,
+      message: message,
+      signature: signature,
+      extraParents: []
+    )
+    shouldCleanupState = true
+    return [
+      "success": true,
+      "conflicts": [],
+      "action": "start",
+      "newHead": oidDescription(oid),
+      "cherryPickCommit": oidDescription(oid),
+    ]
+  }
+
+  private func continueCherryPick(repository: OpaquePointer?, message: String) throws -> [String: Any?] {
+    _ = try cherryPickHeadOid(repository: repository)
+    var index: OpaquePointer?
+    var signature: UnsafeMutablePointer<git_signature>?
+    var shouldCleanupState = false
+    defer {
+      if let index { git_index_free(index) }
+      if let signature { git_signature_free(signature) }
+      if shouldCleanupState {
+        git_repository_state_cleanup(repository)
+      }
+    }
+    try check(git_repository_index(&index, repository), "Cherry-pick failed")
+    if git_index_has_conflicts(index) != 0 {
+      return [
+        "success": false,
+        "conflicts": try conflictPaths(index: index),
+        "action": "continue",
+        "newHead": try headOidString(repository: repository),
+        "error": "Cherry-pick failed: CONFLICTING",
+      ]
+    }
+    try signatureNow(repository: repository, name: nil, email: nil, output: &signature)
+    let oid = try createCommitFromIndex(
+      repository: repository,
+      message: message,
+      signature: signature,
+      extraParents: []
+    )
+    shouldCleanupState = true
+    return [
+      "success": true,
+      "conflicts": [],
+      "action": "continue",
+      "newHead": oidDescription(oid),
+      "cherryPickCommit": oidDescription(oid),
+    ]
+  }
+
+  private func abortCherryPick(repository: OpaquePointer?) throws {
+    _ = try cherryPickHeadOid(repository: repository)
+    var checkoutOptions = git_checkout_options()
+    try check(git_checkout_init_options(&checkoutOptions, UInt32(GIT_CHECKOUT_OPTIONS_VERSION)), "Failed to initialize checkout options")
+    checkoutOptions.checkout_strategy = UInt32(GIT_CHECKOUT_FORCE.rawValue)
+    try check(git_checkout_head(repository, &checkoutOptions), "Cherry-pick abort failed")
+    git_repository_state_cleanup(repository)
   }
 
   private func listBranches(repository: OpaquePointer?) throws -> [String] {
@@ -2188,6 +2681,22 @@ private final class IOSGitNetworkBridge {
     return oid
   }
 
+  private func cherryPickHeadOid(repository: OpaquePointer?) throws -> git_oid {
+    guard let repoPath = git_repository_path(repository) else {
+      throw GitBridgeError("No cherry-pick in progress")
+    }
+    let headURL = URL(fileURLWithPath: String(cString: repoPath)).appendingPathComponent("CHERRY_PICK_HEAD")
+    let value = try String(contentsOf: headURL, encoding: .utf8)
+      .trimmingCharacters(in: .whitespacesAndNewlines)
+    if value.isEmpty {
+      throw GitBridgeError("No cherry-pick in progress")
+    }
+    var oid = git_oid()
+    let result = value.withCString { git_oid_fromstr(&oid, $0) }
+    try check(result, "No cherry-pick in progress")
+    return oid
+  }
+
   private func signatureNow(repository: OpaquePointer?, name: String?, email: String?, output: inout UnsafeMutablePointer<git_signature>?) throws {
     if let name, let email {
       let result = try withGitCString(name) { nameCString in
@@ -2349,6 +2858,18 @@ private func withGitPathspec<T>(_ path: String, _ body: (UnsafePointer<git_strar
   var entries: [UnsafeMutablePointer<CChar>?] = [duplicate]
   return try entries.withUnsafeMutableBufferPointer { buffer in
     var array = git_strarray(strings: buffer.baseAddress, count: 1)
+    return try body(&array)
+  }
+}
+
+private func withGitPathspecs<T>(_ paths: [String], _ body: (UnsafePointer<git_strarray>) throws -> T) rethrows -> T {
+  let duplicates = paths.map(strdup)
+  defer {
+    duplicates.forEach { free($0) }
+  }
+  var entries = duplicates
+  return try entries.withUnsafeMutableBufferPointer { buffer in
+    var array = git_strarray(strings: buffer.baseAddress, count: entries.count)
     return try body(&array)
   }
 }

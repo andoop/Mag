@@ -160,6 +160,20 @@ class RebaseResult {
   bool get hasConflicts => conflicts.isNotEmpty;
 }
 
+class CherryPickResult {
+  const CherryPickResult({
+    required this.success,
+    required this.conflicts,
+    this.newHead,
+  });
+
+  final bool success;
+  final List<String> conflicts;
+  final String? newHead;
+
+  bool get hasConflicts => conflicts.isNotEmpty;
+}
+
 class PullResult {
   const PullResult({
     required this.success,
@@ -398,8 +412,44 @@ class GitService {
     _throwIfBridgeFailed(result, fallback: 'Restore failed.');
   }
 
-  Future<MergeResult> merge(String branch) async {
-    final result = await _bridge.merge(workDir: workDir, branch: branch);
+  Future<void> reset({
+    String? target,
+    String mode = 'mixed',
+    List<String>? paths,
+  }) async {
+    final normalizedMode = mode.trim().toLowerCase();
+    if (!const {'soft', 'mixed', 'hard'}.contains(normalizedMode)) {
+      throw ArgumentError.value(mode, 'mode', 'Must be one of: soft, mixed, hard');
+    }
+    final normalizedPaths = paths
+        ?.map((item) => item.trim())
+        .where((item) => item.isNotEmpty)
+        .toList();
+    final normalizedTarget = target?.trim();
+    final result = await _bridge.reset(
+      workDir: workDir,
+      target: normalizedTarget != null && normalizedTarget.isNotEmpty
+          ? normalizedTarget
+          : null,
+      mode: normalizedMode,
+      paths: normalizedPaths == null || normalizedPaths.isEmpty
+          ? null
+          : normalizedPaths,
+    );
+    _throwIfBridgeFailed(result, fallback: 'Reset failed.');
+  }
+
+  Future<MergeResult> merge(
+    String? branch, {
+    String action = 'start',
+    String? message,
+  }) async {
+    final result = await _bridge.merge(
+      workDir: workDir,
+      branch: branch,
+      action: action,
+      message: message,
+    );
     final conflicts = ((result['conflicts'] as List?) ?? const [])
         .map((item) => item.toString())
         .toList();
@@ -535,9 +585,12 @@ class GitService {
     }
   }
 
-  Future<RebaseResult> rebase(String targetRef) async {
-    final result =
-        await _bridge.rebase(workDir: workDir, targetRef: targetRef);
+  Future<RebaseResult> rebase(String? targetRef, {String action = 'start'}) async {
+    final result = await _bridge.rebase(
+      workDir: workDir,
+      targetRef: targetRef,
+      action: action,
+    );
     final conflicts = ((result['conflicts'] as List?) ?? const [])
         .map((item) => item.toString())
         .toList();
@@ -585,6 +638,79 @@ class GitService {
     );
     _throwIfBridgeFailed(result, fallback: 'Remote lookup failed.');
     return result['url'] as String?;
+  }
+
+  Future<Map<String, String?>> listRemotes() async {
+    final result = await _bridge.listRemotes(workDir: workDir);
+    _throwIfBridgeFailed(result, fallback: 'Remote list failed.');
+    final remotes = (result['remotes'] as List? ?? const [])
+        .map((item) => Map<String, dynamic>.from(item as Map))
+        .toList();
+    return {
+      for (final remote in remotes)
+        (remote['name'] as String? ?? ''): remote['url'] as String?,
+    }..remove('');
+  }
+
+  Future<void> addRemote(String remoteName, String url) async {
+    final result = await _bridge.addRemote(
+      workDir: workDir,
+      remoteName: remoteName,
+      url: url,
+    );
+    _throwIfBridgeFailed(result, fallback: 'Add remote failed.');
+  }
+
+  Future<void> setRemoteUrl(String remoteName, String url) async {
+    final result = await _bridge.setRemoteUrl(
+      workDir: workDir,
+      remoteName: remoteName,
+      url: url,
+    );
+    _throwIfBridgeFailed(result, fallback: 'Set remote URL failed.');
+  }
+
+  Future<void> removeRemote(String remoteName) async {
+    final result = await _bridge.removeRemote(
+      workDir: workDir,
+      remoteName: remoteName,
+    );
+    _throwIfBridgeFailed(result, fallback: 'Remove remote failed.');
+  }
+
+  Future<void> renameRemote(String oldName, String newName) async {
+    final result = await _bridge.renameRemote(
+      workDir: workDir,
+      oldName: oldName,
+      newName: newName,
+    );
+    _throwIfBridgeFailed(result, fallback: 'Rename remote failed.');
+  }
+
+  Future<CherryPickResult> cherryPick(
+    String? ref, {
+    String action = 'start',
+    String? message,
+  }) async {
+    final result = await _bridge.cherryPick(
+      workDir: workDir,
+      ref: ref,
+      action: action,
+      message: message,
+    );
+    final conflicts = ((result['conflicts'] as List?) ?? const [])
+        .map((item) => item.toString())
+        .toList();
+    final success = (result['success'] as bool?) ?? true;
+    if (!success && conflicts.isEmpty) {
+      throw GitException(result['error'] as String? ?? 'Cherry-pick failed.');
+    }
+    return CherryPickResult(
+      success: success,
+      conflicts: conflicts,
+      newHead: result['newHead'] as String? ??
+          result['cherryPickCommit'] as String?,
+    );
   }
 
   static void _throwIfBridgeFailed(
