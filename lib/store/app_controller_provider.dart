@@ -1,6 +1,15 @@
 // ignore_for_file: invalid_use_of_protected_member, invalid_use_of_visible_for_testing_member
 part of 'app_controller.dart';
 
+class ProviderDiscoveryException implements Exception {
+  ProviderDiscoveryException(this.message);
+
+  final String message;
+
+  @override
+  String toString() => message;
+}
+
 extension AppControllerProvider on AppController {
   Future<void> saveModelConfig(ModelConfig config) async {
     final normalized = normalizeMagFreeModelsOnly(config);
@@ -123,6 +132,45 @@ extension AppControllerProvider on AppController {
     await saveModelConfig(config.copyWith(connections: nextConnections));
   }
 
+  Future<void> disconnectProvider(String providerId) async {
+    final config = state.modelConfig ?? ModelConfig.defaults();
+    final nextConnections = [
+      for (final item in config.connections)
+        if (item.id != providerId) item,
+    ];
+    if (nextConnections.length == config.connections.length) return;
+
+    var nextProviderId = config.currentProviderId;
+    var nextModelId = config.currentModelId;
+    if (config.currentProviderId == providerId) {
+      if (nextConnections.isNotEmpty) {
+        final fallback = nextConnections.first;
+        nextProviderId = fallback.id;
+        nextModelId = fallback.models.isNotEmpty
+            ? fallback.models.first
+            : (state.providerList?.defaultModels[fallback.id] ??
+                ModelConfig.defaults().currentModelId);
+      } else {
+        nextProviderId = ModelConfig.defaults().currentProviderId;
+        nextModelId = ModelConfig.defaults().currentModelId;
+      }
+    }
+
+    final nextRules = [
+      for (final item in config.visibilityRules)
+        if (item.providerId != providerId) item,
+    ];
+
+    await saveModelConfig(
+      config.copyWith(
+        currentProviderId: nextProviderId,
+        currentModelId: nextModelId,
+        connections: nextConnections,
+        visibilityRules: nextRules,
+      ),
+    );
+  }
+
   List<String> _extractIdsFromDataList(dynamic decoded) {
     final list = decoded is Map
         ? decoded['data']
@@ -140,6 +188,51 @@ extension AppControllerProvider on AppController {
     return items;
   }
 
+  String _extractProviderErrorMessage(String body) {
+    final trimmed = body.trim();
+    if (trimmed.isEmpty) return '';
+    try {
+      final decoded = jsonDecode(trimmed);
+      if (decoded is Map) {
+        final error = decoded['error'];
+        if (error is String && error.trim().isNotEmpty) return error.trim();
+        if (error is Map) {
+          final message = error['message'];
+          if (message is String && message.trim().isNotEmpty) {
+            return message.trim();
+          }
+        }
+        final message = decoded['message'];
+        if (message is String && message.trim().isNotEmpty) {
+          return message.trim();
+        }
+      }
+    } catch (_) {
+      // Fall back to raw response text below.
+    }
+    return trimmed;
+  }
+
+  String _formatProviderDiscoveryHttpError({
+    required int statusCode,
+    required String body,
+  }) {
+    final detail = _extractProviderErrorMessage(body);
+    if (statusCode == 401 || statusCode == 403) {
+      return detail.isNotEmpty
+          ? 'Authentication failed ($statusCode): $detail'
+          : 'Authentication failed ($statusCode). Check the API key.';
+    }
+    if (statusCode == 404) {
+      return detail.isNotEmpty
+          ? 'Model discovery failed ($statusCode): $detail'
+          : 'Model discovery endpoint not found ($statusCode). Check the Base URL.';
+    }
+    return detail.isNotEmpty
+        ? 'Model discovery failed ($statusCode): $detail'
+        : 'Model discovery failed with HTTP $statusCode.';
+  }
+
   Future<List<String>> _requestModelIds(
     HttpClient client, {
     required Uri uri,
@@ -148,9 +241,18 @@ extension AppControllerProvider on AppController {
     final request = await client.getUrl(uri);
     headers.forEach(request.headers.set);
     final response = await request.close();
-    if (response.statusCode >= 400) return const [];
     final body = await response.transform(utf8.decoder).join();
-    if (body.trim().isEmpty) return const [];
+    if (response.statusCode >= 400) {
+      throw ProviderDiscoveryException(
+        _formatProviderDiscoveryHttpError(
+          statusCode: response.statusCode,
+          body: body,
+        ),
+      );
+    }
+    if (body.trim().isEmpty) {
+      throw ProviderDiscoveryException('Model discovery returned an empty response.');
+    }
     final decoded = jsonDecode(body);
     return _extractIdsFromDataList(decoded);
   }
@@ -204,12 +306,23 @@ extension AppControllerProvider on AppController {
         final root = normalized.replaceFirst(RegExp(r'/v1$'), '');
         final request = await client.getUrl(Uri.parse('$root/api/tags'));
         final response = await request.close();
-        if (response.statusCode >= 400) return const [];
         final body = await response.transform(utf8.decoder).join();
-        if (body.trim().isEmpty) return const [];
+        if (response.statusCode >= 400) {
+          throw ProviderDiscoveryException(
+            _formatProviderDiscoveryHttpError(
+              statusCode: response.statusCode,
+              body: body,
+            ),
+          );
+        }
+        if (body.trim().isEmpty) {
+          throw ProviderDiscoveryException('Model discovery returned an empty response.');
+        }
         final decoded = jsonDecode(body);
         final models = decoded is Map ? decoded['models'] : null;
-        if (models is! List) return const [];
+        if (models is! List) {
+          throw ProviderDiscoveryException('Model discovery returned an invalid response.');
+        }
         final items = models
             .map((item) => item is Map ? item['name']?.toString() : null)
             .whereType<String>()
@@ -217,6 +330,11 @@ extension AppControllerProvider on AppController {
             .toSet()
             .toList()
           ..sort();
+        if (items.isEmpty) {
+          throw ProviderDiscoveryException(
+            'Connected successfully, but the provider returned no models.',
+          );
+        }
         return items;
       }
 
@@ -230,11 +348,42 @@ extension AppControllerProvider on AppController {
         headers: headers,
       );
       if (providerId == 'mag') {
-        return filterMagZenFreeModels(ids);
+        final filtered = filterMagZenFreeModels(ids);
+        if (filtered.isEmpty) {
+          throw ProviderDiscoveryException(
+            'Connected successfully, but no supported models were returned.',
+          );
+        }
+        return filtered;
+      }
+      if (ids.isEmpty) {
+        throw ProviderDiscoveryException(
+          'Connected successfully, but the provider returned no models.',
+        );
       }
       return ids;
-    } catch (_) {
-      return const [];
+    } on ProviderDiscoveryException {
+      rethrow;
+    } on SocketException catch (error) {
+      throw ProviderDiscoveryException(
+        'Could not reach the provider. Check the Base URL and network. ${error.message}',
+      );
+    } on HandshakeException catch (error) {
+      throw ProviderDiscoveryException(
+        'TLS/SSL handshake failed. Check the Base URL or certificate. $error',
+      );
+    } on HttpException catch (error) {
+      throw ProviderDiscoveryException('HTTP error during model discovery: ${error.message}');
+    } on FormatException catch (error) {
+      throw ProviderDiscoveryException(
+        'Model discovery returned invalid JSON. ${error.message}',
+      );
+    } on TimeoutException {
+      throw ProviderDiscoveryException(
+        'Model discovery timed out. Check the Base URL, network, or provider status.',
+      );
+    } catch (error) {
+      throw ProviderDiscoveryException('Model discovery failed: $error');
     } finally {
       client.close(force: true);
     }

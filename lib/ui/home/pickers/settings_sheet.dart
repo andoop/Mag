@@ -50,19 +50,86 @@ class _AppSettingsSheetState extends State<_AppSettingsSheet> {
     if (connection == null) {
       return;
     }
-    await widget.controller.connectProvider(
-      connection.copyWith(
+    try {
+      await widget.controller.discoverProviderModels(
+        providerId: connection.id,
         baseUrl: _baseUrlController.text.trim(),
         apiKey: _apiKeyController.text.trim(),
-        models: _modelController.text.trim().isEmpty
-            ? connection.models
-            : [_modelController.text.trim(), ...connection.models],
-      ),
-      currentModelId: _modelController.text.trim().isEmpty
-          ? current.model
-          : _modelController.text.trim(),
-      select: true,
+        usePublicToken: connection.id == 'mag' && _apiKeyController.text.trim().isEmpty,
+      );
+      await widget.controller.connectProvider(
+        connection.copyWith(
+          baseUrl: _baseUrlController.text.trim(),
+          apiKey: _apiKeyController.text.trim(),
+          models: _modelController.text.trim().isEmpty
+              ? connection.models
+              : [_modelController.text.trim(), ...connection.models],
+        ),
+        currentModelId: _modelController.text.trim().isEmpty
+            ? current.model
+            : _modelController.text.trim(),
+        select: true,
+      );
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(
+            l(context, '模型设置已保存', 'Model settings saved'),
+          ),
+        ),
+      );
+    } catch (error) {
+      if (!mounted) return;
+      _showInfo(context, error.toString());
+    }
+  }
+
+  Future<void> _disconnectCurrentProvider() async {
+    final connection = widget.modelConfig.currentConnection;
+    if (connection == null) {
+      return;
+    }
+    final ok = await showDialog<bool>(
+      context: context,
+      builder: (context) {
+        return AlertDialog(
+          title: Text(l(context, '断开 Provider', 'Disconnect provider')),
+          content: Text(
+            l(
+              context,
+              '确定断开 `${connection.name}` 吗？已保存的接口地址和 API Key 会一并移除。',
+              'Disconnect `${connection.name}`? The saved endpoint and API key will be removed.',
+            ),
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.of(context).pop(false),
+              child: Text(l(context, '取消', 'Cancel')),
+            ),
+            FilledButton(
+              onPressed: () => Navigator.of(context).pop(true),
+              child: Text(l(context, '断开', 'Disconnect')),
+            ),
+          ],
+        );
+      },
     );
+    if (ok != true) {
+      return;
+    }
+    try {
+      final messenger = ScaffoldMessenger.maybeOf(context);
+      await widget.controller.disconnectProvider(connection.id);
+      if (!mounted) return;
+      _showInfoWithMessenger(
+        messenger,
+        l(context, 'Provider 已断开', 'Provider disconnected'),
+      );
+      Navigator.of(context).pop();
+    } catch (error) {
+      if (!mounted) return;
+      _showInfo(context, error.toString());
+    }
   }
 
   Future<void> _saveGitIdentity() async {
@@ -509,14 +576,24 @@ class _AppSettingsSheetState extends State<_AppSettingsSheet> {
                                 ),
                               ),
                               const SizedBox(height: 12),
-                              Align(
-                                alignment: Alignment.centerRight,
-                                child: FilledButton(
-                                  onPressed: _saveProviderSettings,
-                                  child: Text(
-                                    l(context, '保存模型设置', 'Save model settings'),
+                              Row(
+                                mainAxisAlignment: MainAxisAlignment.end,
+                                children: [
+                                  OutlinedButton.icon(
+                                    onPressed: _disconnectCurrentProvider,
+                                    icon: const Icon(Icons.link_off_rounded),
+                                    label: Text(
+                                      l(context, '断开', 'Disconnect'),
+                                    ),
                                   ),
-                                ),
+                                  const SizedBox(width: 8),
+                                  FilledButton(
+                                    onPressed: _saveProviderSettings,
+                                    child: Text(
+                                      l(context, '保存模型设置', 'Save model settings'),
+                                    ),
+                                  ),
+                                ],
                               ),
                             ],
                           ),

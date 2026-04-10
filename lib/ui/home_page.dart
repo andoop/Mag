@@ -335,17 +335,12 @@ class _HomePageState extends State<HomePage> {
       apiKey: apiKey,
       usePublicToken: usePublicToken,
     );
-    if (discovered.isNotEmpty) return discovered;
-    if (providerId == 'mag') {
-      return const [
-        'minimax-m2.5-free',
-        'mimo-v2-pro-free',
-        'mimo-v2-omni-free',
-        'nemotron-3-super-free',
-        'big-pickle',
-      ];
+    if (discovered.isEmpty) {
+      throw ProviderDiscoveryException(
+        'Connected successfully, but the provider returned no models.',
+      );
     }
-    return const [];
+    return discovered;
   }
 
   Future<void> _connectProviderPreset(
@@ -388,6 +383,11 @@ class _HomePageState extends State<HomePage> {
     required String apiKey,
     required List<String> models,
   }) async {
+    await _discoverModelsForProvider(
+      providerId: providerId,
+      baseUrl: baseUrl,
+      apiKey: apiKey,
+    );
     final filteredModels = models
         .map((item) => item.trim())
         .where((item) => item.isNotEmpty)

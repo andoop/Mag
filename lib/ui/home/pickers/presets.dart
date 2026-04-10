@@ -42,6 +42,16 @@ class _ModelChoice {
   final bool unpaid;
 }
 
+class _ProviderModelGroup {
+  const _ProviderModelGroup({
+    required this.provider,
+    required this.models,
+  });
+
+  final _ProviderPreset provider;
+  final List<_ModelChoice> models;
+}
+
 
 const Map<String, String> _schemaTemplateLabels = {
   'answer': 'Answer',
@@ -660,6 +670,77 @@ List<_ModelChoice> _connectedModelChoices(
             providerList: providerList,
           ))
       .toList();
+}
+
+List<_ProviderModelGroup> _connectedModelGroups(
+  ModelConfig config, {
+  required AppState state,
+  ProviderListResponse? providerList,
+  bool onlyVisible = false,
+}) {
+  final groups = <_ProviderModelGroup>[];
+  for (final provider in _connectedProviderPresets(
+    config,
+    state: state,
+    providerList: providerList,
+  )) {
+    final models = _modelsForProvider(
+      provider.id,
+      config: config,
+      state: state,
+      providerList: providerList,
+    )
+        .where((item) => !onlyVisible || _isModelVisible(config, item))
+        .toList()
+      ..sort((a, b) => _compareModelChoicesForState(a, b, state));
+    if (models.isEmpty) continue;
+    groups.add(_ProviderModelGroup(provider: provider, models: models));
+  }
+  return groups;
+}
+
+int _compareModelChoicesForState(_ModelChoice a, _ModelChoice b, AppState state) {
+  final current = state.modelConfig ?? ModelConfig.defaults();
+  final recentOrder = <String, int>{};
+  for (var i = 0; i < state.recentModelKeys.length; i++) {
+    recentOrder['${state.recentModelKeys[i]}'] = i;
+  }
+
+  final aKey = '${a.providerId}/${a.id}';
+  final bKey = '${b.providerId}/${b.id}';
+  final aIsCurrent = a.providerId == current.provider && a.id == current.model;
+  final bIsCurrent = b.providerId == current.provider && b.id == current.model;
+  if (aIsCurrent != bIsCurrent) return aIsCurrent ? -1 : 1;
+
+  final aRecent = recentOrder[aKey];
+  final bRecent = recentOrder[bKey];
+  if (aRecent != null && bRecent != null && aRecent != bRecent) {
+    return aRecent.compareTo(bRecent);
+  }
+  if (aRecent != null && bRecent == null) return -1;
+  if (aRecent == null && bRecent != null) return 1;
+
+  if (a.latest != b.latest) return a.latest ? -1 : 1;
+  if (a.recommended != b.recommended) return a.recommended ? -1 : 1;
+  if (a.free != b.free) return a.free ? -1 : 1;
+
+  final aProvider = _providerById(
+    a.providerId,
+    config: current,
+    state: state,
+  );
+  final bProvider = _providerById(
+    b.providerId,
+    config: current,
+    state: state,
+  );
+  if ((aProvider?.recommended ?? false) != (bProvider?.recommended ?? false)) {
+    return (aProvider?.recommended ?? false) ? -1 : 1;
+  }
+  if ((aProvider?.popular ?? false) != (bProvider?.popular ?? false)) {
+    return (aProvider?.popular ?? false) ? -1 : 1;
+  }
+  return a.name.toLowerCase().compareTo(b.name.toLowerCase());
 }
 
 bool _isModelVisible(ModelConfig config, _ModelChoice item) {

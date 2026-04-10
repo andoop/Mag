@@ -17,21 +17,18 @@ extension _HomePageModelPicker on _HomePageState {
             final oc = sheetContext.oc;
             final state = widget.controller.state;
             final config = state.modelConfig ?? ModelConfig.defaults();
-            final connectedProviders =
-                _connectedProviderPresets(config, state: state);
-            final grouped = <_ProviderPreset, List<_ModelChoice>>{};
-            for (final provider in connectedProviders) {
-              final matches = _modelsForProvider(
-                provider.id,
-                config: config,
-                state: state,
-              )
+            final grouped = _connectedModelGroups(
+              config,
+              state: state,
+            ).map((group) {
+              final matches = group.models
                   .where((item) => _matchesModelQuery(item, query))
                   .toList();
-              if (matches.isNotEmpty) {
-                grouped[provider] = matches;
-              }
-            }
+              return _ProviderModelGroup(
+                provider: group.provider,
+                models: matches,
+              );
+            }).where((group) => group.models.isNotEmpty).toList();
             return FractionallySizedBox(
               heightFactor: 0.72,
               child: SafeArea(
@@ -98,9 +95,9 @@ extension _HomePageModelPicker on _HomePageState {
                         Expanded(
                           child: ListView(
                             padding: const EdgeInsets.fromLTRB(12, 0, 12, 12),
-                            children: grouped.entries.map((entry) {
-                            final provider = entry.key;
-                            final models = entry.value;
+                            children: grouped.map((entry) {
+                            final provider = entry.provider;
+                            final models = entry.models;
                             final allVisible = models.every(
                               (item) => _isModelVisible(config, item),
                             );
@@ -225,6 +222,7 @@ extension _HomePageModelPicker on _HomePageState {
   /// 分组模型列表，右上保留 `+` 与管理入口。
   Future<void> _openModelPicker(BuildContext context) async {
     var query = '';
+    final expandedProviders = <String, bool>{};
     await showModalBottomSheet<void>(
       context: context,
       backgroundColor: context.oc.pageBackground,
@@ -236,14 +234,22 @@ extension _HomePageModelPicker on _HomePageState {
             final oc = context.oc;
             final state = widget.controller.state;
             final current = state.modelConfig ?? ModelConfig.defaults();
-            final visible = _visibleModelChoices(state);
-            final filtered = visible
-                .where((item) => _matchesModelQuery(item, query))
-                .toList()
-              ..sort((a, b) => _compareModelChoices(a, b, state));
-            final grouped = <String, List<_ModelChoice>>{};
-            for (final item in filtered) {
-              grouped.putIfAbsent(item.providerId, () => []).add(item);
+            final allGroups = _connectedModelGroups(
+              current,
+              state: state,
+              onlyVisible: true,
+            );
+            final filteredGroups = allGroups.map((group) {
+              final matches = group.models
+                  .where((item) => _matchesModelQuery(item, query))
+                  .toList();
+              return _ProviderModelGroup(
+                provider: group.provider,
+                models: matches,
+              );
+            }).where((group) => group.models.isNotEmpty).toList();
+            for (final group in filteredGroups) {
+              expandedProviders.putIfAbsent(group.provider.id, () => true);
             }
             return FractionallySizedBox(
               heightFactor: 0.64,
@@ -331,13 +337,13 @@ extension _HomePageModelPicker on _HomePageState {
                           ),
                         ),
                         Expanded(
-                          child: filtered.isEmpty
+                          child: filteredGroups.isEmpty
                               ? Center(
                                   child: Padding(
                                     padding: const EdgeInsets.symmetric(
                                         horizontal: 20),
                                     child: Text(
-                                      visible.isEmpty
+                                      allGroups.isEmpty
                                           ? l(
                                               context,
                                               '还没有可见模型，请先连接供应商或在模型管理中开启模型。',
@@ -357,9 +363,12 @@ extension _HomePageModelPicker on _HomePageState {
                               : ListView(
                                   padding: const EdgeInsets.fromLTRB(
                                       12, 0, 12, 12),
-                                  children: grouped.entries.map((entry) {
-                                    final providerId = entry.key;
-                                    final items = entry.value;
+                                  children: filteredGroups.map((entry) {
+                                    final provider = entry.provider;
+                                    final items = entry.models;
+                                    final providerId = provider.id;
+                                    final expanded = query.isNotEmpty ||
+                                        (expandedProviders[providerId] ?? true);
                                     return Padding(
                                       padding:
                                           const EdgeInsets.only(bottom: 10),
@@ -367,57 +376,86 @@ extension _HomePageModelPicker on _HomePageState {
                                         crossAxisAlignment:
                                             CrossAxisAlignment.start,
                                         children: [
-                                          Padding(
-                                            padding: const EdgeInsets.fromLTRB(
-                                                4, 4, 4, 6),
-                                            child: Text(
-                                              _providerLabel(
-                                                providerId,
-                                                config: current,
-                                                state: state,
-                                              ),
-                                              style: TextStyle(
-                                                fontSize: 11,
-                                                fontWeight: FontWeight.w700,
-                                                color: oc.muted,
-                                                letterSpacing: 0.3,
-                                              ),
-                                            ),
-                                          ),
-                                          Container(
-                                            decoration: BoxDecoration(
-                                              color: oc.panelBackground,
-                                              borderRadius:
-                                                  BorderRadius.circular(12),
-                                              border: Border.all(
-                                                  color: oc.border),
-                                            ),
-                                            child: Column(
-                                              children: [
-                                                for (var i = 0;
-                                                    i < items.length;
-                                                    i++) ...[
-                                                  _ModelListTile(
-                                                    item: items[i],
-                                                    selected: current
-                                                                .provider ==
-                                                            items[i]
-                                                                .providerId &&
-                                                        current.model ==
-                                                            items[i].id,
-                                                    onTap: () => _selectModel(
-                                                        items[i]),
-                                                  ),
-                                                  if (i != items.length - 1)
-                                                    Divider(
-                                                      height: 1,
-                                                      thickness: 1,
-                                                      color: oc.border,
+                                          InkWell(
+                                            borderRadius:
+                                                BorderRadius.circular(10),
+                                            onTap: () {
+                                              if (query.isNotEmpty) return;
+                                              expandedProviders[providerId] =
+                                                  !expanded;
+                                              setModalState(() {});
+                                            },
+                                            child: Padding(
+                                              padding: const EdgeInsets.fromLTRB(
+                                                  4, 4, 4, 6),
+                                              child: Row(
+                                                children: [
+                                                  Expanded(
+                                                    child: Text(
+                                                      provider.name,
+                                                      style: TextStyle(
+                                                        fontSize: 11,
+                                                        fontWeight: FontWeight.w700,
+                                                        color: oc.muted,
+                                                        letterSpacing: 0.3,
+                                                      ),
                                                     ),
+                                                  ),
+                                                  Text(
+                                                    '${items.length}',
+                                                    style: TextStyle(
+                                                      fontSize: 11,
+                                                      color: oc.muted,
+                                                      fontWeight: FontWeight.w600,
+                                                    ),
+                                                  ),
+                                                  const SizedBox(width: 4),
+                                                  Icon(
+                                                    expanded
+                                                        ? Icons.expand_less_rounded
+                                                        : Icons.expand_more_rounded,
+                                                    size: 18,
+                                                    color: oc.muted,
+                                                  ),
                                                 ],
-                                              ],
+                                              ),
                                             ),
                                           ),
+                                          if (expanded)
+                                            Container(
+                                              decoration: BoxDecoration(
+                                                color: oc.panelBackground,
+                                                borderRadius:
+                                                    BorderRadius.circular(12),
+                                                border: Border.all(
+                                                    color: oc.border),
+                                              ),
+                                              child: Column(
+                                                children: [
+                                                  for (var i = 0;
+                                                      i < items.length;
+                                                      i++) ...[
+                                                    _ModelListTile(
+                                                      item: items[i],
+                                                      selected: current
+                                                                  .provider ==
+                                                              items[i]
+                                                                  .providerId &&
+                                                          current.model ==
+                                                              items[i].id,
+                                                      onTap: () =>
+                                                          _selectModel(items[i]),
+                                                    ),
+                                                    if (i != items.length - 1)
+                                                      Divider(
+                                                        height: 1,
+                                                        thickness: 1,
+                                                        color: oc.border,
+                                                      ),
+                                                  ],
+                                                ],
+                                              ),
+                                            ),
                                         ],
                                       ),
                                     );

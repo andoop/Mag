@@ -928,11 +928,13 @@ class _ProviderListTile extends StatelessWidget {
     required this.item,
     required this.selected,
     required this.onTap,
+    this.onDisconnect,
   });
 
   final _ProviderPreset item;
   final bool selected;
   final VoidCallback onTap;
+  final VoidCallback? onDisconnect;
 
   @override
   Widget build(BuildContext context) {
@@ -973,24 +975,50 @@ class _ProviderListTile extends StatelessWidget {
                   ],
                 ),
               ),
-              if (selected)
+              if (selected) ...[
                 Container(
                   margin: const EdgeInsets.only(left: 6, top: 1),
-                  padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 3),
+                  padding: const EdgeInsets.only(left: 8, right: 2, top: 3, bottom: 3),
                   decoration: BoxDecoration(
                     color: oc.selectedFill,
                     borderRadius: BorderRadius.circular(999),
                     border: Border.all(color: oc.border),
                   ),
-                  child: Text(
-                    l(context, '已连接', 'Connected'),
-                    style: TextStyle(
-                      fontSize: 10.5,
-                      fontWeight: FontWeight.w600,
-                      color: oc.accent,
-                    ),
+                  child: Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Text(
+                        l(context, '已连接', 'Connected'),
+                        style: TextStyle(
+                          fontSize: 10.5,
+                          fontWeight: FontWeight.w600,
+                          color: oc.accent,
+                        ),
+                      ),
+                      if (onDisconnect != null) ...[
+                        Container(
+                          width: 1,
+                          height: 12,
+                          margin: const EdgeInsets.symmetric(horizontal: 6),
+                          color: oc.border,
+                        ),
+                        InkWell(
+                          borderRadius: BorderRadius.circular(999),
+                          onTap: onDisconnect,
+                          child: Padding(
+                            padding: const EdgeInsets.all(2),
+                            child: Icon(
+                              Icons.link_off_rounded,
+                              size: 14,
+                              color: oc.muted,
+                            ),
+                          ),
+                        ),
+                      ],
+                    ],
                   ),
                 ),
+              ],
             ],
           ),
         ),

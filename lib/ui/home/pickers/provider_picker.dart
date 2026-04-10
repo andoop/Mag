@@ -3,6 +3,40 @@ part of '../../home_page.dart';
 // ignore_for_file: invalid_use_of_protected_member
 
 extension _HomePageProviderPicker on _HomePageState {
+  Future<void> _disconnectProviderFromPicker(
+    BuildContext context,
+    _ProviderPreset preset,
+  ) async {
+    final ok = await showDialog<bool>(
+      context: context,
+      builder: (context) {
+        return AlertDialog(
+          title: Text(l(context, '断开 Provider', 'Disconnect provider')),
+          content: Text(
+            l(
+              context,
+              '确定断开 `${preset.name}` 吗？已保存的接口地址和 API Key 会一并移除。',
+              'Disconnect `${preset.name}`? The saved endpoint and API key will be removed.',
+            ),
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.of(context).pop(false),
+              child: Text(l(context, '取消', 'Cancel')),
+            ),
+            FilledButton(
+              onPressed: () => Navigator.of(context).pop(true),
+              child: Text(l(context, '断开', 'Disconnect')),
+            ),
+          ],
+        );
+      },
+    );
+    if (ok != true) return;
+    await widget.controller.disconnectProvider(preset.id);
+    if (!mounted) return;
+    _showInfo(context, l(context, 'Provider 已断开', 'Provider disconnected'));
+  }
 
   /// 选择要连接的 provider，而不是直接切当前 provider。
   Future<void> _openProviderPicker(BuildContext context) async {
@@ -135,6 +169,17 @@ extension _HomePageProviderPicker on _HomePageState {
                                             Navigator.of(context).pop();
                                             _openConnectPresetProvider(this.context, item);
                                           },
+                                          onDisconnect:
+                                              current.connectionFor(item.id) == null
+                                                  ? null
+                                                  : () async {
+                                                      await _disconnectProviderFromPicker(
+                                                        this.context,
+                                                        item,
+                                                      );
+                                                      if (!mounted) return;
+                                                      setModalState(() {});
+                                                    },
                                         ),
                                         Divider(
                                           height: 1,
@@ -170,6 +215,17 @@ extension _HomePageProviderPicker on _HomePageState {
                                               _openConnectPresetProvider(
                                                   this.context, item);
                                             },
+                                            onDisconnect:
+                                                current.connectionFor(item.id) == null
+                                                    ? null
+                                                    : () async {
+                                                        await _disconnectProviderFromPicker(
+                                                          this.context,
+                                                          item,
+                                                        );
+                                                        if (!mounted) return;
+                                                        setModalState(() {});
+                                                      },
                                           ),
                                           Divider(
                                             height: 1,
@@ -352,11 +408,17 @@ extension _HomePageProviderPicker on _HomePageState {
                         );
                         return;
                       }
-                      await _connectProviderPreset(
-                        preset,
-                        apiKey: apiKeyController.text.trim(),
-                        overrideBaseUrl: baseUrlController.text.trim(),
-                      );
+                      try {
+                        await _connectProviderPreset(
+                          preset,
+                          apiKey: apiKeyController.text.trim(),
+                          overrideBaseUrl: baseUrlController.text.trim(),
+                        );
+                      } catch (error) {
+                        if (!mounted) return;
+                        _showInfo(sheetContext, error.toString());
+                        return;
+                      }
                       if (!mounted) return;
                       Navigator.of(sheetContext).pop();
                     },
@@ -495,13 +557,19 @@ extension _HomePageProviderPicker on _HomePageState {
                       );
                       return;
                     }
-                    await _connectCustomProvider(
-                      providerId: providerIdValue,
-                      name: providerNameValue,
-                      baseUrl: baseUrlValue,
-                      apiKey: apiKey.text.trim(),
-                      models: ids,
-                    );
+                    try {
+                      await _connectCustomProvider(
+                        providerId: providerIdValue,
+                        name: providerNameValue,
+                        baseUrl: baseUrlValue,
+                        apiKey: apiKey.text.trim(),
+                        models: ids,
+                      );
+                    } catch (error) {
+                      if (!mounted) return;
+                      _showInfo(sheetContext, error.toString());
+                      return;
+                    }
                     if (!mounted) return;
                     Navigator.of(sheetContext).pop();
                   },

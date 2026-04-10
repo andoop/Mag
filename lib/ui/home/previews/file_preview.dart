@@ -620,7 +620,22 @@ void _showInfo(BuildContext context, String message) {
 }
 
 void _showInfoWithMessenger(ScaffoldMessengerState? messenger, String message) {
-  messenger?.showSnackBar(
-    SnackBar(content: Text(message)),
-  );
+  if (messenger == null) return;
+  messenger
+    ..clearSnackBars()
+    ..clearMaterialBanners()
+    ..showMaterialBanner(
+      MaterialBanner(
+        content: Text(message),
+        actions: [
+          TextButton(
+            onPressed: messenger.hideCurrentMaterialBanner,
+            child: const Text('OK'),
+          ),
+        ],
+      ),
+    );
+  Future<void>.delayed(const Duration(seconds: 4), () {
+    messenger.hideCurrentMaterialBanner();
+  });
 }
