@@ -52,8 +52,14 @@ class _HashlineMismatchException implements Exception {
   String toString() => message;
 }
 
+String _normalizeForHash(String content) {
+  var s = content.replaceAll('\r', '').trimRight();
+  if (s.startsWith('\uFEFF')) s = s.substring(1);
+  return s;
+}
+
 String _computeHashlineHash(int lineNumber, String content) {
-  final normalized = content.replaceAll('\r', '').trimRight();
+  final normalized = _normalizeForHash(content);
   final hasSignificant =
       RegExp(r'[\p{L}\p{N}]', unicode: true).hasMatch(normalized);
   final seed = hasSignificant ? '0' : lineNumber.toString();
@@ -62,6 +68,28 @@ String _computeHashlineHash(int lineNumber, String content) {
   final first = _kHashlineAlphabet[(digest >> 4) & 0x0f];
   final second = _kHashlineAlphabet[digest & 0x0f];
   return '$first$second';
+}
+
+/// Legacy hash: strips ALL whitespace before hashing (like oh-my-openagent).
+/// Provides a fallback when minor whitespace differences cause primary hash
+/// mismatches, or when the hash algorithm changes.
+String _computeLegacyHashlineHash(int lineNumber, String content) {
+  var s = content.replaceAll('\r', '');
+  if (s.startsWith('\uFEFF')) s = s.substring(1);
+  s = s.replaceAll(RegExp(r'\s+'), '');
+  final hasSignificant =
+      RegExp(r'[\p{L}\p{N}]', unicode: true).hasMatch(s);
+  final seed = hasSignificant ? '0' : lineNumber.toString();
+  final digest =
+      sha1.convert(utf8.encode('$seed:$s')).bytes.first & 0xff;
+  final first = _kHashlineAlphabet[(digest >> 4) & 0x0f];
+  final second = _kHashlineAlphabet[digest & 0x0f];
+  return '$first$second';
+}
+
+bool _isCompatibleHashlineHash(int lineNumber, String content, String hash) {
+  return _computeHashlineHash(lineNumber, content) == hash ||
+      _computeLegacyHashlineHash(lineNumber, content) == hash;
 }
 
 String _formatHashlineReadLine(
@@ -166,26 +194,64 @@ String _formatHashlineMismatchMessage(
   return out.join('\n');
 }
 
-void _validateHashlineRefs(List<String> lines, Iterable<String> refs) {
+String? _suggestLineForHash(String ref, List<String> lines) {
+  final hashMatch = RegExp(r'#([ZPMQVRWSNKTXJBYH]{2})$').firstMatch(ref.trim());
+  if (hashMatch == null) return null;
+  final hash = hashMatch.group(1)!;
+  for (var i = 0; i < lines.length; i++) {
+    if (_isCompatibleHashlineHash(i + 1, lines[i], hash)) {
+      final actual = _computeHashlineHash(i + 1, lines[i]);
+      return 'Did you mean "${i + 1}#$actual"?';
+    }
+  }
+  return null;
+}
+
+_HashlineLineRef _parseHashlineRefWithHint(String ref, List<String> lines) {
+  try {
+    return _parseHashlineRef(ref);
+  } on Exception catch (e) {
+    final hint = _suggestLineForHash(ref, lines);
+    if (hint != null) {
+      throw Exception('${e.toString()} $hint');
+    }
+    rethrow;
+  }
+}
+
+/// Returns a warning string if [lenient] is true and mismatches were found,
+/// or throws [_HashlineMismatchException] if not lenient.
+/// Returns empty string when all refs match.
+String _validateHashlineRefs(
+  List<String> lines,
+  Iterable<String> refs, {
+  bool lenient = false,
+}) {
   final mismatches = <int>[];
   for (final ref in refs) {
-    final parsed = _parseHashlineRef(ref);
+    final parsed = _parseHashlineRefWithHint(ref, lines);
     if (parsed.line < 1 || parsed.line > lines.length) {
+      final hint = _suggestLineForHash(ref, lines);
       throw Exception(
-        'Line number ${parsed.line} out of bounds. File has ${lines.length} lines.',
+        'Line number ${parsed.line} out of bounds. File has ${lines.length} lines.'
+        '${hint != null ? ' $hint' : ''}',
       );
     }
     final content = lines[parsed.line - 1];
-    final actual = _computeHashlineHash(parsed.line, content);
-    if (actual != parsed.hash) {
+    if (!_isCompatibleHashlineHash(parsed.line, content, parsed.hash)) {
       mismatches.add(parsed.line);
     }
   }
-  if (mismatches.isNotEmpty) {
-    throw _HashlineMismatchException(
-      _formatHashlineMismatchMessage(mismatches, lines),
-    );
+  if (mismatches.isEmpty) return '';
+  if (lenient) {
+    return 'WARNING: ${mismatches.length} hash mismatch(es) on line(s) '
+        '${mismatches.join(', ')} — file is unchanged since your last read, '
+        'proceeding with line numbers. Please copy exact LINE#HASH references '
+        'from `read` output next time.';
   }
+  throw _HashlineMismatchException(
+    _formatHashlineMismatchMessage(mismatches, lines),
+  );
 }
 
 List<String> _hashlineToLines(Object? raw) {
@@ -195,17 +261,171 @@ List<String> _hashlineToLines(Object? raw) {
   throw Exception('Hashline edit `lines` must be a string, string[], or null.');
 }
 
+/// Intelligent prefix stripping (ported from oh-my-openagent `stripLinePrefixes`).
+/// Uses a statistical approach: only strip prefixes if ≥50% of non-empty lines
+/// have the same prefix type, preventing false positives on normal code.
 List<String> _normalizeInsertedHashlineLines(List<String> lines) {
-  final normalized = <String>[];
+  final hashRe = RegExp(r'^\s*(?:>>>|>>)?\s*\d+\s*#\s*[ZPMQVRWSNKTXJBYH]{2}\|');
+  final diffPlusRe = RegExp(r'^[+](?![+])');
+  var hashCount = 0;
+  var diffPlusCount = 0;
+  var nonEmpty = 0;
   for (final line in lines) {
-    var next = line;
-    next = next.replaceFirst(RegExp(r'^(?:>>>|[+-])\s*'), '');
-    next = next.replaceFirst(RegExp(r'^[0-9]+#[ZPMQVRWSNKTXJBYH]{2}\|'), '');
-    normalized.add(next);
+    if (line.isEmpty) continue;
+    nonEmpty++;
+    if (hashRe.hasMatch(line)) hashCount++;
+    if (diffPlusRe.hasMatch(line)) diffPlusCount++;
   }
-  return normalized;
+  if (nonEmpty == 0) return lines;
+  final stripHash = hashCount > 0 && hashCount >= nonEmpty * 0.5;
+  final stripPlus = !stripHash && diffPlusCount > 0 && diffPlusCount >= nonEmpty * 0.5;
+  return lines.map((line) {
+    if (stripHash) return line.replaceFirst(hashRe, '');
+    if (stripPlus) return line.replaceFirst(diffPlusRe, '');
+    return line;
+  }).toList();
 }
 
+// ---------------------------------------------------------------------------
+// Echo stripping (ported from oh-my-openagent edit-text-normalization.ts)
+// Models often accidentally echo anchor lines in their replacement text,
+// causing duplicate lines (extra braces, duplicate statements, etc.)
+// ---------------------------------------------------------------------------
+
+bool _equalsIgnoringWhitespace(String a, String b) {
+  if (a == b) return true;
+  return a.replaceAll(RegExp(r'\s+'), '') == b.replaceAll(RegExp(r'\s+'), '');
+}
+
+/// Strip if first line of replacement matches the anchor line (append echo).
+List<String> _stripInsertAnchorEcho(String anchorLine, List<String> newLines) {
+  if (newLines.isEmpty) return newLines;
+  if (_equalsIgnoringWhitespace(newLines[0], anchorLine)) {
+    return newLines.sublist(1);
+  }
+  return newLines;
+}
+
+/// Strip if last line of replacement matches the anchor line (prepend echo).
+List<String> _stripInsertBeforeEcho(String anchorLine, List<String> newLines) {
+  if (newLines.length <= 1) return newLines;
+  if (_equalsIgnoringWhitespace(newLines[newLines.length - 1], anchorLine)) {
+    return newLines.sublist(0, newLines.length - 1);
+  }
+  return newLines;
+}
+
+/// Strip boundary echoes in range replacement (both start-1 and end+1).
+List<String> _stripRangeBoundaryEcho(
+  List<String> fileLines,
+  int startLine,
+  int endLine,
+  List<String> newLines,
+) {
+  final replacedCount = endLine - startLine + 1;
+  if (newLines.length <= 1 || newLines.length <= replacedCount) {
+    return newLines;
+  }
+  var out = newLines;
+  final beforeIdx = startLine - 2;
+  if (beforeIdx >= 0 &&
+      _equalsIgnoringWhitespace(out[0], fileLines[beforeIdx])) {
+    out = out.sublist(1);
+  }
+  final afterIdx = endLine;
+  if (afterIdx < fileLines.length &&
+      out.isNotEmpty &&
+      _equalsIgnoringWhitespace(out[out.length - 1], fileLines[afterIdx])) {
+    out = out.sublist(0, out.length - 1);
+  }
+  return out;
+}
+
+// ---------------------------------------------------------------------------
+// Autocorrect replacement lines (ported from oh-my-openagent)
+// Handles common model mistakes: line merging, indentation loss, etc.
+// ---------------------------------------------------------------------------
+
+/// When model merges multi-line code into single line, try to re-expand it.
+List<String> _maybeExpandSingleLineMerge(
+  List<String> originalLines,
+  List<String> replacementLines,
+) {
+  if (replacementLines.length != 1 || originalLines.length <= 1) {
+    return replacementLines;
+  }
+  final merged = replacementLines[0];
+  final parts = originalLines
+      .map((line) => line.trim())
+      .where((line) => line.isNotEmpty)
+      .toList();
+  if (parts.length != originalLines.length) return replacementLines;
+
+  final indices = <int>[];
+  var offset = 0;
+  var orderedMatch = true;
+  for (final part in parts) {
+    final idx = merged.indexOf(part, offset);
+    if (idx == -1) {
+      orderedMatch = false;
+      break;
+    }
+    indices.add(idx);
+    offset = idx + part.length;
+  }
+  if (orderedMatch && indices.length == parts.length) {
+    final expanded = <String>[];
+    for (var i = 0; i < indices.length; i++) {
+      final start = indices[i];
+      final end = i + 1 < indices.length ? indices[i + 1] : merged.length;
+      final candidate = merged.substring(start, end).trim();
+      if (candidate.isEmpty) {
+        orderedMatch = false;
+        break;
+      }
+      expanded.add(candidate);
+    }
+    if (orderedMatch && expanded.length == originalLines.length) {
+      return expanded;
+    }
+  }
+  return replacementLines;
+}
+
+/// When replacement has same number of lines, restore indentation from original.
+List<String> _restoreIndentForPairedReplacement(
+  List<String> originalLines,
+  List<String> replacementLines,
+) {
+  if (originalLines.length != replacementLines.length) {
+    return replacementLines;
+  }
+  return replacementLines.asMap().entries.map((entry) {
+    final idx = entry.key;
+    final line = entry.value;
+    if (line.isEmpty) return line;
+    if (RegExp(r'^\s').hasMatch(line)) return line;
+    final indent =
+        RegExp(r'^\s*').firstMatch(originalLines[idx])?.group(0) ?? '';
+    if (indent.isEmpty) return line;
+    if (originalLines[idx].trim() == line.trim()) return line;
+    return '$indent$line';
+  }).toList();
+}
+
+/// Full autocorrect pipeline for replacement lines.
+List<String> _autocorrectReplacementLines(
+  List<String> originalLines,
+  List<String> replacementLines,
+) {
+  var next = replacementLines;
+  next = _maybeExpandSingleLineMerge(originalLines, next);
+  next = _restoreIndentForPairedReplacement(originalLines, next);
+  return next;
+}
+
+/// Legacy indent restoration for first-line only (used when autocorrect
+/// already handled paired lines).
 List<String> _restoreLeadingIndentForHashline(
   List<String> originalLines,
   List<String> replacementLines,
@@ -305,6 +525,13 @@ List<String> _applyHashlineReplace(
   }
   final originalRange = lines.sublist(start - 1, end);
   var replacement = edit.lines ?? const <String>[];
+  // Strip boundary echoes (model often echoes surrounding lines)
+  if (edit.end != null) {
+    replacement = _stripRangeBoundaryEcho(lines, start, end, replacement);
+  }
+  // Autocorrect: expand merged lines, restore paired indentation
+  replacement = _autocorrectReplacementLines(originalRange, replacement);
+  // Fallback: restore leading indent line-by-line
   replacement = _restoreLeadingIndentForHashline(originalRange, replacement);
   final next = List<String>.of(lines);
   next.removeRange(start - 1, end);
@@ -316,7 +543,7 @@ List<String> _applyHashlineAppend(
   List<String> lines,
   _HashlineEditOp edit,
 ) {
-  final insertion = edit.lines ?? const <String>[];
+  var insertion = edit.lines ?? const <String>[];
   if (insertion.isEmpty) {
     throw Exception('append requires non-empty lines.');
   }
@@ -324,6 +551,11 @@ List<String> _applyHashlineAppend(
     return [...lines, ...insertion];
   }
   final line = _parseHashlineRef(edit.pos!).line;
+  // Strip echo: model often echoes the anchor line as first line of insertion
+  insertion = _stripInsertAnchorEcho(lines[line - 1], insertion);
+  if (insertion.isEmpty) {
+    throw Exception('append produced empty lines after stripping anchor echo.');
+  }
   final next = List<String>.of(lines);
   next.insertAll(line, insertion);
   return next;
@@ -333,7 +565,7 @@ List<String> _applyHashlinePrepend(
   List<String> lines,
   _HashlineEditOp edit,
 ) {
-  final insertion = edit.lines ?? const <String>[];
+  var insertion = edit.lines ?? const <String>[];
   if (insertion.isEmpty) {
     throw Exception('prepend requires non-empty lines.');
   }
@@ -341,22 +573,35 @@ List<String> _applyHashlinePrepend(
     return [...insertion, ...lines];
   }
   final line = _parseHashlineRef(edit.pos!).line;
+  // Strip echo: model often echoes the anchor line as last line of insertion
+  insertion = _stripInsertBeforeEcho(lines[line - 1], insertion);
+  if (insertion.isEmpty) {
+    throw Exception('prepend produced empty lines after stripping anchor echo.');
+  }
   final next = List<String>.of(lines);
   next.insertAll(line - 1, insertion);
   return next;
 }
 
-List<String> _applyHashlineEditsToLines(
+class _HashlineEditResult {
+  _HashlineEditResult(this.lines, this.hashWarning);
+  final List<String> lines;
+  final String hashWarning;
+}
+
+_HashlineEditResult _applyHashlineEditsToLines(
   List<String> originalLines,
-  List<_HashlineEditOp> edits,
-) {
+  List<_HashlineEditOp> edits, {
+  bool lenient = false,
+}) {
   final refs = <String>[];
   for (final edit in edits) {
     if (edit.pos != null) refs.add(edit.pos!);
     if (edit.end != null) refs.add(edit.end!);
   }
+  var hashWarning = '';
   if (refs.isNotEmpty) {
-    _validateHashlineRefs(originalLines, refs);
+    hashWarning = _validateHashlineRefs(originalLines, refs, lenient: lenient);
   }
   _detectHashlineOverlaps(edits);
   final sorted = List<_HashlineEditOp>.of(edits)
@@ -381,7 +626,7 @@ List<String> _applyHashlineEditsToLines(
         break;
     }
   }
-  return lines;
+  return _HashlineEditResult(lines, hashWarning);
 }
 
 Future<ToolExecutionResult> _executeHashlineEditTool(
@@ -462,6 +707,28 @@ Future<ToolExecutionResult> _executeHashlineEditTool(
       throw Exception('File not found: $filePath');
     }
   }
+
+  // Read ledger check: determine if file is unchanged since last read.
+  // If unchanged, use lenient hash validation (model may corrupt hashes).
+  var fileUnchangedSinceRead = false;
+  if (exists) {
+    final existingEntry2 = await ctx.bridge.stat(
+      treeUri: ctx.workspace.treeUri,
+      relativePath: filePath,
+    );
+    final ledger = await _latestToolReadLedgerForPath(ctx, filePath);
+    if (ledger == null) {
+      throw Exception(
+        'BLOCKED: You must `read` the file "$filePath" before using `edit`.\n'
+        'Required action: call `read` with path "$filePath" first, then retry.',
+      );
+    }
+    if (existingEntry2 != null &&
+        existingEntry2.lastModified <= ledger.lastModified) {
+      fileUnchangedSinceRead = true;
+    }
+  }
+
   final existingRaw = exists
       ? await ctx.bridge.readText(
           treeUri: ctx.workspace.treeUri,
@@ -472,8 +739,20 @@ Future<ToolExecutionResult> _executeHashlineEditTool(
   final originalContent = envelope.content;
   var lines =
       originalContent.isEmpty ? <String>[] : originalContent.split('\n');
-  lines = _applyHashlineEditsToLines(lines, edits);
-  final updatedCanonical = lines.join('\n');
+  // strip trailing empty element that split('\n') produces for files ending
+  // with '\n', so line numbering matches LineSplitter used in _readTool.
+  final hadTrailingNewline =
+      lines.isNotEmpty && lines.last.isEmpty && originalContent.endsWith('\n');
+  if (hadTrailingNewline) lines.removeLast();
+  final editResult = _applyHashlineEditsToLines(
+    lines,
+    edits,
+    lenient: fileUnchangedSinceRead,
+  );
+  lines = editResult.lines;
+  final hashWarning = editResult.hashWarning;
+  var updatedCanonical = lines.join('\n');
+  if (hadTrailingNewline) updatedCanonical += '\n';
   if (updatedCanonical == originalContent &&
       (rename == null || rename == filePath)) {
     throw Exception(
@@ -522,11 +801,19 @@ Future<ToolExecutionResult> _executeHashlineEditTool(
     treeUri: ctx.workspace.treeUri,
     relativePath: targetPath,
   );
+  var output = targetPath == filePath
+      ? 'Updated file successfully.'
+      : 'Moved file successfully.';
+  if (hashWarning.isNotEmpty) {
+    output += '\n\n<hash-warning>\n$hashWarning\n</hash-warning>';
+  }
+  final bracketWarning = _checkBracketBalance(restored, targetPath);
+  if (bracketWarning.isNotEmpty) {
+    output += '\n\n<diagnostics file="$targetPath">\n$bracketWarning\nPlease review and fix the bracket issue.\n</diagnostics>';
+  }
   return ToolExecutionResult(
     title: targetPath,
-    output: targetPath == filePath
-        ? 'Updated file successfully.'
-        : 'Moved file successfully.',
+    output: output,
     displayOutput: targetPath == filePath
         ? 'Updated $targetPath'
         : 'Moved $filePath → $targetPath',

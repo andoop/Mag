@@ -221,6 +221,10 @@ extension SessionEnginePrompt on SessionEngine {
       final recentToolSignatures = <String>[];
       const repetitionWindow = 6;
       const repetitionThreshold = 3;
+      final consecutiveToolErrors = <String, int>{};
+      var totalConsecutiveErrors = 0;
+      var emptyResponseRetries = 0;
+      const maxEmptyResponseRetries = 2;
 
       dynamic _canonicalToolArgValue(dynamic value) {
         if (value is Map) {
@@ -380,6 +384,30 @@ extension SessionEnginePrompt on SessionEngine {
           },
         );
         // #endregion
+        if (totalConsecutiveErrors >= 2) {
+          final errSummary = consecutiveToolErrors.entries
+              .where((e) => e.value >= 2)
+              .map((e) => '- ${e.key}: ${e.value} consecutive failures')
+              .join('\n');
+          if (errSummary.isNotEmpty) {
+            conversation = [
+              ...conversation,
+              {
+                'role': 'user',
+                'content':
+                    '<system-warning>\nYou have made repeated tool errors:\n$errSummary\n\n'
+                    'STOP and reconsider your approach. Do NOT retry the same failing call.\n'
+                    'Common fixes:\n'
+                    '- If `write` failed because file exists → use `edit` instead\n'
+                    '- If `edit` failed because no read → call `read` first\n'
+                    '- If `edit` failed because oldString not found → call `read` to get current contents, then use exact text from the output\n'
+                    '- If anchors are stale → call `read` to get fresh LINE#ID anchors\n'
+                    'Read the error messages above carefully and take a DIFFERENT action.\n'
+                    '</system-warning>',
+              },
+            ];
+          }
+        }
         final toolModels = [
           ...toolRegistry.availableForAgent(
             agentDefinition(currentAgent),
@@ -585,14 +613,29 @@ extension SessionEnginePrompt on SessionEngine {
           );
         }
         if (response.toolCalls.isEmpty) {
+          final isEmptyResponse = response.text.trim().isEmpty;
+          final isTimeout = response.finishReason == 'timeout';
+          if (isEmptyResponse && isTimeout && emptyResponseRetries < maxEmptyResponseRetries) {
+            emptyResponseRetries++;
+            _debugLog('prompt-retry', 'empty/timeout response — retry $emptyResponseRetries/$maxEmptyResponseRetries', {
+              'step': step,
+              'finishReason': response.finishReason,
+              'textLength': response.text.length,
+            });
+            continue;
+          }
           _debugLog('prompt-stop', 'breaking because model returned no tool calls', {
             'step': step,
             'finishReason': response.finishReason,
             'textLength': response.text.length,
+            'isEmptyResponse': isEmptyResponse,
+            'isTimeout': isTimeout,
+            'emptyResponseRetries': emptyResponseRetries,
           });
           ranOutOfSteps = false;
           break;
         }
+        emptyResponseRetries = 0;
         var shouldBreak = false;
         for (final call in response.toolCalls) {
           cancelToken.throwIfCancelled();
@@ -676,6 +719,14 @@ extension SessionEnginePrompt on SessionEngine {
                 ? '${result.output.substring(0, 200)}...'
                 : result.output,
           });
+          if (metadata['failed'] == true) {
+            final errorKey = '${call.name}:${_classifyToolError(metadata['error'] as String? ?? '')}';
+            consecutiveToolErrors[errorKey] = (consecutiveToolErrors[errorKey] ?? 0) + 1;
+            totalConsecutiveErrors++;
+          } else {
+            consecutiveToolErrors.clear();
+            totalConsecutiveErrors = 0;
+          }
           if (metadata['switchAgent'] == 'build') {
             currentAgent = 'build';
           }

@@ -72,12 +72,12 @@ Future<ToolExecutionResult> _applyPatchTool(
           final originalLines = envelope.content.isEmpty
               ? <String>[]
               : envelope.content.split('\n');
-          final updatedLines = _applyHashlineEditsToLines(
+          final editResult = _applyHashlineEditsToLines(
             originalLines,
             _hashlineEditsFromPatchSection(section),
           );
           after = _restoreHashlineFileText(
-            updatedLines.join('\n'),
+            editResult.lines.join('\n'),
             envelope,
           );
         } else {

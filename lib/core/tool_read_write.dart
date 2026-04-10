@@ -116,14 +116,16 @@ Future<void> _assertFreshReadForExistingFile(
   final ledger = await _latestToolReadLedgerForPath(ctx, filePath);
   if (ledger == null) {
     throw Exception(
-      'you must read the file $filePath before using $toolName. Use the read tool first',
+      'BLOCKED: You must `read` the file "$filePath" before using `$toolName`.\n'
+      'Required action: call `read` with path "$filePath" first, then retry your `$toolName` call.',
     );
   }
   if (entry.lastModified > ledger.lastModified) {
     throw Exception(
-      'file $filePath has been modified since it was last read '
-      '(mod time: ${_formatLedgerTimestamp(entry.lastModified)}, '
-      'last read: ${_formatLedgerTimestamp(ledger.lastModified)})',
+      'BLOCKED: File "$filePath" has been modified since your last `read` '
+      '(file modified: ${_formatLedgerTimestamp(entry.lastModified)}, '
+      'your last read: ${_formatLedgerTimestamp(ledger.lastModified)}).\n'
+      'Required action: call `read` on "$filePath" again to get the latest content, then rebuild your `$toolName` call with the fresh data.',
     );
   }
 }
@@ -220,10 +222,12 @@ Future<ToolExecutionResult> _readTool(
     throw Exception('Cannot read binary file: $filePath');
   }
 
-  final content = await ctx.bridge.readText(
+  var content = await ctx.bridge.readText(
     treeUri: ctx.workspace.treeUri,
     relativePath: filePath,
   );
+  // Strip BOM so hashes match the edit path and the model doesn't copy it.
+  if (content.startsWith('\uFEFF')) content = content.substring(1);
   final reminder = await ctx.resolveInstructionReminder(filePath);
   final rawLines = const LineSplitter().convert(content);
   if (rawLines.length < safeOffset && !(rawLines.isEmpty && safeOffset == 1)) {
@@ -338,7 +342,9 @@ Future<ToolExecutionResult> _writeTool(
   }
   if (exists) {
     throw Exception(
-      'File already exists: $filePath. Use `edit` or `apply_patch` instead of `write` for existing files.',
+      'BLOCKED: File already exists: $filePath.\n'
+      '`write` is ONLY for creating new files. This file already exists.\n'
+      'Required action: call `read` on "$filePath", then use `edit` or `apply_patch` to modify it.',
     );
   }
   await ctx.askPermission(
@@ -491,12 +497,14 @@ void _logApplyPatchToolFailure({
 }
 
 String _editOldStringNotFoundHint(String filePath) =>
-    'oldString not found in $filePath. '
-    'If you edited this file earlier in the same task, call `read` on the file again first and use the latest contents. '
-    'Then copy the exact text from `read` output (without the `read` line-number prefixes). '
-    'The tool also accepts: per-line trim match, common-indent stripped match, and '
-    'CRLF/LF between lines for multi-line spans. '
-    'Check console for a line starting with [mag-edit][mismatch] for argument details.';
+    'BLOCKED: oldString not found in $filePath.\n'
+    'The text you provided in `oldString` does not match anything in the current file.\n\n'
+    'Required action:\n'
+    '1. Call `read` on "$filePath" to see the actual current file contents.\n'
+    '2. Copy the EXACT text from the `read` output into `oldString` (do NOT include the line-number/hash prefixes like "42#VK|").\n'
+    '3. Retry the `edit` call with the corrected `oldString`.\n\n'
+    'Common mistakes: whitespace differences, stale content from a previous read, '
+    'guessing the text instead of copying it exactly.';
 
 /// Split [s] on logical newlines for flexible matching between lines.
 String _editNormalizeNewlines(String s) =>
@@ -654,7 +662,9 @@ String _performEditReplacement({
 }) {
   if (oldString == newString) {
     throw Exception(
-      'No changes to apply: oldString and newString are identical.',
+      'BLOCKED: No changes to apply — `oldString` and `newString` are identical.\n'
+      'Required action: make `newString` different from `oldString`. '
+      'If you want to verify the file content, use `read` instead.',
     );
   }
   for (final search in _editSearchCandidates(existing, oldString)) {
@@ -780,9 +790,14 @@ Future<ToolExecutionResult> _editTool(
     treeUri: ctx.workspace.treeUri,
     relativePath: filePath,
   );
+  var editOutput = 'Updated file successfully.';
+  final bracketWarning = _checkBracketBalance(out, filePath);
+  if (bracketWarning.isNotEmpty) {
+    editOutput += '\n\n<diagnostics file="$filePath">\n$bracketWarning\nPlease review and fix the bracket issue.\n</diagnostics>';
+  }
   return ToolExecutionResult(
     title: filePath,
-    output: 'Updated file successfully.',
+    output: editOutput,
     displayOutput: 'Updated $filePath',
     metadata: {
       'path': filePath,

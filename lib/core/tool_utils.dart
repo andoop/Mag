@@ -234,3 +234,91 @@ bool _isBrowserPagePath(String path) {
   return lower.endsWith('.html') || lower.endsWith('.htm');
 }
 
+/// Lightweight bracket balance check for common code file types.
+/// Returns a warning string if brackets are unbalanced, or empty string if OK.
+/// Ignores content inside strings and comments for common languages.
+String _checkBracketBalance(String content, String filePath) {
+  final ext = filePath.contains('.') ? filePath.split('.').last.toLowerCase() : '';
+  const codeExtensions = {
+    'dart', 'ts', 'tsx', 'js', 'jsx', 'java', 'kt', 'kts',
+    'swift', 'c', 'cpp', 'h', 'hpp', 'cs', 'go', 'rs', 'py',
+    'json', 'yaml', 'yml', 'xml', 'html', 'css', 'scss', 'less',
+  };
+  if (!codeExtensions.contains(ext)) return '';
+  final pairs = <String, String>{'{': '}', '(': ')', '[': ']'};
+  final closing = <String, String>{'}': '{', ')': '(', ']': '['};
+  final stack = <_BracketInfo>[];
+  var inString = false;
+  var stringChar = '';
+  var inLineComment = false;
+  var inBlockComment = false;
+  var lineNumber = 1;
+
+  for (var i = 0; i < content.length; i++) {
+    final c = content[i];
+    if (c == '\n') {
+      lineNumber++;
+      inLineComment = false;
+      continue;
+    }
+    if (inLineComment) continue;
+    if (inBlockComment) {
+      if (c == '*' && i + 1 < content.length && content[i + 1] == '/') {
+        inBlockComment = false;
+        i++;
+      }
+      continue;
+    }
+    if (inString) {
+      if (c == '\\') {
+        i++;
+        continue;
+      }
+      if (c == stringChar) inString = false;
+      continue;
+    }
+    if (c == '/' && i + 1 < content.length) {
+      if (content[i + 1] == '/') {
+        inLineComment = true;
+        continue;
+      }
+      if (content[i + 1] == '*') {
+        inBlockComment = true;
+        i++;
+        continue;
+      }
+    }
+    if (c == '"' || c == "'" || c == '`') {
+      inString = true;
+      stringChar = c;
+      continue;
+    }
+    if (pairs.containsKey(c)) {
+      stack.add(_BracketInfo(c, lineNumber));
+    } else if (closing.containsKey(c)) {
+      if (stack.isEmpty) {
+        return 'WARNING: Unmatched closing "$c" at line $lineNumber. '
+            'This may indicate a missing opening "${closing[c]}".';
+      }
+      final top = stack.removeLast();
+      if (top.bracket != closing[c]) {
+        return 'WARNING: Mismatched brackets — expected closing for '
+            '"${top.bracket}" (opened at line ${top.line}) but found "$c" at line $lineNumber.';
+      }
+    }
+  }
+  if (stack.isNotEmpty) {
+    final unclosed = stack.reversed.take(3).map(
+        (info) => '"${info.bracket}" at line ${info.line}').join(', ');
+    return 'WARNING: ${stack.length} unclosed bracket(s): $unclosed. '
+        'This may indicate a missing closing bracket.';
+  }
+  return '';
+}
+
+class _BracketInfo {
+  _BracketInfo(this.bracket, this.line);
+  final String bracket;
+  final int line;
+}
+

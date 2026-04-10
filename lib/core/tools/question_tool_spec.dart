@@ -2,9 +2,19 @@ import '../models.dart';
 
 /// System reminder: tool arguments must match each tool's schema and descriptions.
 const String kToolCallingRulesPrompt = '''
-Tool-calling:
-- Tool arguments must be valid JSON. Required string fields must be real strings, never null.
-- Do not omit required keys. Follow each tool's description and parameter schema exactly.
+<tool-calling-rules>
+1. Tool arguments MUST be valid JSON. Required string fields must be real strings, never null. Do not omit required keys.
+2. CRITICAL — read before edit: You MUST call `read` on a file before using `edit` or `apply_patch` on it. If the tool returns an error, `read` the file again before retrying. Never guess file contents.
+3. CRITICAL — write is for NEW files only: The `write` tool creates new files. If a file already exists, you MUST use `edit` or `apply_patch` instead. Never use `write` to update existing files.
+4. CRITICAL — re-read after each edit: If you just modified a file and need to modify it again, call `read` first. Do not reuse stale content from a previous read or edit.
+5. When a tool returns an error, you MUST:
+   a. Read the error message carefully — it contains the exact reason and recovery steps.
+   b. Follow the recovery steps described in the error. Do NOT repeat the same call with the same arguments.
+   c. If the error says to `read` first, then call `read` before retrying.
+   d. If the error says the file already exists, switch to `edit` or `apply_patch`.
+6. Never fabricate file contents or line anchors. Always copy them from actual `read` output.
+7. When using `edit` with hash-anchored LINE#ID references, copy exact anchors from `read` output. Do not guess or fabricate anchors.
+</tool-calling-rules>
 ''';
 
 /// 与 OpenCode `packages/opencode/src/tool/question.txt` 正文一致。

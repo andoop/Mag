@@ -18,15 +18,16 @@ Usage:
 ''';
 
 const String kWriteToolDescription = r'''
-Writes a file to the local filesystem.
+Creates a NEW file on the local filesystem. This tool is ONLY for creating files that do not yet exist.
+
+CRITICAL CONSTRAINT: If the file already exists, this tool will REJECT the call with an error. You MUST use `edit` or `apply_patch` instead for existing files.
 
 Usage:
-- Use this tool to create a new file or replace a file only when a full rewrite is explicitly appropriate.
-- If the file already exists, use `edit` or `apply_patch` instead of `write`.
+- ONLY use this tool to create brand-new files. It will fail on existing files.
 - You MUST provide the complete file body in the `content` parameter.
-- ALWAYS prefer editing existing files in the codebase. NEVER write new files unless explicitly required.
-- NEVER proactively create documentation files (*.md) or README files. Only create documentation files if explicitly requested by the User.
-- Only use emojis if the user explicitly requests it. Avoid writing emojis to files unless asked.
+- ALWAYS prefer editing existing files with `edit` or `apply_patch`. NEVER use `write` to modify existing files.
+- NEVER proactively create documentation files (*.md) or README files unless explicitly requested.
+- If this tool returns "file already exists", switch to `edit` or `apply_patch` — do NOT retry with `write`.
 ''';
 
 const String kApplyPatchToolDescription = r'''

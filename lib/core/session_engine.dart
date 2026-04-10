@@ -70,3 +70,19 @@ String _retryMessage(Object error) {
   }
   return 'Temporary error, retrying...';
 }
+
+String _classifyToolError(String errorText) {
+  final lower = errorText.toLowerCase();
+  if (lower.contains('already exists')) return 'file_exists';
+  if (lower.contains('must read')) return 'no_read';
+  if (lower.contains('modified since')) return 'stale_read';
+  if (lower.contains('oldstring not found') || lower.contains('not found in')) {
+    return 'edit_mismatch';
+  }
+  if (lower.contains('changed since last read')) return 'stale_anchor';
+  if (lower.contains('missing required')) return 'missing_args';
+  if (lower.contains('invalid') && lower.contains('arguments')) {
+    return 'invalid_args';
+  }
+  return 'other';
+}

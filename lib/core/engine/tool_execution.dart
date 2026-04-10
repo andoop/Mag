@@ -210,8 +210,9 @@ extension SessionEngineTools on SessionEngine {
         'args': call.arguments,
       });
       final errText = error.toString();
+      final recovery = _toolErrorRecoveryHint(call.name, errText);
       final toolOutput =
-          'Tool `${call.name}` failed — the model should read this and fix the issue.\n\n$errText';
+          '<tool_error tool="${call.name}">\n$errText\n</tool_error>\n\n<recovery_instructions>\n$recovery\n</recovery_instructions>';
       await _updateToolState(
         workspace: workspace,
         sessionId: session.id,
@@ -519,6 +520,52 @@ extension SessionEngineTools on SessionEngine {
       },
       directory: workspace.treeUri,
     ));
+  }
+
+  String _toolErrorRecoveryHint(String toolName, String errorText) {
+    final lower = errorText.toLowerCase();
+    if (toolName == 'write' && lower.contains('already exists')) {
+      return 'STOP using `write` for this file. The file already exists.\n'
+          'Step 1: Call `read` on the file to get its current contents.\n'
+          'Step 2: Use `edit` (with oldString/newString or LINE#ID edits) to make changes.\n'
+          'Do NOT call `write` again on this file.';
+    }
+    if ((toolName == 'edit' || toolName == 'apply_patch') &&
+        lower.contains('must read')) {
+      return 'You have not read this file yet.\n'
+          'Step 1: Call `read` on the file path mentioned in the error.\n'
+          'Step 2: Then retry your `$toolName` call using the fresh content from `read`.\n'
+          'Do NOT retry `$toolName` without reading first.';
+    }
+    if ((toolName == 'edit' || toolName == 'apply_patch') &&
+        lower.contains('modified since')) {
+      return 'The file has changed since you last read it (possibly by another edit).\n'
+          'Step 1: Call `read` on the file to get the latest contents.\n'
+          'Step 2: Rebuild your edit using the new content and line anchors.\n'
+          'Do NOT reuse old content or anchors.';
+    }
+    if (toolName == 'edit' && lower.contains('oldstring not found')) {
+      return 'The oldString you provided does not match any text in the file.\n'
+          'Step 1: Call `read` on the file to see its actual current contents.\n'
+          'Step 2: Copy the exact text from `read` output (without line-number prefixes) into oldString.\n'
+          'Do NOT guess or slightly modify the text. It must match exactly.';
+    }
+    if (toolName == 'edit' && lower.contains('changed since last read')) {
+      return 'Your LINE#ID anchors are stale — the file content has changed.\n'
+          'Step 1: Call `read` on the file to get updated LINE#ID anchors.\n'
+          'Step 2: Use the new anchors from the fresh `read` output.\n'
+          'Do NOT reuse anchors from a previous `read`.';
+    }
+    if (lower.contains('missing required')) {
+      return 'You omitted required parameters. Re-read the error message carefully, '
+          'provide ALL required parameters listed above, and retry the call.';
+    }
+    if (lower.contains('invalid') && lower.contains('arguments')) {
+      return 'Your tool arguments are malformed. Check the JSON syntax and '
+          'ensure all parameter types match the schema. Then retry.';
+    }
+    return 'Read the error message above carefully. Fix the issue it describes, '
+        'then retry. Do NOT repeat the exact same call — that will produce the same error.';
   }
 
   void _invalidatePromptContextForToolResult({

@@ -22,7 +22,9 @@ class ModelGateway {
       'stream': true,
       'stream_options': {'include_usage': true},
       'max_tokens': maxOutputTokens,
-      'tools': tools
+    };
+    if (tools.isNotEmpty) {
+      payload['tools'] = tools
           .map(
             (tool) => {
               'type': 'function',
@@ -33,8 +35,8 @@ class ModelGateway {
               },
             },
           )
-          .toList(),
-    };
+          .toList();
+    }
     if (format?.type == OutputFormatType.jsonSchema) {
       payload['tool_choice'] = {
         'type': 'function',
@@ -307,12 +309,15 @@ class ModelGateway {
     var usage = const ModelUsage();
     var finishReason = 'stop';
     var eventCount = 0;
+    var closedByTimeout = false;
+    var receivedModelFinishReason = false;
 
     final sseStream = response
         .transform(utf8.decoder)
         .transform(const LineSplitter())
-        .timeout(const Duration(seconds: 90), onTimeout: (sink) {
+        .timeout(const Duration(seconds: 300), onTimeout: (sink) {
       _debugLog('gateway', 'SSE idle timeout – closing stream');
+      closedByTimeout = true;
       sink.close();
     });
 
@@ -400,9 +405,18 @@ class ModelGateway {
         });
       }
 
-      if (choice['finish_reason'] != null) break;
+      if (choice['finish_reason'] != null) {
+        receivedModelFinishReason = true;
+        break;
+      }
     }
     client.close(force: true);
+    if (closedByTimeout && !receivedModelFinishReason) {
+      finishReason = 'timeout';
+      _debugLog('gateway',
+          'stream closed by idle timeout without model finish_reason '
+          '(events=$eventCount text=${text.length} reasoning=${reasoning.length})');
+    }
     _debugLog('gateway',
         'complete end events=$eventCount tools=${toolBuffers.length}');
 
