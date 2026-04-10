@@ -407,7 +407,12 @@ class ModelGateway {
 
       if (choice['finish_reason'] != null) {
         receivedModelFinishReason = true;
-        break;
+        // Do NOT break here. The OpenAI streaming protocol with
+        // stream_options.include_usage sends the usage data in a separate
+        // final chunk AFTER the finish_reason chunk (with choices: []).
+        // Breaking early skips that chunk, leaving usage at zero for
+        // providers that follow the standard (e.g. Qwen/Alibaba).
+        // The loop terminates on [DONE] or the idle timeout.
       }
     }
     client.close(force: true);
