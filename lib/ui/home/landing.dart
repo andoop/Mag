@@ -4,6 +4,13 @@ extension _HomePageLanding on _HomePageState {
   Widget _buildNewSessionLanding(BuildContext context, AppState state) {
     final ws = state.workspace!;
     final oc = context.oc;
+    final currentModel = state.modelConfig ?? ModelConfig.defaults();
+    final currentModelChoice = _findModelChoice(
+      currentModel.provider,
+      currentModel.model,
+      config: currentModel,
+    );
+    final currentVariant = _effectiveSelectedVariant(state);
     return ColoredBox(
       color: oc.pageBackground,
       child: ListView(
@@ -41,6 +48,32 @@ extension _HomePageLanding on _HomePageState {
               height: 1.35,
               color: oc.muted,
             ),
+          ),
+          const SizedBox(height: 14),
+          Wrap(
+            alignment: WrapAlignment.center,
+            spacing: 8,
+            runSpacing: 8,
+            children: [
+              _TinyTag(
+                label: _selectedAgent ?? state.session?.agent ?? 'build',
+                color: oc.tagBlueGrey,
+              ),
+              _TinyTag(
+                label: _providerLabel(
+                  currentModel.provider,
+                  config: currentModel,
+                  state: state,
+                ),
+                color: oc.tagGreen,
+              ),
+              _TinyTag(
+                label: currentModelChoice?.name ?? currentModel.model,
+                color: oc.tagBlue,
+              ),
+              if (currentVariant != null && currentVariant.isNotEmpty)
+                _TinyTag(label: currentVariant, color: oc.tagOrange),
+            ],
           ),
           const SizedBox(height: 12),
           Row(

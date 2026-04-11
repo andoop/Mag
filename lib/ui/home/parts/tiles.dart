@@ -129,6 +129,23 @@ class _PartTile extends StatelessWidget {
             ],
           ),
         );
+      case PartType.file:
+        final attachment = <String, dynamic>{
+          'type': part.data['type'] as String? ?? 'file',
+          'mime': part.data['mime'] as String? ?? 'application/octet-stream',
+          'url':
+              part.data['path'] as String? ?? part.data['url'] as String? ?? '',
+          'filename': part.data['filename'] as String? ?? '',
+          ...part.data,
+        };
+        return _AttachmentTile(
+          attachment: attachment,
+          controller: controller,
+          workspace: workspace,
+          serverUri: serverUri,
+          onInsertPromptReference: onInsertPromptReference,
+          onSendPromptReference: onSendPromptReference,
+        );
       case PartType.tool:
         final toolState =
             Map<String, dynamic>.from(part.data['state'] as Map? ?? const {});

@@ -1,5 +1,19 @@
 part of '../session_engine.dart';
 
+class _ModelInputCapabilities {
+  const _ModelInputCapabilities({
+    this.images = false,
+    this.audio = false,
+    this.video = false,
+    this.pdf = false,
+  });
+
+  final bool images;
+  final bool audio;
+  final bool video;
+  final bool pdf;
+}
+
 class ModelGateway {
   bool _usesAnthropicApi(ModelConfig config) => config.provider == 'anthropic';
 
@@ -9,39 +23,64 @@ class ModelGateway {
   bool _allowsEmptyApiKey(ModelConfig config) =>
       config.provider == 'ollama' || config.isMagProvider;
 
-  // ---------------------------------------------------------------------------
-  // Provider-specific parameter inference (ported from opencode transform.ts)
-  // ---------------------------------------------------------------------------
-
-  double? _inferTemperature(String model) {
-    final lower = model.toLowerCase();
-    if (lower.contains('qwen') || lower.contains('qwq')) return 0.55;
-    if (lower.contains('gemini')) return 1.0;
-    if (lower.contains('glm-4')) return 1.0;
-    if (lower.contains('minimax')) return 1.0;
-    if (lower.contains('kimi-k2')) {
-      if (['thinking', 'k2.', 'k2p', 'k2-5'].any(lower.contains)) return 1.0;
-      return 0.6;
+  JsonMap _runtimeRequestOptions(ModelConfig config, {String? sessionId}) {
+    final value = sessionId?.trim() ?? '';
+    if (value.isEmpty) return const {};
+    if (config.provider == 'openai' || config.provider == 'venice') {
+      return {'promptCacheKey': value};
     }
-    return null;
+    if (config.provider == 'openrouter') {
+      return {'prompt_cache_key': value};
+    }
+    return const {};
   }
 
-  double? _inferTopP(String model) {
-    final lower = model.toLowerCase();
-    if (lower.contains('qwen') || lower.contains('qwq')) return 1;
-    if (['minimax-m2', 'gemini', 'kimi-k2.5', 'kimi-k2p5', 'kimi-k2-5']
-        .any(lower.contains)) return 0.95;
-    return null;
+  JsonMap _variantRequestOptions(ModelConfig config, {String? variant}) {
+    final key = variant?.trim() ?? '';
+    if (key.isEmpty) return const {};
+    final variants = config.currentModelVariants;
+    if (variants == null) return const {};
+    final selected = variants[key];
+    if (selected == null) return const {};
+    return Map<String, dynamic>.from(selected);
   }
 
-  int? _inferTopK(String model) {
-    final lower = model.toLowerCase();
-    if (lower.contains('minimax-m2')) {
-      if (['m2.', 'm25', 'm21'].any(lower.contains)) return 40;
-      return 20;
+  JsonMap _resolvedRequestOptions(
+    ModelConfig config, {
+    String? sessionId,
+    bool small = false,
+    String? variant,
+  }) {
+    return {
+      ...Map<String, dynamic>.from(
+        config.currentModelOptions ??
+            inferProviderModelOptionsFallback(
+              providerId: config.provider,
+              modelId: config.model,
+              capabilities: config.currentModelCapabilities,
+            ),
+      ),
+      if (small)
+        ...inferProviderSmallOptionsFallback(
+          providerId: config.provider,
+          modelId: config.model,
+        ),
+      if (!small) ..._variantRequestOptions(config, variant: variant),
+      ..._runtimeRequestOptions(config, sessionId: sessionId),
+    };
+  }
+
+  void _applyRequestOptions(
+    Map<String, dynamic> payload,
+    JsonMap options, {
+    required Set<String> reservedKeys,
+    required bool allowTemperature,
+  }) {
+    for (final entry in options.entries) {
+      if (reservedKeys.contains(entry.key)) continue;
+      if (entry.key == 'temperature' && !allowTemperature) continue;
+      payload[entry.key] = entry.value;
     }
-    if (lower.contains('gemini')) return 64;
-    return null;
   }
 
   /// Sanitize tool call IDs for Claude: only [a-zA-Z0-9_-] allowed.
@@ -60,6 +99,18 @@ class ModelGateway {
     List<Map<String, dynamic>> messages,
     ModelConfig config,
   ) {
+    final interleavedField = _interleavedReasoningField(config);
+    messages = messages.map((item) {
+      final msg = Map<String, dynamic>.from(item);
+      final reasoningText =
+          (msg.remove('reasoning_text') as String? ?? '').trim();
+      if (interleavedField != null &&
+          (msg['role'] as String? ?? '') == 'assistant' &&
+          reasoningText.isNotEmpty) {
+        msg[interleavedField] = reasoningText;
+      }
+      return msg;
+    }).toList();
     final lower = config.model.toLowerCase();
     final isMistral = config.provider == 'mistral' ||
         lower.contains('mistral') ||
@@ -101,6 +152,331 @@ class ModelGateway {
     return result;
   }
 
+  String? _mimeToModality(String mime) {
+    if (mime.startsWith('image/')) return 'image';
+    if (mime.startsWith('audio/')) return 'audio';
+    if (mime.startsWith('video/')) return 'video';
+    if (mime == 'application/pdf') return 'pdf';
+    return null;
+  }
+
+  bool _isEmptyBase64DataUrl(String value) {
+    final match = RegExp(r'^data:([^;]+);base64,(.*)$').firstMatch(value);
+    if (match == null) return false;
+    final data = match.group(2) ?? '';
+    return data.isEmpty;
+  }
+
+  List<Map<String, dynamic>> _sanitizeUserPartsForModel(
+    List<Map<String, dynamic>> messages,
+    ModelConfig config,
+  ) {
+    return messages.map((message) {
+      if ((message['role'] as String? ?? '') != 'user') return message;
+      final content = message['content'];
+      if (content is! List) return message;
+      final next = content.map((item) {
+        if (item is! Map) return item;
+        return _sanitizeUserPart(
+          Map<String, dynamic>.from(item),
+          config,
+        );
+      }).toList();
+      return {
+        ...message,
+        'content': next,
+      };
+    }).toList();
+  }
+
+  List<Map<String, dynamic>> _transformOpenAiUserParts(
+    List<Map<String, dynamic>> messages,
+    ModelConfig config,
+  ) {
+    return messages.map((message) {
+      if ((message['role'] as String? ?? '') != 'user') return message;
+      final content = message['content'];
+      if (content is! List) return message;
+      final next = content.map((item) {
+        if (item is! Map) return item;
+        return _normalizeOpenAiUserPart(
+          Map<String, dynamic>.from(item),
+          config,
+        );
+      }).toList();
+      return {
+        ...message,
+        'content': next,
+      };
+    }).toList();
+  }
+
+  Map<String, dynamic> _sanitizeUserPart(
+    Map<String, dynamic> part,
+    ModelConfig config,
+  ) {
+    final type = part['type'] as String? ?? '';
+    if (type == 'file') {
+      return _sanitizeUserFilePart(part, config);
+    }
+    if (type == 'image_url') {
+      return _sanitizeImageUrlPart(part, config);
+    }
+    return part;
+  }
+
+  Map<String, dynamic> _normalizeOpenAiUserPart(
+    Map<String, dynamic> part,
+    ModelConfig config,
+  ) {
+    final type = part['type'] as String? ?? '';
+    if (type == 'file') {
+      return _normalizeOpenAiFilePart(part, config);
+    }
+    if (type == 'image_url' && !_supportsImageInput(config)) {
+      return _unsupportedUserFileText('image/*');
+    }
+    return part;
+  }
+
+  Map<String, dynamic> _normalizeOpenAiFilePart(
+    Map<String, dynamic> part,
+    ModelConfig config,
+  ) {
+    final mediaType = part['mediaType'] as String? ?? '';
+    final url = part['url'] as String? ?? '';
+    if (mediaType.startsWith('image/')) {
+      if (!_supportsImageInput(config)) {
+        return _unsupportedUserFileText(mediaType,
+            filename: part['filename'] as String?);
+      }
+      return {
+        'type': 'image_url',
+        'image_url': {'url': url},
+      };
+    }
+    if (mediaType == 'application/pdf') {
+      if (!_supportsPdfInput(config)) {
+        return _unsupportedUserFileText(mediaType,
+            filename: part['filename'] as String?);
+      }
+    }
+    return part;
+  }
+
+  Map<String, dynamic> _sanitizeUserFilePart(
+    Map<String, dynamic> part,
+    ModelConfig config,
+  ) {
+    final mediaType = part['mediaType'] as String? ?? '';
+    final filename = part['filename'] as String?;
+    final url = part['url'] as String? ?? '';
+    final modality = _mimeToModality(mediaType);
+    if (modality == null) return part;
+    if (modality == 'image' &&
+        url.startsWith('data:') &&
+        _isEmptyBase64DataUrl(url)) {
+      return {
+        'type': 'text',
+        'text':
+            'ERROR: Image file is empty or corrupted. Please provide a valid image.',
+      };
+    }
+    if (_supportsInputModality(config, modality)) return part;
+    return _unsupportedUserFileText(mediaType, filename: filename);
+  }
+
+  Map<String, dynamic> _sanitizeImageUrlPart(
+    Map<String, dynamic> part,
+    ModelConfig config,
+  ) {
+    final imageUrl = Map<String, dynamic>.from(
+      part['image_url'] as Map? ?? const {},
+    );
+    final url = imageUrl['url'] as String? ?? '';
+    if (url.startsWith('data:image/') && _isEmptyBase64DataUrl(url)) {
+      return {
+        'type': 'text',
+        'text':
+            'ERROR: Image file is empty or corrupted. Please provide a valid image.',
+      };
+    }
+    if (_supportsImageInput(config)) return part;
+    return _unsupportedUserFileText('image/*');
+  }
+
+  Map<String, dynamic> _unsupportedUserFileText(
+    String mediaType, {
+    String? filename,
+  }) {
+    final modality = _mimeToModality(mediaType) ??
+        (mediaType == 'application/pdf' ? 'pdf' : 'file');
+    final name = (filename != null && filename.trim().isNotEmpty)
+        ? '"$filename"'
+        : modality;
+    return {
+      'type': 'text',
+      'text':
+          'ERROR: Cannot read $name (this model does not support $modality input). Inform the user.',
+    };
+  }
+
+  _ModelInputCapabilities _inputCapabilities(ModelConfig config) {
+    final catalogModalities = config.currentModelModalities?.input
+            .map((item) => item.toLowerCase())
+            .toSet() ??
+        const <String>{};
+    return _ModelInputCapabilities(
+      images: catalogModalities.contains('image'),
+      audio: catalogModalities.contains('audio'),
+      video: catalogModalities.contains('video'),
+      pdf: catalogModalities.contains('pdf'),
+    );
+  }
+
+  bool _supportsImageInput(ModelConfig config) {
+    return _supportsInputModality(config, 'image');
+  }
+
+  bool _supportsPdfInput(ModelConfig config) {
+    return _supportsInputModality(config, 'pdf');
+  }
+
+  bool _supportsTemperatureControl(ModelConfig config) {
+    return config.currentModelCapabilities?.temperature ?? false;
+  }
+
+  bool _supportsToolCalls(ModelConfig config) {
+    return config.currentModelCapabilities?.toolCall ?? true;
+  }
+
+  bool _providerNeedsCompatibilityToolStub(ModelConfig config) {
+    final provider = config.provider.toLowerCase();
+    final model = config.model.toLowerCase();
+    final baseUrl = config.baseUrl.toLowerCase();
+    return provider.contains('litellm') ||
+        model.contains('litellm') ||
+        baseUrl.contains('litellm') ||
+        provider.contains('bedrock') ||
+        baseUrl.contains('bedrock');
+  }
+
+  bool _historyContainsToolCalls(List<Map<String, dynamic>> messages) {
+    for (final message in messages) {
+      final role = (message['role'] as String? ?? '').trim();
+      if (role == 'tool') return true;
+      final toolCalls = message['tool_calls'];
+      if (toolCalls is List && toolCalls.isNotEmpty) return true;
+    }
+    return false;
+  }
+
+  JsonMap _normalizeToolSchema(JsonMap schema) {
+    dynamic visit(dynamic value) {
+      if (value is List) {
+        return value.map(visit).toList(growable: false);
+      }
+      if (value is! Map) return value;
+      final out = <String, dynamic>{};
+      for (final entry in value.entries) {
+        final key = entry.key.toString();
+        if (key == r'$schema' ||
+            key == 'default' ||
+            key == 'example' ||
+            key == 'examples' ||
+            key == 'title') {
+          continue;
+        }
+        final normalized = visit(entry.value);
+        if (key == 'required' && normalized is List && normalized.isEmpty) {
+          continue;
+        }
+        out[key] = normalized;
+      }
+      return out;
+    }
+
+    return Map<String, dynamic>.from(visit(schema) as Map);
+  }
+
+  String _normalizeToolName(String id) {
+    final trimmed = id.trim();
+    if (trimmed.isEmpty) return 'invalid_tool';
+    return trimmed.replaceAll(RegExp(r'[^a-zA-Z0-9_-]'), '_');
+  }
+
+  ToolDefinitionModel _noopCompatibilityTool() {
+    return ToolDefinitionModel(
+      id: '_noop',
+      description:
+          'Do not call this tool. It exists only for API compatibility and must never be invoked.',
+      parameters: const {
+        'type': 'object',
+        'properties': {
+          'reason': {'type': 'string', 'description': 'Unused'},
+        },
+        'additionalProperties': false,
+      },
+    );
+  }
+
+  List<ToolDefinitionModel> _prepareToolsForProvider(
+    ModelConfig config,
+    List<ToolDefinitionModel> tools,
+    List<Map<String, dynamic>> messages,
+  ) {
+    final normalized = tools
+        .map(
+          (tool) => ToolDefinitionModel(
+            id: _normalizeToolName(tool.id),
+            description: tool.description.trim(),
+            parameters: _normalizeToolSchema(tool.parameters),
+          ),
+        )
+        .toList(growable: true);
+    if (_supportsToolCalls(config) &&
+        normalized.isEmpty &&
+        _providerNeedsCompatibilityToolStub(config) &&
+        _historyContainsToolCalls(messages)) {
+      normalized.add(_noopCompatibilityTool());
+    }
+    return normalized;
+  }
+
+  String? _interleavedReasoningField(ModelConfig config) {
+    final interleaved = config.currentModelCapabilities?.interleaved;
+    if (interleaved == null || !interleaved.enabled) return null;
+    final field = interleaved.field?.trim() ?? '';
+    return field.isEmpty ? null : field;
+  }
+
+  bool _transportSupportsInputModality(ModelConfig config, String modality) {
+    if (_usesAnthropicApi(config)) {
+      return modality == 'image' || modality == 'pdf';
+    }
+    return modality == 'image';
+  }
+
+  bool _supportsInputModality(ModelConfig config, String modality) {
+    final capabilities = _inputCapabilities(config);
+    switch (modality) {
+      case 'image':
+        return capabilities.images &&
+            _transportSupportsInputModality(config, modality);
+      case 'audio':
+        return capabilities.audio &&
+            _transportSupportsInputModality(config, modality);
+      case 'video':
+        return capabilities.video &&
+            _transportSupportsInputModality(config, modality);
+      case 'pdf':
+        return capabilities.pdf &&
+            _transportSupportsInputModality(config, modality);
+      default:
+        return false;
+    }
+  }
+
   int _resolvedMaxOutputTokens(ModelConfig config) => maxOutputTokensForModel(
         config.model,
         limit: config.currentModelLimit,
@@ -115,8 +491,14 @@ class ModelGateway {
     required List<ToolDefinitionModel> tools,
     required MessageFormat? format,
     required int? maxOutputTokens,
+    String? sessionId,
+    bool small = false,
+    String? variant,
   }) {
-    final normalized = _normalizeOpenAiMessages(messages, config);
+    final sanitized = _sanitizeUserPartsForModel(messages, config);
+    final openAiReady = _transformOpenAiUserParts(sanitized, config);
+    final normalized = _normalizeOpenAiMessages(openAiReady, config);
+    final normalizedTools = _prepareToolsForProvider(config, tools, normalized);
     final payload = <String, dynamic>{
       'model': config.model,
       'messages': normalized,
@@ -124,14 +506,27 @@ class ModelGateway {
       'stream_options': {'include_usage': true},
     };
     if (maxOutputTokens != null) payload['max_tokens'] = maxOutputTokens;
-    final temperature = _inferTemperature(config.model);
-    if (temperature != null) payload['temperature'] = temperature;
-    final topP = _inferTopP(config.model);
-    if (topP != null) payload['top_p'] = topP;
-    final topK = _inferTopK(config.model);
-    if (topK != null) payload['top_k'] = topK;
-    if (tools.isNotEmpty) {
-      payload['tools'] = tools
+    _applyRequestOptions(
+      payload,
+      _resolvedRequestOptions(
+        config,
+        sessionId: sessionId,
+        small: small,
+        variant: variant,
+      ),
+      reservedKeys: const {
+        'model',
+        'messages',
+        'stream',
+        'stream_options',
+        'max_tokens',
+        'tools',
+        'tool_choice',
+      },
+      allowTemperature: _supportsTemperatureControl(config),
+    );
+    if (_supportsToolCalls(config) && normalizedTools.isNotEmpty) {
+      payload['tools'] = normalizedTools
           .map(
             (tool) => {
               'type': 'function',
@@ -144,7 +539,8 @@ class ModelGateway {
           )
           .toList();
     }
-    if (format?.type == OutputFormatType.jsonSchema) {
+    if (_supportsToolCalls(config) &&
+        format?.type == OutputFormatType.jsonSchema) {
       payload['tool_choice'] = {
         'type': 'function',
         'function': {'name': 'StructuredOutput'}
@@ -159,12 +555,16 @@ class ModelGateway {
     required List<ToolDefinitionModel> tools,
     required MessageFormat? format,
     required int maxOutputTokens,
+    String? sessionId,
+    bool small = false,
+    String? variant,
   }) {
     final isClaude = config.model.toLowerCase().contains('claude');
     final systemParts = <String>[];
     final conversation = <JsonMap>[];
 
-    for (final message in messages) {
+    final sanitized = _sanitizeUserPartsForModel(messages, config);
+    for (final message in sanitized) {
       final role = (message['role'] as String? ?? 'user').trim();
       if (role == 'system') {
         final text = _extractText(message['content']).trim();
@@ -191,9 +591,13 @@ class ModelGateway {
       }
 
       final blocks = <JsonMap>[];
-      final text = _extractText(message['content']).trim();
-      if (text.isNotEmpty) {
-        blocks.add({'type': 'text', 'text': text});
+      if (role == 'user') {
+        blocks.addAll(_anthropicUserBlocks(message['content']));
+      } else {
+        final text = _extractText(message['content']).trim();
+        if (text.isNotEmpty) {
+          blocks.add({'type': 'text', 'text': text});
+        }
       }
       if (role == 'assistant') {
         final toolCalls = (message['tool_calls'] as List?) ?? const [];
@@ -209,6 +613,10 @@ class ModelGateway {
             'name': function['name'] as String? ?? 'invalid',
             'input': _decodeArguments(
               function['arguments'] as String? ?? '{}',
+              source: 'anthropic-payload-history',
+              provider: config.provider,
+              model: config.model,
+              toolName: function['name'] as String?,
             ),
           });
         }
@@ -243,19 +651,37 @@ class ModelGateway {
       }
       return false;
     });
+    final normalizedTools =
+        _prepareToolsForProvider(config, tools, conversation);
 
     final payload = <String, dynamic>{
       'model': config.model,
       'max_tokens': maxOutputTokens,
       'messages': conversation,
     };
-    final temperature = _inferTemperature(config.model);
-    if (temperature != null) payload['temperature'] = temperature;
+    _applyRequestOptions(
+      payload,
+      _resolvedRequestOptions(
+        config,
+        sessionId: sessionId,
+        small: small,
+        variant: variant,
+      ),
+      reservedKeys: const {
+        'model',
+        'max_tokens',
+        'messages',
+        'system',
+        'tools',
+        'tool_choice',
+      },
+      allowTemperature: _supportsTemperatureControl(config),
+    );
     if (systemParts.isNotEmpty) {
       payload['system'] = systemParts.join('\n\n');
     }
-    if (tools.isNotEmpty) {
-      payload['tools'] = tools
+    if (_supportsToolCalls(config) && normalizedTools.isNotEmpty) {
+      payload['tools'] = normalizedTools
           .map(
             (tool) => {
               'name': tool.id,
@@ -265,7 +691,8 @@ class ModelGateway {
           )
           .toList();
     }
-    if (format?.type == OutputFormatType.jsonSchema) {
+    if (_supportsToolCalls(config) &&
+        format?.type == OutputFormatType.jsonSchema) {
       payload['tool_choice'] = {
         'type': 'tool',
         'name': 'StructuredOutput',
@@ -274,11 +701,104 @@ class ModelGateway {
     return payload;
   }
 
+  List<JsonMap> _anthropicUserBlocks(dynamic content) {
+    if (content == null) return const [];
+    if (content is String) {
+      final text = content.trim();
+      return text.isEmpty
+          ? const []
+          : <JsonMap>[
+              {'type': 'text', 'text': text}
+            ];
+    }
+    if (content is! List) {
+      final text = content.toString().trim();
+      return text.isEmpty
+          ? const []
+          : <JsonMap>[
+              {'type': 'text', 'text': text}
+            ];
+    }
+    final blocks = <JsonMap>[];
+    for (final item in content) {
+      if (item is! Map) continue;
+      final map = Map<String, dynamic>.from(item);
+      final type = map['type'] as String? ?? '';
+      if (type == 'text') {
+        final text = (map['text'] as String? ?? '').trim();
+        if (text.isNotEmpty) {
+          blocks.add({'type': 'text', 'text': text});
+        }
+        continue;
+      }
+      if (type == 'image_url') {
+        final imageUrl = Map<String, dynamic>.from(
+          map['image_url'] as Map? ?? const {},
+        );
+        final url = imageUrl['url'] as String? ?? '';
+        final fileBlock = _anthropicFileBlockFromDataUrl(url);
+        if (fileBlock != null) {
+          blocks.add(fileBlock);
+        } else if (url.isNotEmpty) {
+          blocks.add({'type': 'text', 'text': '[Attached image: $url]'});
+        }
+        continue;
+      }
+      if (type == 'file') {
+        final url = map['url'] as String? ?? '';
+        final filename = map['filename'] as String? ?? 'file';
+        final mediaType = map['mediaType'] as String? ?? '';
+        final fileBlock = _anthropicFileBlockFromDataUrl(url);
+        if (fileBlock != null) {
+          blocks.add(fileBlock);
+        } else if (url.isNotEmpty) {
+          blocks.add({
+            'type': 'text',
+            'text': '[Attached $mediaType: $filename]',
+          });
+        }
+      }
+    }
+    return blocks;
+  }
+
+  JsonMap? _anthropicFileBlockFromDataUrl(String url) {
+    final match = RegExp(r'^data:([^;]+);base64,(.+)$').firstMatch(url);
+    if (match == null) return null;
+    final mediaType = match.group(1) ?? '';
+    final data = match.group(2) ?? '';
+    if (mediaType.isEmpty || data.isEmpty) return null;
+    if (mediaType.startsWith('image/')) {
+      return {
+        'type': 'image',
+        'source': {
+          'type': 'base64',
+          'media_type': mediaType,
+          'data': data,
+        },
+      };
+    }
+    if (mediaType == 'application/pdf') {
+      return {
+        'type': 'document',
+        'source': {
+          'type': 'base64',
+          'media_type': mediaType,
+          'data': data,
+        },
+      };
+    }
+    return null;
+  }
+
   JsonMap buildDebugPayload({
     required ModelConfig config,
     required List<Map<String, dynamic>> messages,
     required List<ToolDefinitionModel> tools,
     required MessageFormat? format,
+    String? sessionId,
+    bool small = false,
+    String? variant,
   }) {
     final maxOut = _resolvedMaxOutputTokens(config);
     if (_usesAnthropicApi(config)) {
@@ -288,6 +808,9 @@ class ModelGateway {
         tools: tools,
         format: format,
         maxOutputTokens: maxOut,
+        sessionId: sessionId,
+        small: small,
+        variant: variant,
       );
     }
     return _buildOpenAiPayload(
@@ -296,6 +819,9 @@ class ModelGateway {
       tools: tools,
       format: format,
       maxOutputTokens: _requestedMaxOutputTokens(config),
+      sessionId: sessionId,
+      small: small,
+      variant: variant,
     );
   }
 
@@ -305,6 +831,9 @@ class ModelGateway {
     required List<ToolDefinitionModel> tools,
     required MessageFormat? format,
     required int maxOutputTokens,
+    String? sessionId,
+    bool small = false,
+    String? variant,
     CancelToken? cancelToken,
   }) async {
     cancelToken?.throwIfCancelled();
@@ -337,6 +866,9 @@ class ModelGateway {
       tools: tools,
       format: format,
       maxOutputTokens: maxOutputTokens,
+      sessionId: sessionId,
+      small: small,
+      variant: variant,
     );
     final encodedPayload = utf8.encode(jsonEncode(payload));
     request.contentLength = encodedPayload.length;
@@ -367,6 +899,9 @@ class ModelGateway {
     required List<ToolDefinitionModel> tools,
     required MessageFormat? format,
     required int? maxOutputTokens,
+    String? sessionId,
+    bool small = false,
+    String? variant,
     CancelToken? cancelToken,
     FutureOr<void> Function(String delta)? onTextDelta,
     FutureOr<void> Function(String delta)? onReasoningDelta,
@@ -423,6 +958,9 @@ class ModelGateway {
       tools: tools,
       format: format,
       maxOutputTokens: maxOutputTokens,
+      sessionId: sessionId,
+      small: small,
+      variant: variant,
     );
     final encodedPayload = utf8.encode(jsonEncode(payload));
     request.contentLength = encodedPayload.length;
@@ -508,17 +1046,31 @@ class ModelGateway {
       for (final item in toolCalls) {
         final map = Map<String, dynamic>.from(item as Map);
         final index = (map['index'] as int?) ?? 0;
-        final buffer = toolBuffers.putIfAbsent(index, () => _ToolCallBuffer());
         final incomingId = (map['id'] as String?)?.trim() ?? '';
-        if (incomingId.isNotEmpty) {
-          buffer.id = incomingId;
-        }
         final function =
             Map<String, dynamic>.from(map['function'] as Map? ?? const {});
         final incomingName = (function['name'] as String?)?.trim() ?? '';
+        final existing = toolBuffers[index];
+        if (existing == null) {
+          if (incomingId.isEmpty) {
+            throw Exception(
+              'Invalid tool call delta: expected id for new tool call at index $index',
+            );
+          }
+          if (incomingName.isEmpty) {
+            throw Exception(
+              'Invalid tool call delta: expected function.name for new tool call at index $index',
+            );
+          }
+        }
+        final buffer = existing ?? _ToolCallBuffer();
+        if (incomingId.isNotEmpty) {
+          buffer.id = incomingId;
+        }
         if (incomingName.isNotEmpty) {
           buffer.name = incomingName;
         }
+        toolBuffers[index] = buffer;
         final args = function['arguments'] as String? ?? '';
         if (args.isNotEmpty) {
           buffer.arguments.write(args);
@@ -588,10 +1140,27 @@ class ModelGateway {
     final toolCalls = toolBuffers.entries.map((entry) {
       final buffer = entry.value;
       final callId = (buffer.id ?? '').trim();
+      final toolName = (buffer.name ?? '').trim();
+      if (callId.isEmpty) {
+        throw Exception(
+          'Invalid tool call stream ended without id for index ${entry.key}',
+        );
+      }
+      if (toolName.isEmpty) {
+        throw Exception(
+          'Invalid tool call stream ended without function.name for index ${entry.key}',
+        );
+      }
       return ToolCall(
-        id: callId.isNotEmpty ? callId : newId('toolcall'),
-        name: buffer.name ?? 'invalid',
-        arguments: _decodeArguments(buffer.arguments.toString()),
+        id: callId,
+        name: toolName,
+        arguments: _decodeArguments(
+          buffer.arguments.toString(),
+          source: 'openai-stream',
+          provider: config.provider,
+          model: config.model,
+          toolName: toolName,
+        ),
       );
     }).toList();
     _debugLog('gateway-result', 'assembled model response', {
@@ -623,6 +1192,9 @@ class ModelGateway {
     required List<Map<String, dynamic>> messages,
     required List<ToolDefinitionModel> tools,
     required MessageFormat? format,
+    String? sessionId,
+    bool small = false,
+    String? variant,
     CancelToken? cancelToken,
     FutureOr<void> Function(String delta)? onTextDelta,
     FutureOr<void> Function(String delta)? onReasoningDelta,
@@ -642,6 +1214,9 @@ class ModelGateway {
         tools: tools,
         format: format,
         maxOutputTokens: maxOut,
+        sessionId: sessionId,
+        small: small,
+        variant: variant,
         cancelToken: cancelToken,
       );
     }
@@ -651,6 +1226,9 @@ class ModelGateway {
       tools: tools,
       format: format,
       maxOutputTokens: _requestedMaxOutputTokens(config),
+      sessionId: sessionId,
+      small: small,
+      variant: variant,
       cancelToken: cancelToken,
       onTextDelta: onTextDelta,
       onReasoningDelta: onReasoningDelta,
@@ -702,7 +1280,11 @@ class ModelGateway {
       return ToolCall(
         id: map['id'] as String? ?? newId('toolcall'),
         name: function['name'] as String? ?? 'invalid',
-        arguments: _decodeArguments(rawArguments),
+        arguments: _decodeArguments(
+          rawArguments,
+          source: 'openai-nonstream',
+          toolName: function['name'] as String?,
+        ),
       );
     }).toList();
     return ModelResponse(
@@ -714,17 +1296,68 @@ class ModelGateway {
     );
   }
 
-  JsonMap _decodeArguments(String input) {
+  JsonMap _decodeArguments(
+    String input, {
+    String? source,
+    String? provider,
+    String? model,
+    String? toolName,
+  }) {
     try {
-      return Map<String, dynamic>.from(jsonDecode(input) as Map);
+      final decoded = Map<String, dynamic>.from(jsonDecode(input) as Map);
+      _logToolArgumentDecode(
+        outcome: 'json',
+        input: input,
+        source: source,
+        provider: provider,
+        model: model,
+        toolName: toolName,
+      );
+      return decoded;
     } catch (_) {}
     final repaired = _repairJson(input);
     if (repaired != null) {
       try {
-        return Map<String, dynamic>.from(jsonDecode(repaired) as Map);
+        final decoded = Map<String, dynamic>.from(jsonDecode(repaired) as Map);
+        _logToolArgumentDecode(
+          outcome: 'repaired',
+          input: input,
+          source: source,
+          provider: provider,
+          model: model,
+          toolName: toolName,
+        );
+        return decoded;
       } catch (_) {}
     }
+    _logToolArgumentDecode(
+      outcome: 'raw',
+      input: input,
+      source: source,
+      provider: provider,
+      model: model,
+      toolName: toolName,
+    );
     return {'raw': input};
+  }
+
+  void _logToolArgumentDecode({
+    required String outcome,
+    required String input,
+    String? source,
+    String? provider,
+    String? model,
+    String? toolName,
+  }) {
+    _debugLog('tool-args', 'decoded tool arguments', {
+      'outcome': outcome,
+      'source': source,
+      'provider': provider,
+      'model': model,
+      'tool': toolName,
+      'length': input.length,
+      'preview': input.length > 200 ? '${input.substring(0, 200)}...' : input,
+    });
   }
 
   /// Attempts to repair common AI-generated JSON issues.

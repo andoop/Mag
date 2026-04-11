@@ -822,11 +822,6 @@ Future<ToolExecutionResult> _executeHashlineEditTool(
   if (hashWarning.isNotEmpty) {
     output += '\n\n<hash-warning>\n$hashWarning\n</hash-warning>';
   }
-  final bracketWarning = _checkBracketBalance(restored, targetPath);
-  if (bracketWarning.isNotEmpty) {
-    output +=
-        '\n\n<diagnostics file="$targetPath">\n$bracketWarning\nPlease review and fix the bracket issue.\n</diagnostics>';
-  }
   return ToolExecutionResult(
     title: targetPath,
     output: output,

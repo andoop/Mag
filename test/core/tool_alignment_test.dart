@@ -19,6 +19,9 @@ class _FakeModelGateway extends ModelGateway {
     required List<Map<String, dynamic>> messages,
     required List<ToolDefinitionModel> tools,
     required MessageFormat? format,
+    String? sessionId,
+    bool small = false,
+    String? variant,
     CancelToken? cancelToken,
     FutureOr<void> Function(String delta)? onTextDelta,
     FutureOr<void> Function(String delta)? onReasoningDelta,
@@ -36,6 +39,47 @@ class _FakeModelGateway extends ModelGateway {
       finishReason: 'stop',
       raw: const {},
     );
+  }
+}
+
+class _QueuedModelGateway extends ModelGateway {
+  _QueuedModelGateway(this.outcomes);
+
+  final List<Object> outcomes;
+  final List<List<Map<String, dynamic>>> requests = [];
+  int _index = 0;
+
+  @override
+  Future<ModelResponse> complete({
+    required ModelConfig config,
+    required List<Map<String, dynamic>> messages,
+    required List<ToolDefinitionModel> tools,
+    required MessageFormat? format,
+    String? sessionId,
+    bool small = false,
+    String? variant,
+    CancelToken? cancelToken,
+    FutureOr<void> Function(String delta)? onTextDelta,
+    FutureOr<void> Function(String delta)? onReasoningDelta,
+    FutureOr<void> Function({
+      required String argumentsDelta,
+      required String argumentsText,
+      required String toolCallId,
+      required String toolName,
+    })?
+        onToolCallDelta,
+  }) async {
+    requests.add(
+      messages
+          .map((item) => Map<String, dynamic>.from(item))
+          .toList(growable: false),
+    );
+    if (_index >= outcomes.length) {
+      throw StateError('No queued response for call #$_index');
+    }
+    final next = outcomes[_index++];
+    if (next is ModelResponse) return next;
+    throw next;
   }
 }
 
@@ -192,7 +236,7 @@ void main() {
     await expectLater(
       writeTool.execute(
         {
-          'path': 'note.txt',
+          'filePath': 'note.txt',
           'content': 'new\n',
         },
         makeContext(),
@@ -320,7 +364,7 @@ void main() {
   test('write accepts empty content for new files', () async {
     final result = await writeTool.execute(
       {
-        'path': 'empty.txt',
+        'filePath': 'empty.txt',
         'content': '',
       },
       makeContext(),
@@ -347,18 +391,44 @@ void main() {
       editTool.execute(
         {
           'filePath': 'edit_hint.txt',
-          'oldString': 'missing',
-          'newString': 'gamma',
+          'edits': const [],
         },
         makeContext(),
       ),
       throwsA(
         predicate(
           (error) =>
-              error.toString().contains('Call `read` on "edit_hint.txt"') &&
-              error
-                  .toString()
-                  .contains('do NOT include the line-number/hash prefixes'),
+              error.toString().contains('edits must be a non-empty array'),
+        ),
+      ),
+    );
+  });
+
+  test('legacy edit arguments are rejected', () async {
+    final target = File('${tempDir.path}/edit_exact.txt');
+    await target.writeAsString('  alpha\n  beta\n');
+    final initial = await bridge.stat(
+      treeUri: workspace.treeUri,
+      relativePath: 'edit_exact.txt',
+    );
+    await seedReadLedger(
+      filePath: 'edit_exact.txt',
+      lastModified: initial!.lastModified,
+    );
+
+    await expectLater(
+      editTool.execute(
+        {
+          'filePath': 'edit_exact.txt',
+          'oldString': 'alpha\nbeta',
+          'newString': 'gamma',
+        },
+        makeContext(),
+      ),
+      throwsA(
+        predicate(
+          (error) => error.toString().contains(
+              'no longer accepts `oldString` / `newString` / `replaceAll`'),
         ),
       ),
     );
@@ -514,7 +584,7 @@ void main() {
     expect(advertisedTools.contains('edit'), isFalse);
     expect(
       envPrompt.contains(
-          'If you just changed a file and need to modify the same file again, read it again first.'),
+          'If you just changed a file and need to modify the same file again, call `read` first.'),
       isTrue,
     );
     expect(envPrompt.contains('@@ replace 12#VK'), isTrue);
@@ -583,7 +653,1550 @@ void main() {
     expect(toolNames.contains('write'), isFalse);
   });
 
-  test('compacted tool output keeps display summary and metadata', () async {
+  test('gpt-5 preview includes opencode-style default reasoning options',
+      () async {
+    await database.putSetting(
+      'model_config',
+      ModelConfig(
+        currentProviderId: 'openai',
+        currentModelId: 'gpt-5.2',
+        connections: [
+          ProviderConnection(
+            id: 'openai',
+            name: 'OpenAI',
+            baseUrl: 'https://api.openai.com/v1',
+            apiKey: 'test-key',
+            models: const ['gpt-5.2'],
+          ),
+        ],
+        visibilityRules: const [],
+      ).toJson(),
+    );
+    await database.saveMessage(
+      MessageInfo(
+        id: newId('message'),
+        sessionId: session.id,
+        role: SessionRole.user,
+        agent: 'build',
+        createdAt: DateTime.now().millisecondsSinceEpoch,
+        text: 'Preview the current payload',
+      ),
+    );
+    final engine = SessionEngine(
+      database: database,
+      events: LocalEventBus(),
+      workspaceBridge: bridge,
+      promptAssembler: promptAssembler,
+      permissionCenter: PermissionCenter(database, LocalEventBus()),
+      questionCenter: QuestionCenter(database, LocalEventBus()),
+      toolRegistry: registry,
+      modelGateway: ModelGateway(),
+    );
+
+    final payload = await engine.previewModelRequest(
+      workspace: workspace,
+      session: session,
+    );
+
+    expect(payload['store'], isFalse);
+    expect(payload['reasoningEffort'], 'medium');
+    expect(payload['reasoningSummary'], 'auto');
+    expect(payload['textVerbosity'], 'low');
+    expect(payload['promptCacheKey'], session.id);
+  });
+
+  test('google reasoning fallback injects thinking config', () async {
+    await database.putSetting(
+      'model_config',
+      ModelConfig(
+        currentProviderId: 'google',
+        currentModelId: 'gemini-3-pro',
+        connections: [
+          ProviderConnection(
+            id: 'google',
+            name: 'Google',
+            baseUrl: 'https://generativelanguage.googleapis.com/v1beta/openai',
+            apiKey: 'test-key',
+            models: const ['gemini-3-pro'],
+          ),
+        ],
+        visibilityRules: const [],
+      ).toJson(),
+    );
+    await database.saveMessage(
+      MessageInfo(
+        id: newId('message'),
+        sessionId: session.id,
+        role: SessionRole.user,
+        agent: 'build',
+        createdAt: DateTime.now().millisecondsSinceEpoch,
+        text: 'Preview the current payload',
+      ),
+    );
+    final engine = SessionEngine(
+      database: database,
+      events: LocalEventBus(),
+      workspaceBridge: bridge,
+      promptAssembler: promptAssembler,
+      permissionCenter: PermissionCenter(database, LocalEventBus()),
+      questionCenter: QuestionCenter(database, LocalEventBus()),
+      toolRegistry: registry,
+      modelGateway: ModelGateway(),
+    );
+
+    final payload = await engine.previewModelRequest(
+      workspace: workspace,
+      session: session,
+    );
+
+    expect(
+      payload['thinkingConfig'],
+      {
+        'includeThoughts': true,
+        'thinkingLevel': 'high',
+      },
+    );
+  });
+
+  test('preview injects confirmed session constraints into system prompt',
+      () async {
+    await database.putSetting(
+      'model_config',
+      ModelConfig(
+        currentProviderId: 'openai',
+        currentModelId: 'gpt-5',
+        connections: [
+          ProviderConnection(
+            id: 'openai',
+            name: 'OpenAI',
+            baseUrl: 'https://api.openai.com/v1',
+            apiKey: 'test-key',
+            models: const ['gpt-5'],
+          ),
+        ],
+        visibilityRules: const [],
+      ).toJson(),
+    );
+    await database.saveMessage(
+      MessageInfo(
+        id: newId('message'),
+        sessionId: session.id,
+        role: SessionRole.user,
+        agent: 'build',
+        createdAt: DateTime.now().millisecondsSinceEpoch,
+        text: 'Do not consider data compatibility.\nUse filePath only.',
+      ),
+    );
+    final engine = SessionEngine(
+      database: database,
+      events: LocalEventBus(),
+      workspaceBridge: bridge,
+      promptAssembler: promptAssembler,
+      permissionCenter: PermissionCenter(database, LocalEventBus()),
+      questionCenter: QuestionCenter(database, LocalEventBus()),
+      toolRegistry: registry,
+      modelGateway: ModelGateway(),
+    );
+
+    final payload = await engine.previewModelRequest(
+      workspace: workspace,
+      session: session,
+    );
+    final messages = (payload['messages'] as List? ?? const []).cast<Map>();
+    final combinedSystem = messages
+        .where((item) => item['role'] == 'system')
+        .map((item) => item['content'] as String? ?? '')
+        .join('\n\n');
+
+    expect(
+      combinedSystem,
+      contains('Confirmed constraints and decisions for this session'),
+    );
+    expect(combinedSystem, contains('Do not consider data compatibility'));
+    expect(combinedSystem, contains('Use filePath only'));
+  });
+
+  test('fallback variants expose reasoning effort presets', () {
+    final variants = resolveProviderModelVariants(
+      catalog: const [],
+      providerId: 'openai',
+      modelId: 'gpt-5',
+      capabilities: const ProviderModelCapabilities(reasoning: true),
+      limit: const ProviderModelLimit(output: 32000),
+    );
+    expect(variants['minimal'], {'reasoningEffort': 'minimal'});
+    expect(variants['high'], {'reasoningEffort': 'high'});
+  });
+
+  test('selected message variant overrides default request options', () async {
+    await database.putSetting(
+      'model_config',
+      ModelConfig(
+        currentProviderId: 'openai',
+        currentModelId: 'gpt-5',
+        connections: [
+          ProviderConnection(
+            id: 'openai',
+            name: 'OpenAI',
+            baseUrl: 'https://api.openai.com/v1',
+            apiKey: 'test-key',
+            models: const ['gpt-5'],
+          ),
+        ],
+        visibilityRules: const [],
+        currentModelVariants: const {
+          'high': {'reasoningEffort': 'high'},
+        },
+      ).toJson(),
+    );
+    await database.saveMessage(
+      MessageInfo(
+        id: newId('message'),
+        sessionId: session.id,
+        role: SessionRole.user,
+        agent: 'build',
+        createdAt: DateTime.now().millisecondsSinceEpoch,
+        text: 'Preview the current payload',
+        variant: 'high',
+      ),
+    );
+    final engine = SessionEngine(
+      database: database,
+      events: LocalEventBus(),
+      workspaceBridge: bridge,
+      promptAssembler: promptAssembler,
+      permissionCenter: PermissionCenter(database, LocalEventBus()),
+      questionCenter: QuestionCenter(database, LocalEventBus()),
+      toolRegistry: registry,
+      modelGateway: ModelGateway(),
+    );
+
+    final payload = await engine.previewModelRequest(
+      workspace: workspace,
+      session: session,
+    );
+
+    expect(payload['reasoningEffort'], 'high');
+  });
+
+  test('small payload overrides gpt-5 default reasoning effort', () {
+    final gateway = ModelGateway();
+    final payload = gateway.buildDebugPayload(
+      config: ModelConfig(
+        currentProviderId: 'openai',
+        currentModelId: 'gpt-5.2',
+        connections: [
+          ProviderConnection(
+            id: 'openai',
+            name: 'OpenAI',
+            baseUrl: 'https://api.openai.com/v1',
+            apiKey: 'test-key',
+            models: const ['gpt-5.2'],
+          ),
+        ],
+        visibilityRules: const [],
+      ),
+      messages: const [],
+      tools: const [],
+      format: null,
+      sessionId: 'session-small',
+      small: true,
+    );
+
+    expect(payload['store'], isFalse);
+    expect(payload['reasoningEffort'], 'low');
+    expect(payload['promptCacheKey'], 'session-small');
+    expect(payload['textVerbosity'], 'low');
+  });
+
+  test('small payload uses minimal google thinking config', () {
+    final gateway = ModelGateway();
+    final payload = gateway.buildDebugPayload(
+      config: ModelConfig(
+        currentProviderId: 'google',
+        currentModelId: 'gemini-3-pro',
+        connections: [
+          ProviderConnection(
+            id: 'google',
+            name: 'Google',
+            baseUrl: 'https://generativelanguage.googleapis.com/v1beta/openai',
+            apiKey: 'test-key',
+            models: const ['gemini-3-pro'],
+          ),
+        ],
+        visibilityRules: const [],
+      ),
+      messages: const [],
+      tools: const [],
+      format: null,
+      small: true,
+    );
+
+    expect(
+      payload['thinkingConfig'],
+      {
+        'thinkingLevel': 'minimal',
+      },
+    );
+  });
+
+  test('tool schemas are normalized before transport encoding', () {
+    final gateway = ModelGateway();
+    final payload = gateway.buildDebugPayload(
+      config: ModelConfig(
+        currentProviderId: 'openai',
+        currentModelId: 'gpt-5.2',
+        connections: [
+          ProviderConnection(
+            id: 'openai',
+            name: 'OpenAI',
+            baseUrl: 'https://api.openai.com/v1',
+            apiKey: 'test-key',
+            models: const ['gpt-5.2'],
+          ),
+        ],
+        visibilityRules: const [],
+      ),
+      messages: const [],
+      tools: [
+        ToolDefinitionModel(
+          id: 'StructuredOutput',
+          description: 'Return structured JSON.',
+          parameters: const {
+            r'$schema': 'https://json-schema.org/draft/2020-12/schema',
+            'type': 'object',
+            'title': 'StructuredOutput',
+            'required': <String>[],
+            'properties': {
+              'value': {
+                'type': 'string',
+                'title': 'Value',
+                'default': 'ignored',
+                'examples': ['x'],
+              },
+            },
+          },
+        ),
+      ],
+      format: null,
+    );
+
+    final tools = (payload['tools'] as List? ?? const []).cast<Map>();
+    expect(tools, hasLength(1));
+    final function =
+        Map<String, dynamic>.from(tools.single['function'] as Map? ?? const {});
+    final parameters =
+        Map<String, dynamic>.from(function['parameters'] as Map? ?? const {});
+    expect(parameters.containsKey(r'$schema'), isFalse);
+    expect(parameters.containsKey('title'), isFalse);
+    expect(parameters.containsKey('required'), isFalse);
+    final properties =
+        Map<String, dynamic>.from(parameters['properties'] as Map? ?? const {});
+    final value =
+        Map<String, dynamic>.from(properties['value'] as Map? ?? const {});
+    expect(value.containsKey('title'), isFalse);
+    expect(value.containsKey('default'), isFalse);
+    expect(value.containsKey('examples'), isFalse);
+  });
+
+  test('litellm-style proxies receive a noop tool when history has tool calls',
+      () {
+    final gateway = ModelGateway();
+    final payload = gateway.buildDebugPayload(
+      config: ModelConfig(
+        currentProviderId: 'openai_compatible',
+        currentModelId: 'gpt-4.1',
+        connections: [
+          ProviderConnection(
+            id: 'openai_compatible',
+            name: 'Proxy',
+            baseUrl: 'https://proxy.example.com/litellm/v1',
+            apiKey: 'test-key',
+            models: const ['gpt-4.1'],
+          ),
+        ],
+        visibilityRules: const [],
+      ),
+      messages: const [
+        {
+          'role': 'assistant',
+          'content': '',
+          'tool_calls': [
+            {
+              'id': 'call_1',
+              'type': 'function',
+              'function': {
+                'name': 'read',
+                'arguments': '{"path":"lib/main.dart"}',
+              },
+            },
+          ],
+        },
+        {
+          'role': 'tool',
+          'tool_call_id': 'call_1',
+          'content': 'file contents',
+        },
+      ],
+      tools: const [],
+      format: null,
+    );
+
+    final tools = (payload['tools'] as List? ?? const []).cast<Map>();
+    expect(tools, hasLength(1));
+    final function =
+        Map<String, dynamic>.from(tools.single['function'] as Map? ?? const {});
+    expect(function['name'], '_noop');
+  });
+
+  test('anthropic preview preserves user image parts', () async {
+    await database.putSetting(
+      'model_config',
+      ModelConfig(
+        currentProviderId: 'anthropic',
+        currentModelId: 'claude-sonnet-4',
+        connections: [
+          ProviderConnection(
+            id: 'anthropic',
+            name: 'Anthropic',
+            baseUrl: 'https://api.anthropic.com/v1',
+            apiKey: 'test-key',
+            models: const ['claude-sonnet-4'],
+          ),
+        ],
+        visibilityRules: const [],
+      ).toJson(),
+    );
+    final userMessage = MessageInfo(
+      id: newId('message'),
+      sessionId: session.id,
+      role: SessionRole.user,
+      agent: 'build',
+      createdAt: DateTime.now().millisecondsSinceEpoch,
+      text: 'Review this image',
+    );
+    await database.saveMessage(userMessage);
+    await database.savePart(
+      MessagePart(
+        id: newId('part'),
+        sessionId: session.id,
+        messageId: userMessage.id,
+        type: PartType.text,
+        createdAt: DateTime.now().millisecondsSinceEpoch,
+        data: {'text': 'Review this image'},
+      ),
+    );
+    await database.savePart(
+      MessagePart(
+        id: newId('part'),
+        sessionId: session.id,
+        messageId: userMessage.id,
+        type: PartType.file,
+        createdAt: DateTime.now().millisecondsSinceEpoch,
+        data: {
+          'mime': 'image/png',
+          'filename': 'diagram.png',
+          'url': 'data:image/png;base64,ZmFrZQ==',
+        },
+      ),
+    );
+    final engine = SessionEngine(
+      database: database,
+      events: LocalEventBus(),
+      workspaceBridge: bridge,
+      promptAssembler: promptAssembler,
+      permissionCenter: PermissionCenter(database, LocalEventBus()),
+      questionCenter: QuestionCenter(database, LocalEventBus()),
+      toolRegistry: registry,
+      modelGateway: ModelGateway(),
+    );
+
+    final payload = await engine.previewModelRequest(
+      workspace: workspace,
+      session: session,
+    );
+
+    expect(payload['model'], 'claude-sonnet-4');
+    final messages = (payload['messages'] as List? ?? const []).cast<Map>();
+    final userPayload = messages.lastWhere((item) => item['role'] == 'user');
+    final content = (userPayload['content'] as List? ?? const []).cast<Map>();
+    expect(
+      content.any(
+        (item) =>
+            item['type'] == 'text' &&
+            (item['text'] as String?)?.contains('Review this image') == true,
+      ),
+      isTrue,
+    );
+    expect(
+      content.any(
+        (item) =>
+            item['type'] == 'image' &&
+            ((item['source'] as Map?)?['media_type'] as String?) == 'image/png',
+      ),
+      isTrue,
+    );
+  });
+
+  test('model capabilities can suppress inferred temperature parameter',
+      () async {
+    await database.putSetting(
+      'model_config',
+      ModelConfig(
+        currentProviderId: 'openai',
+        currentModelId: 'qwen3-plus',
+        connections: [
+          ProviderConnection(
+            id: 'openai',
+            name: 'OpenAI',
+            baseUrl: 'https://api.openai.com/v1',
+            apiKey: 'test-key',
+            models: const ['qwen3-plus'],
+          ),
+        ],
+        visibilityRules: const [],
+        currentModelCapabilities: const ProviderModelCapabilities(
+          temperature: false,
+          toolCall: true,
+        ),
+      ).toJson(),
+    );
+    await database.saveMessage(
+      MessageInfo(
+        id: newId('message'),
+        sessionId: session.id,
+        role: SessionRole.user,
+        agent: 'build',
+        createdAt: DateTime.now().millisecondsSinceEpoch,
+        text: 'Preview the current payload',
+      ),
+    );
+    final engine = SessionEngine(
+      database: database,
+      events: LocalEventBus(),
+      workspaceBridge: bridge,
+      promptAssembler: promptAssembler,
+      permissionCenter: PermissionCenter(database, LocalEventBus()),
+      questionCenter: QuestionCenter(database, LocalEventBus()),
+      toolRegistry: registry,
+      modelGateway: ModelGateway(),
+    );
+
+    final payload = await engine.previewModelRequest(
+      workspace: workspace,
+      session: session,
+    );
+
+    expect(payload.containsKey('temperature'), isFalse);
+    expect(payload['top_p'], 1);
+  });
+
+  test('current model request options are merged into openai payload',
+      () async {
+    await database.putSetting(
+      'model_config',
+      ModelConfig(
+        currentProviderId: 'openai',
+        currentModelId: 'custom-reasoning-model',
+        connections: [
+          ProviderConnection(
+            id: 'openai',
+            name: 'OpenAI',
+            baseUrl: 'https://api.openai.com/v1',
+            apiKey: 'test-key',
+            models: const ['custom-reasoning-model'],
+          ),
+        ],
+        visibilityRules: const [],
+        currentModelCapabilities: const ProviderModelCapabilities(
+          temperature: false,
+          toolCall: true,
+          reasoning: true,
+        ),
+        currentModelOptions: const {
+          'enable_thinking': true,
+          'top_p': 0.2,
+        },
+      ).toJson(),
+    );
+    await database.saveMessage(
+      MessageInfo(
+        id: newId('message'),
+        sessionId: session.id,
+        role: SessionRole.user,
+        agent: 'build',
+        createdAt: DateTime.now().millisecondsSinceEpoch,
+        text: 'Preview the current payload',
+      ),
+    );
+    final engine = SessionEngine(
+      database: database,
+      events: LocalEventBus(),
+      workspaceBridge: bridge,
+      promptAssembler: promptAssembler,
+      permissionCenter: PermissionCenter(database, LocalEventBus()),
+      questionCenter: QuestionCenter(database, LocalEventBus()),
+      toolRegistry: registry,
+      modelGateway: ModelGateway(),
+    );
+
+    final payload = await engine.previewModelRequest(
+      workspace: workspace,
+      session: session,
+    );
+
+    expect(payload['enable_thinking'], isTrue);
+    expect(payload['top_p'], 0.2);
+    expect(payload.containsKey('temperature'), isFalse);
+  });
+
+  test('max steps reminder matches opencode constraints', () {
+    final reminder = promptAssembler.maxStepsReminder();
+    expect(reminder, contains('CRITICAL - MAXIMUM STEPS REACHED'));
+    expect(
+      reminder,
+      contains(
+          'Tools are disabled until next user input. Respond with text only.'),
+    );
+    expect(reminder, contains('Do NOT make any tool calls'));
+    expect(
+      reminder,
+      contains('MUST provide a text response summarizing work done so far'),
+    );
+  });
+
+  test('model capabilities can suppress tool payloads', () async {
+    await database.putSetting(
+      'model_config',
+      ModelConfig(
+        currentProviderId: 'openai',
+        currentModelId: 'gpt-5',
+        connections: [
+          ProviderConnection(
+            id: 'openai',
+            name: 'OpenAI',
+            baseUrl: 'https://api.openai.com/v1',
+            apiKey: 'test-key',
+            models: const ['gpt-5'],
+          ),
+        ],
+        visibilityRules: const [],
+        currentModelCapabilities: const ProviderModelCapabilities(
+          temperature: true,
+          toolCall: false,
+        ),
+      ).toJson(),
+    );
+    await database.saveMessage(
+      MessageInfo(
+        id: newId('message'),
+        sessionId: session.id,
+        role: SessionRole.user,
+        agent: 'build',
+        createdAt: DateTime.now().millisecondsSinceEpoch,
+        text: 'Preview the current payload',
+      ),
+    );
+    final engine = SessionEngine(
+      database: database,
+      events: LocalEventBus(),
+      workspaceBridge: bridge,
+      promptAssembler: promptAssembler,
+      permissionCenter: PermissionCenter(database, LocalEventBus()),
+      questionCenter: QuestionCenter(database, LocalEventBus()),
+      toolRegistry: registry,
+      modelGateway: ModelGateway(),
+    );
+
+    final payload = await engine.previewModelRequest(
+      workspace: workspace,
+      session: session,
+    );
+
+    expect(payload.containsKey('tools'), isFalse);
+    expect(payload.containsKey('tool_choice'), isFalse);
+  });
+
+  test('interleaved reasoning field is injected into assistant payload',
+      () async {
+    await database.putSetting(
+      'model_config',
+      ModelConfig(
+        currentProviderId: 'openai',
+        currentModelId: 'custom-reasoning-model',
+        connections: [
+          ProviderConnection(
+            id: 'openai',
+            name: 'OpenAI',
+            baseUrl: 'https://api.openai.com/v1',
+            apiKey: 'test-key',
+            models: const ['custom-reasoning-model'],
+          ),
+        ],
+        visibilityRules: const [],
+        currentModelCapabilities: const ProviderModelCapabilities(
+          temperature: false,
+          toolCall: true,
+          reasoning: true,
+          interleaved: ProviderModelInterleaved(
+            enabled: true,
+            field: 'reasoning_content',
+          ),
+        ),
+      ).toJson(),
+    );
+    final assistantMessage = MessageInfo(
+      id: newId('message'),
+      sessionId: session.id,
+      role: SessionRole.assistant,
+      agent: 'build',
+      createdAt: DateTime.now().millisecondsSinceEpoch,
+      text: '',
+    );
+    await database.saveMessage(assistantMessage);
+    await database.savePart(
+      MessagePart(
+        id: newId('part'),
+        sessionId: session.id,
+        messageId: assistantMessage.id,
+        type: PartType.text,
+        createdAt: DateTime.now().millisecondsSinceEpoch,
+        data: {'text': 'Visible answer'},
+      ),
+    );
+    await database.savePart(
+      MessagePart(
+        id: newId('part'),
+        sessionId: session.id,
+        messageId: assistantMessage.id,
+        type: PartType.reasoning,
+        createdAt: DateTime.now().millisecondsSinceEpoch,
+        data: {'text': 'Hidden reasoning'},
+      ),
+    );
+    await database.saveMessage(
+      MessageInfo(
+        id: newId('message'),
+        sessionId: session.id,
+        role: SessionRole.user,
+        agent: 'build',
+        createdAt: DateTime.now().millisecondsSinceEpoch + 1,
+        text: 'Continue',
+      ),
+    );
+    final engine = SessionEngine(
+      database: database,
+      events: LocalEventBus(),
+      workspaceBridge: bridge,
+      promptAssembler: promptAssembler,
+      permissionCenter: PermissionCenter(database, LocalEventBus()),
+      questionCenter: QuestionCenter(database, LocalEventBus()),
+      toolRegistry: registry,
+      modelGateway: ModelGateway(),
+    );
+
+    final payload = await engine.previewModelRequest(
+      workspace: workspace,
+      session: session,
+    );
+
+    final messages = (payload['messages'] as List? ?? const []).cast<Map>();
+    final assistantPayload = messages.firstWhere(
+      (item) => item['role'] == 'assistant',
+    );
+    expect(assistantPayload['content'], 'Visible answer');
+    expect(assistantPayload['reasoning_content'], 'Hidden reasoning');
+  });
+
+  test('current model request options are merged into anthropic payload',
+      () async {
+    await database.putSetting(
+      'model_config',
+      ModelConfig(
+        currentProviderId: 'anthropic',
+        currentModelId: 'claude-sonnet-4',
+        connections: [
+          ProviderConnection(
+            id: 'anthropic',
+            name: 'Anthropic',
+            baseUrl: 'https://api.anthropic.com/v1',
+            apiKey: 'test-key',
+            models: const ['claude-sonnet-4'],
+          ),
+        ],
+        visibilityRules: const [],
+        currentModelCapabilities: const ProviderModelCapabilities(
+          temperature: false,
+          toolCall: true,
+          reasoning: true,
+        ),
+        currentModelOptions: const {
+          'thinking': {
+            'type': 'enabled',
+            'budgetTokens': 1024,
+          },
+        },
+      ).toJson(),
+    );
+    await database.saveMessage(
+      MessageInfo(
+        id: newId('message'),
+        sessionId: session.id,
+        role: SessionRole.user,
+        agent: 'build',
+        createdAt: DateTime.now().millisecondsSinceEpoch,
+        text: 'Preview the current payload',
+      ),
+    );
+    final engine = SessionEngine(
+      database: database,
+      events: LocalEventBus(),
+      workspaceBridge: bridge,
+      promptAssembler: promptAssembler,
+      permissionCenter: PermissionCenter(database, LocalEventBus()),
+      questionCenter: QuestionCenter(database, LocalEventBus()),
+      toolRegistry: registry,
+      modelGateway: ModelGateway(),
+    );
+
+    final payload = await engine.previewModelRequest(
+      workspace: workspace,
+      session: session,
+    );
+
+    expect(
+      payload['thinking'],
+      {
+        'type': 'enabled',
+        'budgetTokens': 1024,
+      },
+    );
+  });
+
+  test('unsupported image input degrades to explicit user-facing error text',
+      () async {
+    await database.putSetting(
+      'model_config',
+      ModelConfig(
+        currentProviderId: 'deepseek',
+        currentModelId: 'deepseek-chat',
+        connections: [
+          ProviderConnection(
+            id: 'deepseek',
+            name: 'DeepSeek',
+            baseUrl: 'https://api.deepseek.com/v1',
+            apiKey: 'test-key',
+            models: const ['deepseek-chat'],
+          ),
+        ],
+        visibilityRules: const [],
+      ).toJson(),
+    );
+    final userMessage = MessageInfo(
+      id: newId('message'),
+      sessionId: session.id,
+      role: SessionRole.user,
+      agent: 'build',
+      createdAt: DateTime.now().millisecondsSinceEpoch,
+      text: 'Review this image',
+    );
+    await database.saveMessage(userMessage);
+    await database.savePart(
+      MessagePart(
+        id: newId('part'),
+        sessionId: session.id,
+        messageId: userMessage.id,
+        type: PartType.text,
+        createdAt: DateTime.now().millisecondsSinceEpoch,
+        data: {'text': 'Review this image'},
+      ),
+    );
+    await database.savePart(
+      MessagePart(
+        id: newId('part'),
+        sessionId: session.id,
+        messageId: userMessage.id,
+        type: PartType.file,
+        createdAt: DateTime.now().millisecondsSinceEpoch,
+        data: {
+          'mime': 'image/png',
+          'filename': 'diagram.png',
+          'url': 'data:image/png;base64,ZmFrZQ==',
+        },
+      ),
+    );
+    final engine = SessionEngine(
+      database: database,
+      events: LocalEventBus(),
+      workspaceBridge: bridge,
+      promptAssembler: promptAssembler,
+      permissionCenter: PermissionCenter(database, LocalEventBus()),
+      questionCenter: QuestionCenter(database, LocalEventBus()),
+      toolRegistry: registry,
+      modelGateway: ModelGateway(),
+    );
+
+    final payload = await engine.previewModelRequest(
+      workspace: workspace,
+      session: session,
+    );
+
+    final messages = (payload['messages'] as List? ?? const []).cast<Map>();
+    final userPayload = messages.lastWhere((item) => item['role'] == 'user');
+    final content = (userPayload['content'] as List? ?? const []).cast<Map>();
+    expect(
+      content.any(
+        (item) =>
+            item['type'] == 'text' &&
+            (item['text'] as String?)?.contains(
+                  'does not support image input',
+                ) ==
+                true,
+      ),
+      isTrue,
+    );
+    expect(
+      content.any((item) => item['type'] == 'image_url'),
+      isFalse,
+    );
+  });
+
+  test('catalog modalities can enable image input for openai-compatible path',
+      () async {
+    await database.putSetting(
+      'model_config',
+      ModelConfig(
+        currentProviderId: 'deepseek',
+        currentModelId: 'deepseek-chat',
+        connections: [
+          ProviderConnection(
+            id: 'deepseek',
+            name: 'DeepSeek',
+            baseUrl: 'https://api.deepseek.com/v1',
+            apiKey: 'test-key',
+            models: const ['deepseek-chat'],
+          ),
+        ],
+        visibilityRules: const [],
+        currentModelModalities: const ProviderModelModalities(
+          input: ['text', 'image'],
+          output: ['text'],
+        ),
+      ).toJson(),
+    );
+    final userMessage = MessageInfo(
+      id: newId('message'),
+      sessionId: session.id,
+      role: SessionRole.user,
+      agent: 'build',
+      createdAt: DateTime.now().millisecondsSinceEpoch,
+      text: 'Review this image',
+    );
+    await database.saveMessage(userMessage);
+    await database.savePart(
+      MessagePart(
+        id: newId('part'),
+        sessionId: session.id,
+        messageId: userMessage.id,
+        type: PartType.text,
+        createdAt: DateTime.now().millisecondsSinceEpoch,
+        data: {'text': 'Review this image'},
+      ),
+    );
+    await database.savePart(
+      MessagePart(
+        id: newId('part'),
+        sessionId: session.id,
+        messageId: userMessage.id,
+        type: PartType.file,
+        createdAt: DateTime.now().millisecondsSinceEpoch,
+        data: {
+          'mime': 'image/png',
+          'filename': 'diagram.png',
+          'url': 'data:image/png;base64,ZmFrZQ==',
+        },
+      ),
+    );
+    final engine = SessionEngine(
+      database: database,
+      events: LocalEventBus(),
+      workspaceBridge: bridge,
+      promptAssembler: promptAssembler,
+      permissionCenter: PermissionCenter(database, LocalEventBus()),
+      questionCenter: QuestionCenter(database, LocalEventBus()),
+      toolRegistry: registry,
+      modelGateway: ModelGateway(),
+    );
+
+    final payload = await engine.previewModelRequest(
+      workspace: workspace,
+      session: session,
+    );
+
+    final messages = (payload['messages'] as List? ?? const []).cast<Map>();
+    final userPayload = messages.lastWhere((item) => item['role'] == 'user');
+    final content = (userPayload['content'] as List? ?? const []).cast<Map>();
+    expect(
+      content.any((item) => item['type'] == 'image_url'),
+      isTrue,
+    );
+  });
+
+  test('empty image input degrades to explicit corruption error text',
+      () async {
+    await database.putSetting(
+      'model_config',
+      ModelConfig(
+        currentProviderId: 'openai',
+        currentModelId: 'gpt-4o',
+        connections: [
+          ProviderConnection(
+            id: 'openai',
+            name: 'OpenAI',
+            baseUrl: 'https://api.openai.com/v1',
+            apiKey: 'test-key',
+            models: const ['gpt-4o'],
+          ),
+        ],
+        visibilityRules: const [],
+      ).toJson(),
+    );
+    final userMessage = MessageInfo(
+      id: newId('message'),
+      sessionId: session.id,
+      role: SessionRole.user,
+      agent: 'build',
+      createdAt: DateTime.now().millisecondsSinceEpoch,
+      text: 'Review this image',
+    );
+    await database.saveMessage(userMessage);
+    await database.savePart(
+      MessagePart(
+        id: newId('part'),
+        sessionId: session.id,
+        messageId: userMessage.id,
+        type: PartType.text,
+        createdAt: DateTime.now().millisecondsSinceEpoch,
+        data: {'text': 'Review this image'},
+      ),
+    );
+    await database.savePart(
+      MessagePart(
+        id: newId('part'),
+        sessionId: session.id,
+        messageId: userMessage.id,
+        type: PartType.file,
+        createdAt: DateTime.now().millisecondsSinceEpoch,
+        data: {
+          'mime': 'image/png',
+          'filename': 'empty.png',
+          'url': 'data:image/png;base64,',
+        },
+      ),
+    );
+    final engine = SessionEngine(
+      database: database,
+      events: LocalEventBus(),
+      workspaceBridge: bridge,
+      promptAssembler: promptAssembler,
+      permissionCenter: PermissionCenter(database, LocalEventBus()),
+      questionCenter: QuestionCenter(database, LocalEventBus()),
+      toolRegistry: registry,
+      modelGateway: ModelGateway(),
+    );
+
+    final payload = await engine.previewModelRequest(
+      workspace: workspace,
+      session: session,
+    );
+
+    final messages = (payload['messages'] as List? ?? const []).cast<Map>();
+    final userPayload = messages.lastWhere((item) => item['role'] == 'user');
+    final content = (userPayload['content'] as List? ?? const []).cast<Map>();
+    expect(
+      content.any(
+        (item) =>
+            item['type'] == 'text' &&
+            (item['text'] as String?)?.contains('empty or corrupted') == true,
+      ),
+      isTrue,
+    );
+    expect(
+      content.any((item) => item['type'] == 'image_url'),
+      isFalse,
+    );
+  });
+
+  test('catalog modalities override heuristic image support', () async {
+    await database.putSetting(
+      'model_config',
+      ModelConfig(
+        currentProviderId: 'openai',
+        currentModelId: 'gpt-4o',
+        connections: [
+          ProviderConnection(
+            id: 'openai',
+            name: 'OpenAI',
+            baseUrl: 'https://api.openai.com/v1',
+            apiKey: 'test-key',
+            models: const ['gpt-4o'],
+          ),
+        ],
+        visibilityRules: const [],
+        currentModelModalities: const ProviderModelModalities(
+          input: ['text'],
+          output: ['text'],
+        ),
+      ).toJson(),
+    );
+    final userMessage = MessageInfo(
+      id: newId('message'),
+      sessionId: session.id,
+      role: SessionRole.user,
+      agent: 'build',
+      createdAt: DateTime.now().millisecondsSinceEpoch,
+      text: 'Review this image',
+    );
+    await database.saveMessage(userMessage);
+    await database.savePart(
+      MessagePart(
+        id: newId('part'),
+        sessionId: session.id,
+        messageId: userMessage.id,
+        type: PartType.text,
+        createdAt: DateTime.now().millisecondsSinceEpoch,
+        data: {'text': 'Review this image'},
+      ),
+    );
+    await database.savePart(
+      MessagePart(
+        id: newId('part'),
+        sessionId: session.id,
+        messageId: userMessage.id,
+        type: PartType.file,
+        createdAt: DateTime.now().millisecondsSinceEpoch,
+        data: {
+          'mime': 'image/png',
+          'filename': 'diagram.png',
+          'url': 'data:image/png;base64,ZmFrZQ==',
+        },
+      ),
+    );
+    final engine = SessionEngine(
+      database: database,
+      events: LocalEventBus(),
+      workspaceBridge: bridge,
+      promptAssembler: promptAssembler,
+      permissionCenter: PermissionCenter(database, LocalEventBus()),
+      questionCenter: QuestionCenter(database, LocalEventBus()),
+      toolRegistry: registry,
+      modelGateway: ModelGateway(),
+    );
+
+    final payload = await engine.previewModelRequest(
+      workspace: workspace,
+      session: session,
+    );
+
+    final messages = (payload['messages'] as List? ?? const []).cast<Map>();
+    final userPayload = messages.lastWhere((item) => item['role'] == 'user');
+    final content = (userPayload['content'] as List? ?? const []).cast<Map>();
+    expect(
+      content.any(
+        (item) =>
+            item['type'] == 'text' &&
+            (item['text'] as String?)
+                    ?.contains('does not support image input') ==
+                true,
+      ),
+      isTrue,
+    );
+    expect(
+      content.any((item) => item['type'] == 'image_url'),
+      isFalse,
+    );
+  });
+
+  test(
+      'audio and video inputs degrade explicitly when transport path lacks support',
+      () async {
+    await database.putSetting(
+      'model_config',
+      ModelConfig(
+        currentProviderId: 'openai',
+        currentModelId: 'gpt-4o',
+        connections: [
+          ProviderConnection(
+            id: 'openai',
+            name: 'OpenAI',
+            baseUrl: 'https://api.openai.com/v1',
+            apiKey: 'test-key',
+            models: const ['gpt-4o'],
+          ),
+        ],
+        visibilityRules: const [],
+        currentModelModalities: const ProviderModelModalities(
+          input: ['text', 'audio', 'video'],
+          output: ['text'],
+        ),
+      ).toJson(),
+    );
+    final userMessage = MessageInfo(
+      id: newId('message'),
+      sessionId: session.id,
+      role: SessionRole.user,
+      agent: 'build',
+      createdAt: DateTime.now().millisecondsSinceEpoch,
+      text: 'Review these media files',
+    );
+    await database.saveMessage(userMessage);
+    await database.savePart(
+      MessagePart(
+        id: newId('part'),
+        sessionId: session.id,
+        messageId: userMessage.id,
+        type: PartType.text,
+        createdAt: DateTime.now().millisecondsSinceEpoch,
+        data: {'text': 'Review these media files'},
+      ),
+    );
+    await database.savePart(
+      MessagePart(
+        id: newId('part'),
+        sessionId: session.id,
+        messageId: userMessage.id,
+        type: PartType.file,
+        createdAt: DateTime.now().millisecondsSinceEpoch,
+        data: {
+          'mime': 'audio/mpeg',
+          'filename': 'sample.mp3',
+          'url': 'data:audio/mpeg;base64,ZmFrZQ==',
+        },
+      ),
+    );
+    await database.savePart(
+      MessagePart(
+        id: newId('part'),
+        sessionId: session.id,
+        messageId: userMessage.id,
+        type: PartType.file,
+        createdAt: DateTime.now().millisecondsSinceEpoch,
+        data: {
+          'mime': 'video/mp4',
+          'filename': 'clip.mp4',
+          'url': 'data:video/mp4;base64,ZmFrZQ==',
+        },
+      ),
+    );
+    final engine = SessionEngine(
+      database: database,
+      events: LocalEventBus(),
+      workspaceBridge: bridge,
+      promptAssembler: promptAssembler,
+      permissionCenter: PermissionCenter(database, LocalEventBus()),
+      questionCenter: QuestionCenter(database, LocalEventBus()),
+      toolRegistry: registry,
+      modelGateway: ModelGateway(),
+    );
+
+    final payload = await engine.previewModelRequest(
+      workspace: workspace,
+      session: session,
+    );
+
+    final messages = (payload['messages'] as List? ?? const []).cast<Map>();
+    final userPayload = messages.lastWhere((item) => item['role'] == 'user');
+    final content = (userPayload['content'] as List? ?? const []).cast<Map>();
+    expect(
+      content.any(
+        (item) =>
+            item['type'] == 'text' &&
+            (item['text'] as String?)
+                    ?.contains('does not support audio input') ==
+                true,
+      ),
+      isTrue,
+    );
+    expect(
+      content.any(
+        (item) =>
+            item['type'] == 'text' &&
+            (item['text'] as String?)
+                    ?.contains('does not support video input') ==
+                true,
+      ),
+      isTrue,
+    );
+  });
+
+  test('openai-compatible preview preserves supported user image parts',
+      () async {
+    await database.putSetting(
+      'model_config',
+      ModelConfig(
+        currentProviderId: 'openai',
+        currentModelId: 'gpt-4o',
+        connections: [
+          ProviderConnection(
+            id: 'openai',
+            name: 'OpenAI',
+            baseUrl: 'https://api.openai.com/v1',
+            apiKey: 'test-key',
+            models: const ['gpt-4o'],
+          ),
+        ],
+        visibilityRules: const [],
+      ).toJson(),
+    );
+    final userMessage = MessageInfo(
+      id: newId('message'),
+      sessionId: session.id,
+      role: SessionRole.user,
+      agent: 'build',
+      createdAt: DateTime.now().millisecondsSinceEpoch,
+      text: 'Review this image',
+    );
+    await database.saveMessage(userMessage);
+    await database.savePart(
+      MessagePart(
+        id: newId('part'),
+        sessionId: session.id,
+        messageId: userMessage.id,
+        type: PartType.text,
+        createdAt: DateTime.now().millisecondsSinceEpoch,
+        data: {'text': 'Review this image'},
+      ),
+    );
+    await database.savePart(
+      MessagePart(
+        id: newId('part'),
+        sessionId: session.id,
+        messageId: userMessage.id,
+        type: PartType.file,
+        createdAt: DateTime.now().millisecondsSinceEpoch,
+        data: {
+          'mime': 'image/png',
+          'filename': 'diagram.png',
+          'url': 'data:image/png;base64,ZmFrZQ==',
+        },
+      ),
+    );
+    final engine = SessionEngine(
+      database: database,
+      events: LocalEventBus(),
+      workspaceBridge: bridge,
+      promptAssembler: promptAssembler,
+      permissionCenter: PermissionCenter(database, LocalEventBus()),
+      questionCenter: QuestionCenter(database, LocalEventBus()),
+      toolRegistry: registry,
+      modelGateway: ModelGateway(),
+    );
+
+    final payload = await engine.previewModelRequest(
+      workspace: workspace,
+      session: session,
+    );
+
+    expect(payload['model'], 'gpt-4o');
+    final messages = (payload['messages'] as List? ?? const []).cast<Map>();
+    final userPayload = messages.lastWhere((item) => item['role'] == 'user');
+    final content = (userPayload['content'] as List? ?? const []).cast<Map>();
+    expect(
+      content.any(
+        (item) =>
+            item['type'] == 'text' &&
+            (item['text'] as String?)?.contains('Review this image') == true,
+      ),
+      isTrue,
+    );
+    expect(
+      content.any(
+        (item) =>
+            item['type'] == 'image_url' &&
+            ((item['image_url'] as Map?)?['url'] as String?) ==
+                'data:image/png;base64,ZmFrZQ==',
+      ),
+      isTrue,
+    );
+  });
+
+  test('anthropic preview preserves user pdf parts', () async {
+    await database.putSetting(
+      'model_config',
+      ModelConfig(
+        currentProviderId: 'anthropic',
+        currentModelId: 'claude-sonnet-4',
+        connections: [
+          ProviderConnection(
+            id: 'anthropic',
+            name: 'Anthropic',
+            baseUrl: 'https://api.anthropic.com/v1',
+            apiKey: 'test-key',
+            models: const ['claude-sonnet-4'],
+          ),
+        ],
+        visibilityRules: const [],
+      ).toJson(),
+    );
+    final userMessage = MessageInfo(
+      id: newId('message'),
+      sessionId: session.id,
+      role: SessionRole.user,
+      agent: 'build',
+      createdAt: DateTime.now().millisecondsSinceEpoch,
+      text: 'Review this PDF',
+    );
+    await database.saveMessage(userMessage);
+    await database.savePart(
+      MessagePart(
+        id: newId('part'),
+        sessionId: session.id,
+        messageId: userMessage.id,
+        type: PartType.text,
+        createdAt: DateTime.now().millisecondsSinceEpoch,
+        data: {'text': 'Review this PDF'},
+      ),
+    );
+    await database.savePart(
+      MessagePart(
+        id: newId('part'),
+        sessionId: session.id,
+        messageId: userMessage.id,
+        type: PartType.file,
+        createdAt: DateTime.now().millisecondsSinceEpoch,
+        data: {
+          'mime': 'application/pdf',
+          'filename': 'spec.pdf',
+          'url': 'data:application/pdf;base64,ZmFrZQ==',
+        },
+      ),
+    );
+    final engine = SessionEngine(
+      database: database,
+      events: LocalEventBus(),
+      workspaceBridge: bridge,
+      promptAssembler: promptAssembler,
+      permissionCenter: PermissionCenter(database, LocalEventBus()),
+      questionCenter: QuestionCenter(database, LocalEventBus()),
+      toolRegistry: registry,
+      modelGateway: ModelGateway(),
+    );
+
+    final payload = await engine.previewModelRequest(
+      workspace: workspace,
+      session: session,
+    );
+
+    expect(payload['model'], 'claude-sonnet-4');
+    final messages = (payload['messages'] as List? ?? const []).cast<Map>();
+    final userPayload = messages.lastWhere((item) => item['role'] == 'user');
+    final content = (userPayload['content'] as List? ?? const []).cast<Map>();
+    expect(
+      content.any(
+        (item) =>
+            item['type'] == 'text' &&
+            (item['text'] as String?)?.contains('Review this PDF') == true,
+      ),
+      isTrue,
+    );
+    expect(
+      content.any(
+        (item) =>
+            item['type'] == 'document' &&
+            ((item['source'] as Map?)?['media_type'] as String?) ==
+                'application/pdf',
+      ),
+      isTrue,
+    );
+  });
+
+  test('unsupported pdf input degrades to explicit user-facing error text',
+      () async {
+    await database.putSetting(
+      'model_config',
+      ModelConfig(
+        currentProviderId: 'deepseek',
+        currentModelId: 'deepseek-chat',
+        connections: [
+          ProviderConnection(
+            id: 'deepseek',
+            name: 'DeepSeek',
+            baseUrl: 'https://api.deepseek.com/v1',
+            apiKey: 'test-key',
+            models: const ['deepseek-chat'],
+          ),
+        ],
+        visibilityRules: const [],
+      ).toJson(),
+    );
+    final userMessage = MessageInfo(
+      id: newId('message'),
+      sessionId: session.id,
+      role: SessionRole.user,
+      agent: 'build',
+      createdAt: DateTime.now().millisecondsSinceEpoch,
+      text: 'Review this PDF',
+    );
+    await database.saveMessage(userMessage);
+    await database.savePart(
+      MessagePart(
+        id: newId('part'),
+        sessionId: session.id,
+        messageId: userMessage.id,
+        type: PartType.text,
+        createdAt: DateTime.now().millisecondsSinceEpoch,
+        data: {'text': 'Review this PDF'},
+      ),
+    );
+    await database.savePart(
+      MessagePart(
+        id: newId('part'),
+        sessionId: session.id,
+        messageId: userMessage.id,
+        type: PartType.file,
+        createdAt: DateTime.now().millisecondsSinceEpoch,
+        data: {
+          'mime': 'application/pdf',
+          'filename': 'spec.pdf',
+          'url': 'data:application/pdf;base64,ZmFrZQ==',
+        },
+      ),
+    );
+    final engine = SessionEngine(
+      database: database,
+      events: LocalEventBus(),
+      workspaceBridge: bridge,
+      promptAssembler: promptAssembler,
+      permissionCenter: PermissionCenter(database, LocalEventBus()),
+      questionCenter: QuestionCenter(database, LocalEventBus()),
+      toolRegistry: registry,
+      modelGateway: ModelGateway(),
+    );
+
+    final payload = await engine.previewModelRequest(
+      workspace: workspace,
+      session: session,
+    );
+
+    final messages = (payload['messages'] as List? ?? const []).cast<Map>();
+    final userPayload = messages.lastWhere((item) => item['role'] == 'user');
+    final content = (userPayload['content'] as List? ?? const []).cast<Map>();
+    expect(
+      content.any(
+        (item) =>
+            item['type'] == 'text' &&
+            (item['text'] as String?)?.contains('does not support pdf input') ==
+                true,
+      ),
+      isTrue,
+    );
+    expect(
+      content.any((item) => item['type'] == 'document'),
+      isFalse,
+    );
+  });
+
+  test('summarize creates an opencode-style compaction boundary', () async {
     await database.putSetting(
       'model_config',
       ModelConfig(
@@ -670,7 +2283,7 @@ void main() {
       ),
     );
 
-    await engine.summarize(
+    final compactedSession = await engine.summarize(
       workspace: workspace,
       session: session,
       modelConfig: ModelConfig(
@@ -690,17 +2303,480 @@ void main() {
       currentAgent: 'build',
     );
 
-    final parts = await database.listPartsForSession(session.id);
-    final compactedToolPart = parts.firstWhere(
-      (part) => part.type == PartType.tool && part.data['tool'] == 'git',
+    final messages = await database.listMessages(session.id);
+    final boundary = messages.firstWhere(
+      (message) => message.id == compactedSession.summaryMessageId,
     );
-    final state =
-        Map<String, dynamic>.from(compactedToolPart.data['state'] as Map);
-    final compacted = state['output'] as String;
-    expect(compacted, contains('[output compacted]'));
-    expect(compacted, contains('7187 staged, 299 unstaged, 297 untracked'));
-    expect(compacted, contains('"branch":"main"'));
-    expect(compacted, contains('"staged":7187'));
+    expect(boundary.role, SessionRole.user);
+
+    final payload = await engine.previewModelRequest(
+      workspace: workspace,
+      session: compactedSession,
+    );
+    final requestMessages =
+        (payload['messages'] as List? ?? const []).cast<Map>();
+    expect(
+      requestMessages.any(
+        (item) =>
+            (item['content'] as String?)?.contains('What did we do so far?') ==
+            true,
+      ),
+      isTrue,
+    );
+    expect(
+      requestMessages.any(
+        (item) => (item['content'] as String?)?.contains('summary') == true,
+      ),
+      isTrue,
+    );
+  });
+
+  test('auto compaction replays the user turn and continues', () async {
+    final gateway = _QueuedModelGateway([
+      ModelResponse(
+        text: 'first pass',
+        toolCalls: const [],
+        finishReason: 'stop',
+        raw: const {},
+        usage: const ModelUsage(totalTokensFromApi: 120),
+      ),
+      ModelResponse(
+        text: 'summary',
+        toolCalls: const [],
+        finishReason: 'stop',
+        raw: const {},
+        usage: const ModelUsage(totalTokensFromApi: 10),
+      ),
+      ModelResponse(
+        text: 'second pass',
+        toolCalls: const [],
+        finishReason: 'stop',
+        raw: const {},
+        usage: const ModelUsage(totalTokensFromApi: 10),
+      ),
+    ]);
+    final engine = SessionEngine(
+      database: database,
+      events: LocalEventBus(),
+      workspaceBridge: bridge,
+      promptAssembler: promptAssembler,
+      permissionCenter: PermissionCenter(database, LocalEventBus()),
+      questionCenter: QuestionCenter(database, LocalEventBus()),
+      toolRegistry: registry,
+      modelGateway: gateway,
+    );
+    final project = await engine.ensureProject(workspace);
+    session = SessionInfo(
+      id: session.id,
+      projectId: project.id,
+      workspaceId: workspace.id,
+      title: session.title,
+      agent: 'build',
+      createdAt: session.createdAt,
+      updatedAt: session.updatedAt,
+    );
+    await database.saveSession(session);
+    await database.saveMessage(
+      MessageInfo(
+        id: newId('message'),
+        sessionId: session.id,
+        role: SessionRole.user,
+        agent: 'build',
+        createdAt: DateTime.now().millisecondsSinceEpoch,
+        text: 'Earlier context',
+      ),
+    );
+    await database.putSetting(
+      kModelsDevCatalogCacheKey,
+      {
+        'all': [
+          const ProviderInfo(
+            id: 'openai',
+            name: 'OpenAI',
+            api: 'https://api.openai.com/v1',
+            env: [],
+            models: {
+              'gpt-5': ProviderModelInfo(
+                id: 'gpt-5',
+                name: 'gpt-5',
+                limit: ProviderModelLimit(
+                  context: 100,
+                  input: 100,
+                  output: 20,
+                ),
+              ),
+            },
+          ).toJson(),
+        ],
+      },
+    );
+    await database.putSetting(
+      'model_config',
+      ModelConfig(
+        currentProviderId: 'openai',
+        currentModelId: 'gpt-5',
+        connections: [
+          ProviderConnection(
+            id: 'openai',
+            name: 'OpenAI',
+            baseUrl: 'https://api.openai.com/v1',
+            apiKey: 'test-key',
+            models: const ['gpt-5'],
+          ),
+        ],
+        visibilityRules: const [],
+      ).toJson(),
+    );
+
+    final result = await engine.prompt(
+      workspace: workspace,
+      session: session,
+      text: 'Keep fixing the issue',
+      agent: 'build',
+      variant: 'high',
+    );
+
+    expect(gateway.requests.length, 3);
+    final replayRequest = gateway.requests.last;
+    expect(
+      replayRequest.any(
+        (item) => (item['content'] as String?) == 'Keep fixing the issue',
+      ),
+      isTrue,
+    );
+    expect(
+      replayRequest.any(
+        (item) => (item['content'] as String?)?.contains('summary') == true,
+      ),
+      isTrue,
+    );
+
+    final messages = await database.listMessages(session.id);
+    final replayUsers = messages
+        .where((message) =>
+            message.role == SessionRole.user &&
+            message.text == 'Keep fixing the issue')
+        .toList();
+    expect(replayUsers.length, 2);
+    expect(replayUsers.every((message) => message.variant == 'high'), isTrue);
+
+    final parts = await database.listPartsForSession(session.id);
+    for (final replayUser in replayUsers) {
+      expect(
+        parts.any((part) =>
+            part.messageId == replayUser.id &&
+            part.type == PartType.text &&
+            (part.data['text'] as String?) == 'Keep fixing the issue'),
+        isTrue,
+      );
+    }
+    final resultText = parts
+        .where(
+            (part) => part.messageId == result.id && part.type == PartType.text)
+        .map((part) => part.data['text'] as String? ?? '')
+        .join('\n');
+    expect(resultText, contains('second pass'));
+  });
+
+  test('context overflow error compacts and continues', () async {
+    final gateway = _QueuedModelGateway([
+      Exception(
+        'Model request failed: 413 context_length_exceeded: maximum context length is 100 tokens',
+      ),
+      ModelResponse(
+        text: 'summary',
+        toolCalls: const [],
+        finishReason: 'stop',
+        raw: const {},
+        usage: const ModelUsage(totalTokensFromApi: 10),
+      ),
+      ModelResponse(
+        text: 'second pass',
+        toolCalls: const [],
+        finishReason: 'stop',
+        raw: const {},
+        usage: const ModelUsage(totalTokensFromApi: 10),
+      ),
+    ]);
+    final engine = SessionEngine(
+      database: database,
+      events: LocalEventBus(),
+      workspaceBridge: bridge,
+      promptAssembler: promptAssembler,
+      permissionCenter: PermissionCenter(database, LocalEventBus()),
+      questionCenter: QuestionCenter(database, LocalEventBus()),
+      toolRegistry: registry,
+      modelGateway: gateway,
+    );
+    final project = await engine.ensureProject(workspace);
+    session = SessionInfo(
+      id: session.id,
+      projectId: project.id,
+      workspaceId: workspace.id,
+      title: session.title,
+      agent: 'build',
+      createdAt: session.createdAt,
+      updatedAt: session.updatedAt,
+    );
+    await database.saveSession(session);
+    await database.saveMessage(
+      MessageInfo(
+        id: newId('message'),
+        sessionId: session.id,
+        role: SessionRole.user,
+        agent: 'build',
+        createdAt: DateTime.now().millisecondsSinceEpoch,
+        text: 'Earlier context',
+      ),
+    );
+    await database.putSetting(
+      kModelsDevCatalogCacheKey,
+      {
+        'all': [
+          const ProviderInfo(
+            id: 'openai',
+            name: 'OpenAI',
+            api: 'https://api.openai.com/v1',
+            env: [],
+            models: {
+              'gpt-5': ProviderModelInfo(
+                id: 'gpt-5',
+                name: 'gpt-5',
+                limit: ProviderModelLimit(
+                  context: 100,
+                  input: 100,
+                  output: 20,
+                ),
+              ),
+            },
+          ).toJson(),
+        ],
+      },
+    );
+    await database.putSetting(
+      'model_config',
+      ModelConfig(
+        currentProviderId: 'openai',
+        currentModelId: 'gpt-5',
+        connections: [
+          ProviderConnection(
+            id: 'openai',
+            name: 'OpenAI',
+            baseUrl: 'https://api.openai.com/v1',
+            apiKey: 'test-key',
+            models: const ['gpt-5'],
+          ),
+        ],
+        visibilityRules: const [],
+      ).toJson(),
+    );
+
+    final result = await engine.prompt(
+      workspace: workspace,
+      session: session,
+      text: 'Keep fixing the issue',
+      agent: 'build',
+      variant: 'high',
+    );
+
+    expect(gateway.requests.length, 3);
+    final parts = await database.listPartsForSession(session.id);
+    final firstAssistant = (await database.listMessages(session.id))
+        .where((message) => message.role == SessionRole.assistant)
+        .first;
+    final firstFinish = parts.firstWhere(
+      (part) =>
+          part.messageId == firstAssistant.id &&
+          part.type == PartType.stepFinish,
+    );
+    expect(firstFinish.data['reason'], 'length');
+    final replayUsers = (await database.listMessages(session.id))
+        .where((message) =>
+            message.role == SessionRole.user &&
+            message.text == 'Keep fixing the issue')
+        .toList();
+    expect(replayUsers.length, 2);
+    expect(replayUsers.every((message) => message.variant == 'high'), isTrue);
+    for (final replayUser in replayUsers) {
+      expect(
+        parts.any((part) =>
+            part.messageId == replayUser.id &&
+            part.type == PartType.text &&
+            (part.data['text'] as String?) == 'Keep fixing the issue'),
+        isTrue,
+      );
+    }
+
+    final resultText = parts
+        .where(
+            (part) => part.messageId == result.id && part.type == PartType.text)
+        .map((part) => part.data['text'] as String? ?? '')
+        .join('\n');
+    expect(resultText, contains('second pass'));
+  });
+
+  test('auto compaction replays user file parts', () async {
+    final gateway = _QueuedModelGateway([
+      ModelResponse(
+        text: 'first pass',
+        toolCalls: const [],
+        finishReason: 'stop',
+        raw: const {},
+        usage: const ModelUsage(totalTokensFromApi: 120),
+      ),
+      ModelResponse(
+        text: 'summary',
+        toolCalls: const [],
+        finishReason: 'stop',
+        raw: const {},
+        usage: const ModelUsage(totalTokensFromApi: 10),
+      ),
+      ModelResponse(
+        text: 'second pass',
+        toolCalls: const [],
+        finishReason: 'stop',
+        raw: const {},
+        usage: const ModelUsage(totalTokensFromApi: 10),
+      ),
+    ]);
+    final engine = SessionEngine(
+      database: database,
+      events: LocalEventBus(),
+      workspaceBridge: bridge,
+      promptAssembler: promptAssembler,
+      permissionCenter: PermissionCenter(database, LocalEventBus()),
+      questionCenter: QuestionCenter(database, LocalEventBus()),
+      toolRegistry: registry,
+      modelGateway: gateway,
+    );
+    final project = await engine.ensureProject(workspace);
+    session = SessionInfo(
+      id: session.id,
+      projectId: project.id,
+      workspaceId: workspace.id,
+      title: session.title,
+      agent: 'build',
+      createdAt: session.createdAt,
+      updatedAt: session.updatedAt,
+    );
+    await database.saveSession(session);
+    await database.saveMessage(
+      MessageInfo(
+        id: newId('message'),
+        sessionId: session.id,
+        role: SessionRole.user,
+        agent: 'build',
+        createdAt: DateTime.now().millisecondsSinceEpoch,
+        text: 'Earlier context',
+      ),
+    );
+    await database.putSetting(
+      kModelsDevCatalogCacheKey,
+      {
+        'all': [
+          const ProviderInfo(
+            id: 'openai',
+            name: 'OpenAI',
+            api: 'https://api.openai.com/v1',
+            env: [],
+            models: {
+              'gpt-5': ProviderModelInfo(
+                id: 'gpt-5',
+                name: 'gpt-5',
+                limit: ProviderModelLimit(
+                  context: 100,
+                  input: 100,
+                  output: 20,
+                ),
+              ),
+            },
+          ).toJson(),
+        ],
+      },
+    );
+    await database.putSetting(
+      'model_config',
+      ModelConfig(
+        currentProviderId: 'openai',
+        currentModelId: 'gpt-5',
+        connections: [
+          ProviderConnection(
+            id: 'openai',
+            name: 'OpenAI',
+            baseUrl: 'https://api.openai.com/v1',
+            apiKey: 'test-key',
+            models: const ['gpt-5'],
+          ),
+        ],
+        visibilityRules: const [],
+      ).toJson(),
+    );
+
+    await engine.prompt(
+      workspace: workspace,
+      session: session,
+      text: 'Review this image',
+      agent: 'build',
+      userParts: [
+        {
+          'type': 'text',
+          'text': 'Review this image',
+        },
+        {
+          'type': 'file',
+          'mime': 'image/png',
+          'filename': 'diagram.png',
+          'url': 'workspace/diagram.png',
+        },
+      ],
+    );
+
+    expect(gateway.requests.length, 3);
+    final replayRequest = gateway.requests.last;
+    final replayUser = replayRequest.lastWhere(
+      (item) => item['role'] == 'user',
+    );
+    expect(replayUser['content'], isA<List>());
+    final content = (replayUser['content'] as List)
+        .whereType<Map>()
+        .map((item) => Map<String, dynamic>.from(item))
+        .toList();
+    expect(
+      content.any(
+        (item) =>
+            item['type'] == 'text' &&
+            (item['text'] as String?)?.contains('Review this image') == true,
+      ),
+      isTrue,
+    );
+    expect(
+      content.any(
+        (item) =>
+            item['type'] == 'text' &&
+            (item['text'] as String?)
+                    ?.contains('[Attached image/png: diagram.png]') ==
+                true,
+      ),
+      isTrue,
+    );
+
+    final messages = await database.listMessages(session.id);
+    final users = messages
+        .where((message) =>
+            message.role == SessionRole.user &&
+            message.text == 'Review this image')
+        .toList();
+    expect(users.length, 2);
+    final parts = await database.listPartsForSession(session.id);
+    for (final user in users) {
+      expect(
+        parts.any((part) =>
+            part.messageId == user.id &&
+            part.type == PartType.file &&
+            (part.data['filename'] as String?) == 'diagram.png'),
+        isTrue,
+      );
+    }
   });
 
   test('task tool forwards task_id for resumable subtasks', () async {
@@ -733,5 +2809,121 @@ void main() {
 
     expect(capturedTaskId, 'session-123');
     expect(result.output, contains('task_id: session-123'));
+  });
+
+  test('unknown tool calls are converted into invalid tool results', () async {
+    final gateway = _QueuedModelGateway([
+      ModelResponse(
+        text: '',
+        toolCalls: [
+          ToolCall(
+            id: 'call_unknown',
+            name: 'does_not_exist',
+            arguments: const {},
+          ),
+        ],
+        finishReason: 'tool_calls',
+        raw: const {},
+      ),
+      ModelResponse(
+        text: 'done',
+        toolCalls: const [],
+        finishReason: 'stop',
+        raw: const {},
+      ),
+    ]);
+    final engine = SessionEngine(
+      database: database,
+      events: LocalEventBus(),
+      workspaceBridge: bridge,
+      promptAssembler: promptAssembler,
+      permissionCenter: PermissionCenter(database, LocalEventBus()),
+      questionCenter: QuestionCenter(database, LocalEventBus()),
+      toolRegistry: registry,
+      modelGateway: gateway,
+    );
+
+    final result = await engine.prompt(
+      workspace: workspace,
+      session: session,
+      text: 'Try a tool',
+      agent: 'build',
+    );
+
+    final parts = await database.listPartsForSession(session.id);
+    final toolPart = parts.firstWhere(
+      (part) =>
+          part.type == PartType.tool && part.data['callID'] == 'call_unknown',
+    );
+    final state =
+        Map<String, dynamic>.from(toolPart.data['state'] as Map? ?? const {});
+    expect(state['status'], ToolStatus.completed.name);
+    expect(
+      state['output'] as String? ?? '',
+      contains('The does_not_exist tool call was invalid'),
+    );
+
+    final resultText = parts
+        .where(
+            (part) => part.messageId == result.id && part.type == PartType.text)
+        .map((part) => part.data['text'] as String? ?? '')
+        .join('\n');
+    expect(resultText, contains('done'));
+  });
+
+  test('write rejects path alias and requires filePath', () async {
+    final gateway = _QueuedModelGateway([
+      ModelResponse(
+        text: '',
+        toolCalls: [
+          ToolCall(
+            id: 'call_write',
+            name: 'write',
+            arguments: const {
+              'path': 'note.txt',
+              'content': 'hello',
+            },
+          ),
+        ],
+        finishReason: 'tool_calls',
+        raw: const {},
+      ),
+      ModelResponse(
+        text: 'done',
+        toolCalls: const [],
+        finishReason: 'stop',
+        raw: const {},
+      ),
+    ]);
+    final engine = SessionEngine(
+      database: database,
+      events: LocalEventBus(),
+      workspaceBridge: bridge,
+      promptAssembler: promptAssembler,
+      permissionCenter: PermissionCenter(database, LocalEventBus()),
+      questionCenter: QuestionCenter(database, LocalEventBus()),
+      toolRegistry: registry,
+      modelGateway: gateway,
+    );
+
+    await engine.prompt(
+      workspace: workspace,
+      session: session,
+      text: 'Create a file',
+      agent: 'build',
+    );
+
+    final parts = await database.listPartsForSession(session.id);
+    final toolPart = parts.firstWhere(
+      (part) =>
+          part.type == PartType.tool && part.data['callID'] == 'call_write',
+    );
+    final state =
+        Map<String, dynamic>.from(toolPart.data['state'] as Map? ?? const {});
+    expect(state['status'], ToolStatus.error.name);
+    expect(
+      state['output'] as String? ?? '',
+      contains('The write tool requires `filePath` as the target path.'),
+    );
   });
 }

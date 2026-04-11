@@ -356,9 +356,14 @@ extension AppControllerSession on AppController {
     // #endregion
   }
 
-  Future<void> sendPrompt(String text,
-      {String? agent, MessageFormat? format}) async {
-    if (text.trim().isEmpty) return;
+  Future<void> sendPrompt(
+    String text, {
+    String? agent,
+    MessageFormat? format,
+    List<JsonMap>? parts,
+    String? variant,
+  }) async {
+    if (text.trim().isEmpty && (parts == null || parts.isEmpty)) return;
     final workspace = state.workspace;
     if (workspace == null) return;
     var session = state.session;
@@ -394,8 +399,14 @@ extension AppControllerSession on AppController {
     state = state.copyWith(error: null);
     notifyListeners();
     try {
-      await _client!
-          .sendPromptAsync(session.id, text, agent: agent, format: format);
+      await _client!.sendPromptAsync(
+        session.id,
+        text,
+        agent: agent,
+        format: format,
+        parts: parts,
+        variant: variant,
+      );
       if (agent != null && agent != session.agent) {
         state = state.copyWith(session: session.copyWith(agent: agent));
         notifyListeners();

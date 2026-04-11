@@ -37,6 +37,7 @@ extension _HomePageTimeline on _HomePageState {
   }) {
     var cursor = 0;
     if (index == cursor++) {
+      final currentVariant = _effectiveSelectedVariant(state);
       return _TimelineHeaderCard(
         workspaceName: state.workspace?.name ??
             l(context, '未选择工作区', 'No workspace selected'),
@@ -45,6 +46,7 @@ extension _HomePageTimeline on _HomePageState {
         providerLabel: _providerLabel(modelConfig.provider,
             config: modelConfig, state: state),
         modelLabel: currentModelChoice?.name ?? modelConfig.model,
+        variantLabel: currentVariant,
         showModelFreeTag: showModelFreeTag,
         showModelLatestTag: showModelLatestTag,
         showMeta: !isKeyboardOpen,
@@ -63,11 +65,13 @@ extension _HomePageTimeline on _HomePageState {
     }
     if (state.messages.isEmpty && !state.isBusy) {
       if (index == cursor++) {
+        final currentVariant = _effectiveSelectedVariant(state);
         return _EmptyTimelineCard(
           onSelectModel: () => _openModelChooser(context),
           providerLabel: _providerLabel(modelConfig.provider,
               config: modelConfig, state: state),
           modelLabel: currentModelChoice?.name ?? modelConfig.model,
+          variantLabel: currentVariant,
           showModelFreeTag: showModelFreeTag,
           showModelLatestTag: showModelLatestTag,
         );
@@ -171,6 +175,10 @@ class _MessageBubbleState extends State<_MessageBubble> {
     final footer = <MessagePart>[];
     final hasCompaction = parts.any((p) => p.type == PartType.compaction);
     for (final p in parts) {
+      if (widget.bundle.message.role == SessionRole.user &&
+          p.type == PartType.text) {
+        continue;
+      }
       if (hasCompaction && p.type == PartType.text) {
         continue;
       } else {
@@ -219,6 +227,9 @@ class _MessageBubbleState extends State<_MessageBubble> {
     }
 
     final isUser = bundle.message.role == SessionRole.user;
+    final userText = isUser
+        ? _userMessageText(bundle.message, bundle.parts)
+        : bundle.message.text;
     final label = isUser ? l(context, '你', 'You') : bundle.message.agent;
     final bubbleColor = isUser ? oc.userBubble : oc.agentBubble;
     final hasCompaction =
@@ -228,6 +239,14 @@ class _MessageBubbleState extends State<_MessageBubble> {
         footerParts.isEmpty &&
         primaryParts.length == 1 &&
         primaryParts.first.type == PartType.compaction;
+    final compactionBoundaryOnly = isUser &&
+        bundle.message.text.isEmpty &&
+        footerParts.isEmpty &&
+        primaryParts.length == 1 &&
+        primaryParts.first.type == PartType.compaction;
+    if (compactionBoundaryOnly) {
+      return const SizedBox.shrink();
+    }
     if (compactionOnly) {
       return RepaintBoundary(
         child: Padding(
@@ -290,10 +309,10 @@ class _MessageBubbleState extends State<_MessageBubble> {
                       ),
                     ],
                   ),
-                  if (!hasCompaction && bundle.message.text.isNotEmpty) ...[
+                  if (!hasCompaction && userText.isNotEmpty) ...[
                     const SizedBox(height: 8),
                     SelectableText(
-                      bundle.message.text,
+                      userText,
                       style: const TextStyle(fontSize: 15, height: 1.45),
                     ),
                   ],
@@ -358,6 +377,16 @@ class _MessageBubbleState extends State<_MessageBubble> {
     final mm = dt.minute.toString().padLeft(2, '0');
     return '$hh:$mm';
   }
+
+  String _userMessageText(MessageInfo message, List<MessagePart> parts) {
+    final text = parts
+        .where((part) => part.type == PartType.text)
+        .map((part) => part.data['text'] as String? ?? '')
+        .where((text) => text.isNotEmpty)
+        .join('\n');
+    if (text.isNotEmpty) return text;
+    return message.text;
+  }
 }
 
 class _SessionAppBarTitle extends StatelessWidget {
@@ -404,6 +433,7 @@ class _TimelineHeaderCard extends StatelessWidget {
     required this.agentName,
     required this.providerLabel,
     required this.modelLabel,
+    this.variantLabel,
     required this.showModelFreeTag,
     required this.showModelLatestTag,
     required this.showMeta,
@@ -414,6 +444,7 @@ class _TimelineHeaderCard extends StatelessWidget {
   final String agentName;
   final String providerLabel;
   final String modelLabel;
+  final String? variantLabel;
   final bool showModelFreeTag;
   final bool showModelLatestTag;
   final bool showMeta;
@@ -460,6 +491,8 @@ class _TimelineHeaderCard extends StatelessWidget {
                 _TinyTag(label: agentName, color: oc.tagBlueGrey),
                 _TinyTag(label: providerLabel, color: oc.tagGreen),
                 _TinyTag(label: modelLabel, color: oc.tagBlue),
+                if (variantLabel != null && variantLabel!.isNotEmpty)
+                  _TinyTag(label: variantLabel!, color: oc.tagOrange),
                 if (showModelFreeTag)
                   OcModelTag(
                     label: l(context, '免费', 'Free'),
@@ -666,6 +699,7 @@ class _EmptyTimelineCard extends StatelessWidget {
     required this.onSelectModel,
     this.providerLabel,
     this.modelLabel,
+    this.variantLabel,
     this.showModelFreeTag = false,
     this.showModelLatestTag = false,
   });
@@ -673,6 +707,7 @@ class _EmptyTimelineCard extends StatelessWidget {
   final VoidCallback onSelectModel;
   final String? providerLabel;
   final String? modelLabel;
+  final String? variantLabel;
   final bool showModelFreeTag;
   final bool showModelLatestTag;
 
@@ -717,6 +752,8 @@ class _EmptyTimelineCard extends StatelessWidget {
                   _TinyTag(label: modelLabel!, color: oc.tagBlue),
                 if (providerLabel != null)
                   _TinyTag(label: providerLabel!, color: oc.tagGreen),
+                if (variantLabel != null && variantLabel!.isNotEmpty)
+                  _TinyTag(label: variantLabel!, color: oc.tagOrange),
                 if (showModelFreeTag)
                   OcModelTag(
                     label: l(context, '免费', 'Free'),

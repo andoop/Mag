@@ -14,6 +14,7 @@ enum OutputFormatType { text, jsonSchema }
 
 enum PartType {
   text,
+  file,
   reasoning,
   tool,
   stepStart,

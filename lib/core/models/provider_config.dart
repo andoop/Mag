@@ -192,6 +192,10 @@ class ModelConfig {
     required this.connections,
     required this.visibilityRules,
     this.currentModelLimit,
+    this.currentModelModalities,
+    this.currentModelCapabilities,
+    this.currentModelOptions,
+    this.currentModelVariants,
   });
 
   final String currentProviderId;
@@ -199,6 +203,10 @@ class ModelConfig {
   final List<ProviderConnection> connections;
   final List<ModelVisibilityRule> visibilityRules;
   final ProviderModelLimit? currentModelLimit;
+  final ProviderModelModalities? currentModelModalities;
+  final ProviderModelCapabilities? currentModelCapabilities;
+  final JsonMap? currentModelOptions;
+  final Map<String, JsonMap>? currentModelVariants;
 
   static const String _defaultMagBaseUrl = 'https://opencode.ai/zen/v1';
   static const String _defaultMagModel = 'minimax-m2.5-free';
@@ -249,6 +257,10 @@ class ModelConfig {
     List<ProviderConnection>? connections,
     List<ModelVisibilityRule>? visibilityRules,
     Object? currentModelLimit = _unset,
+    Object? currentModelModalities = _unset,
+    Object? currentModelCapabilities = _unset,
+    Object? currentModelOptions = _unset,
+    Object? currentModelVariants = _unset,
   }) {
     return ModelConfig(
       currentProviderId: currentProviderId ?? this.currentProviderId,
@@ -258,16 +270,74 @@ class ModelConfig {
       currentModelLimit: identical(currentModelLimit, _unset)
           ? this.currentModelLimit
           : currentModelLimit as ProviderModelLimit?,
+      currentModelModalities: identical(currentModelModalities, _unset)
+          ? this.currentModelModalities
+          : currentModelModalities as ProviderModelModalities?,
+      currentModelCapabilities: identical(currentModelCapabilities, _unset)
+          ? this.currentModelCapabilities
+          : currentModelCapabilities as ProviderModelCapabilities?,
+      currentModelOptions: identical(currentModelOptions, _unset)
+          ? this.currentModelOptions
+          : currentModelOptions as JsonMap?,
+      currentModelVariants: identical(currentModelVariants, _unset)
+          ? this.currentModelVariants
+          : currentModelVariants as Map<String, JsonMap>?,
     );
   }
 
   ModelConfig withResolvedCurrentModelLimit(List<ProviderInfo> catalog) {
+    final catalogModalities = lookupProviderModelModalitiesInCatalog(
+      catalog: catalog,
+      providerId: currentProviderId,
+      modelId: currentModelId,
+    );
+    final catalogCapabilities = lookupProviderModelCapabilitiesInCatalog(
+      catalog: catalog,
+      providerId: currentProviderId,
+      modelId: currentModelId,
+    );
+    final resolvedCapabilities = catalogCapabilities ??
+        currentModelCapabilities ??
+        inferProviderModelCapabilitiesFallback(
+          currentModelId,
+          providerId: currentProviderId,
+        );
+    final catalogOptions = lookupProviderModelOptionsInCatalog(
+      catalog: catalog,
+      providerId: currentProviderId,
+      modelId: currentModelId,
+    );
+    final resolvedLimit = resolveProviderModelLimit(
+      catalog: catalog,
+      providerId: currentProviderId,
+      modelId: currentModelId,
+    );
+    final catalogVariants = lookupProviderModelVariantsInCatalog(
+      catalog: catalog,
+      providerId: currentProviderId,
+      modelId: currentModelId,
+    );
     return copyWith(
-      currentModelLimit: resolveProviderModelLimit(
-        catalog: catalog,
-        providerId: currentProviderId,
-        modelId: currentModelId,
-      ),
+      currentModelLimit: resolvedLimit,
+      currentModelModalities: catalogModalities ??
+          currentModelModalities ??
+          inferProviderModelModalitiesFallback(currentModelId),
+      currentModelCapabilities: resolvedCapabilities,
+      currentModelOptions: catalogOptions ??
+          currentModelOptions ??
+          inferProviderModelOptionsFallback(
+            providerId: currentProviderId,
+            modelId: currentModelId,
+            capabilities: resolvedCapabilities,
+          ),
+      currentModelVariants: catalogVariants ??
+          currentModelVariants ??
+          inferProviderModelVariantsFallback(
+            providerId: currentProviderId,
+            modelId: currentModelId,
+            capabilities: resolvedCapabilities,
+            limit: resolvedLimit,
+          ),
     );
   }
 
@@ -304,6 +374,15 @@ class ModelConfig {
             visibilityRules.map((item) => item.toJson()).toList(),
         if (currentModelLimit != null)
           'currentModelLimit': currentModelLimit!.toJson(),
+        if (currentModelModalities != null)
+          'currentModelModalities': currentModelModalities!.toJson(),
+        if (currentModelCapabilities != null)
+          'currentModelCapabilities': currentModelCapabilities!.toJson(),
+        if (currentModelOptions != null)
+          'currentModelOptions': currentModelOptions,
+        if (currentModelVariants != null)
+          'currentModelVariants':
+              currentModelVariants!.map((key, value) => MapEntry(key, value)),
       };
 
   factory ModelConfig.fromJson(JsonMap json) {
@@ -333,6 +412,33 @@ class ModelConfig {
             ? null
             : ProviderModelLimit.fromJson(
                 Map<String, dynamic>.from(json['currentModelLimit'] as Map),
+              ),
+        currentModelModalities: json['currentModelModalities'] == null
+            ? null
+            : ProviderModelModalities.fromJson(
+                Map<String, dynamic>.from(
+                  json['currentModelModalities'] as Map,
+                ),
+              ),
+        currentModelCapabilities: json['currentModelCapabilities'] == null
+            ? null
+            : ProviderModelCapabilities.fromJson(
+                Map<String, dynamic>.from(
+                  json['currentModelCapabilities'] as Map,
+                ),
+              ),
+        currentModelOptions: json['currentModelOptions'] == null
+            ? null
+            : Map<String, dynamic>.from(
+                json['currentModelOptions'] as Map,
+              ),
+        currentModelVariants: json['currentModelVariants'] == null
+            ? null
+            : (json['currentModelVariants'] as Map).map(
+                (key, value) => MapEntry(
+                  key.toString(),
+                  Map<String, dynamic>.from(value as Map),
+                ),
               ),
       ));
     }

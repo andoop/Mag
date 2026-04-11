@@ -48,6 +48,7 @@ part 'home/pickers/picker_utils.dart';
 part 'home/pickers/oauth_sheet.dart';
 part 'home/pickers/provider_picker.dart';
 part 'home/pickers/model_picker.dart';
+part 'home/pickers/variant_picker.dart';
 part 'home/pickers/agent_picker.dart';
 part 'home/pickers/settings_sheet.dart';
 part 'home/pickers/presets.dart';
@@ -84,6 +85,8 @@ class _HomePageState extends State<HomePage> {
   );
   final ScrollController _timelineController = ScrollController();
   String? _selectedAgent;
+  String? _selectedVariant;
+  bool _selectedVariantDirty = false;
   // Mutated from part-file extensions that own composer/schema interactions.
   // ignore: prefer_final_fields
   bool _structuredOutputEnabled = false;
@@ -112,9 +115,11 @@ class _HomePageState extends State<HomePage> {
   Timer? _promptMentionDebounce;
   // ignore: prefer_final_fields
   int _promptMentionRequestId = 0;
+  List<WorkspaceEntry> _promptAttachments = const [];
 
   /// 会话切换时必须重建时间线；不能仅依赖 [_stateRenderKey]，否则新建/切换会话后可能与旧 key 碰撞而不调用 setState，界面仍显示旧消息。
   String? _lastObservedSessionId;
+  String _lastObservedModelKey = '';
 
   @override
   void initState() {
@@ -148,6 +153,16 @@ class _HomePageState extends State<HomePage> {
     final sid = state.session?.id;
     final renderKey = _stateRenderKey(state);
     final sessionChanged = sid != _lastObservedSessionId;
+    final modelKey = _currentVariantModelKey(state);
+    final modelChanged = modelKey != _lastObservedModelKey;
+    final variantChanged = () {
+      if (sessionChanged || modelChanged) {
+        _lastObservedModelKey = modelKey;
+        _selectedVariantDirty = false;
+        return _syncPromptVariantSelection(state, force: true);
+      }
+      return _syncPromptVariantSelection(state);
+    }();
     if (sessionChanged) {
       _lastObservedSessionId = sid;
       _lastStateRenderKey = renderKey;
@@ -163,13 +178,16 @@ class _HomePageState extends State<HomePage> {
       return;
     }
     if (renderKey == _lastStateRenderKey) {
+      if (variantChanged) {
+        setState(() {});
+      }
       return;
     }
     _lastStateRenderKey = renderKey;
     _reconcileTimelineWindow(state);
     _scheduleTimelineSync(state);
     final structuralKey = _structuralRenderKey(state);
-    if (structuralKey != _lastStructuralKey) {
+    if (structuralKey != _lastStructuralKey || variantChanged) {
       _lastStructuralKey = structuralKey;
       setState(() {});
     } else {
@@ -309,12 +327,20 @@ class _HomePageState extends State<HomePage> {
       return;
     }
     final agent = _selectedAgent ?? widget.controller.state.session?.agent;
-    await widget.controller.sendPrompt(text, agent: agent);
+    await widget.controller.sendPrompt(
+      text,
+      agent: agent,
+      variant: _effectiveSelectedVariant(widget.controller.state),
+    );
     if (!mounted) return;
     _showInfo(context, l(context, '已作为下一条消息发送', 'Sent as the next message.'));
   }
 
   Future<void> _selectModel(_ModelChoice model) async {
+    setState(() {
+      _selectedVariant = null;
+      _selectedVariantDirty = false;
+    });
     await widget.controller.setCurrentModel(
       providerId: model.providerId,
       modelId: model.id,

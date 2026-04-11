@@ -238,6 +238,9 @@ class MessageInfo {
     this.provider,
     this.error,
     this.structuredOutput,
+    this.parentMessageId,
+    this.summary = false,
+    this.variant,
   });
 
   final String id;
@@ -251,6 +254,9 @@ class MessageInfo {
   final String? provider;
   final String? error;
   final JsonMap? structuredOutput;
+  final String? parentMessageId;
+  final bool summary;
+  final String? variant;
 
   JsonMap toJson() => {
         'id': id,
@@ -264,6 +270,9 @@ class MessageInfo {
         'provider': provider,
         'error': error,
         'structuredOutput': structuredOutput,
+        'parentMessageId': parentMessageId,
+        'summary': summary,
+        'variant': variant,
       };
 
   factory MessageInfo.fromJson(JsonMap json) => MessageInfo(
@@ -284,6 +293,9 @@ class MessageInfo {
         structuredOutput: json['structuredOutput'] == null
             ? null
             : Map<String, dynamic>.from(json['structuredOutput'] as Map),
+        parentMessageId: json['parentMessageId'] as String?,
+        summary: (json['summary'] as bool?) ?? false,
+        variant: json['variant'] as String?,
       );
 }
 

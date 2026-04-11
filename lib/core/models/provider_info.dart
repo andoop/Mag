@@ -46,6 +46,89 @@ class ProviderModelLimit {
       );
 }
 
+class ProviderModelModalities {
+  const ProviderModelModalities({
+    this.input = const [],
+    this.output = const [],
+  });
+
+  final List<String> input;
+  final List<String> output;
+
+  JsonMap toJson() => {
+        'input': input,
+        'output': output,
+      };
+
+  factory ProviderModelModalities.fromJson(JsonMap json) =>
+      ProviderModelModalities(
+        input: (json['input'] as List? ?? const [])
+            .map((item) => item.toString())
+            .toList(),
+        output: (json['output'] as List? ?? const [])
+            .map((item) => item.toString())
+            .toList(),
+      );
+}
+
+class ProviderModelInterleaved {
+  const ProviderModelInterleaved({
+    this.enabled = false,
+    this.field,
+  });
+
+  final bool enabled;
+  final String? field;
+
+  JsonMap toJson() => {
+        'enabled': enabled,
+        if (field != null) 'field': field,
+      };
+
+  factory ProviderModelInterleaved.fromJson(JsonMap json) =>
+      ProviderModelInterleaved(
+        enabled: (json['enabled'] as bool?) ?? false,
+        field: json['field'] as String?,
+      );
+}
+
+class ProviderModelCapabilities {
+  const ProviderModelCapabilities({
+    this.temperature = false,
+    this.reasoning = false,
+    this.attachment = false,
+    this.toolCall = true,
+    this.interleaved = const ProviderModelInterleaved(),
+  });
+
+  final bool temperature;
+  final bool reasoning;
+  final bool attachment;
+  final bool toolCall;
+  final ProviderModelInterleaved interleaved;
+
+  JsonMap toJson() => {
+        'temperature': temperature,
+        'reasoning': reasoning,
+        'attachment': attachment,
+        'tool_call': toolCall,
+        'interleaved': interleaved.toJson(),
+      };
+
+  factory ProviderModelCapabilities.fromJson(JsonMap json) =>
+      ProviderModelCapabilities(
+        temperature: (json['temperature'] as bool?) ?? false,
+        reasoning: (json['reasoning'] as bool?) ?? false,
+        attachment: (json['attachment'] as bool?) ?? false,
+        toolCall: (json['tool_call'] as bool?) ?? true,
+        interleaved: json['interleaved'] == null
+            ? const ProviderModelInterleaved()
+            : ProviderModelInterleaved.fromJson(
+                Map<String, dynamic>.from(json['interleaved'] as Map),
+              ),
+      );
+}
+
 class ProviderModelInfo {
   const ProviderModelInfo({
     required this.id,
@@ -55,6 +138,10 @@ class ProviderModelInfo {
     this.status = 'active',
     this.cost = const ProviderModelCost(),
     this.limit = const ProviderModelLimit(),
+    this.modalities,
+    this.capabilities = const ProviderModelCapabilities(),
+    this.options = const {},
+    this.variants = const {},
   });
 
   final String id;
@@ -64,6 +151,10 @@ class ProviderModelInfo {
   final String status;
   final ProviderModelCost cost;
   final ProviderModelLimit limit;
+  final ProviderModelModalities? modalities;
+  final ProviderModelCapabilities capabilities;
+  final JsonMap options;
+  final Map<String, JsonMap> variants;
 
   bool get isDeprecated => status == 'deprecated';
 
@@ -75,6 +166,10 @@ class ProviderModelInfo {
     String? status,
     ProviderModelCost? cost,
     ProviderModelLimit? limit,
+    Object? modalities = _unset,
+    ProviderModelCapabilities? capabilities,
+    JsonMap? options,
+    Map<String, JsonMap>? variants,
   }) {
     return ProviderModelInfo(
       id: id ?? this.id,
@@ -84,6 +179,12 @@ class ProviderModelInfo {
       status: status ?? this.status,
       cost: cost ?? this.cost,
       limit: limit ?? this.limit,
+      modalities: identical(modalities, _unset)
+          ? this.modalities
+          : modalities as ProviderModelModalities?,
+      capabilities: capabilities ?? this.capabilities,
+      options: options ?? this.options,
+      variants: variants ?? this.variants,
     );
   }
 
@@ -95,6 +196,10 @@ class ProviderModelInfo {
         'status': status,
         'cost': cost.toJson(),
         'limit': limit.toJson(),
+        if (modalities != null) 'modalities': modalities!.toJson(),
+        'capabilities': capabilities.toJson(),
+        'options': options,
+        'variants': variants.map((key, value) => MapEntry(key, value)),
       };
 
   factory ProviderModelInfo.fromJson(JsonMap json) => ProviderModelInfo(
@@ -108,6 +213,21 @@ class ProviderModelInfo {
         ),
         limit: ProviderModelLimit.fromJson(
           Map<String, dynamic>.from(json['limit'] as Map? ?? const {}),
+        ),
+        modalities: json['modalities'] == null
+            ? null
+            : ProviderModelModalities.fromJson(
+                Map<String, dynamic>.from(json['modalities'] as Map),
+              ),
+        capabilities: ProviderModelCapabilities.fromJson(
+          Map<String, dynamic>.from(json['capabilities'] as Map? ?? const {}),
+        ),
+        options: Map<String, dynamic>.from(json['options'] as Map? ?? const {}),
+        variants: (json['variants'] as Map? ?? const {}).map(
+          (key, value) => MapEntry(
+            key.toString(),
+            Map<String, dynamic>.from(value as Map),
+          ),
         ),
       );
 
@@ -123,6 +243,37 @@ class ProviderModelInfo {
         ),
         limit: ProviderModelLimit.fromJson(
           Map<String, dynamic>.from(json['limit'] as Map? ?? const {}),
+        ),
+        modalities: json['modalities'] == null
+            ? null
+            : ProviderModelModalities.fromJson(
+                Map<String, dynamic>.from(json['modalities'] as Map),
+              ),
+        capabilities: ProviderModelCapabilities(
+          temperature: (json['temperature'] as bool?) ?? false,
+          reasoning: (json['reasoning'] as bool?) ?? false,
+          attachment: (json['attachment'] as bool?) ?? false,
+          toolCall: (json['tool_call'] as bool?) ?? true,
+          interleaved: () {
+            final value = json['interleaved'];
+            if (value is bool) {
+              return ProviderModelInterleaved(enabled: value);
+            }
+            if (value is Map) {
+              return ProviderModelInterleaved(
+                enabled: true,
+                field: value['field'] as String?,
+              );
+            }
+            return const ProviderModelInterleaved();
+          }(),
+        ),
+        options: Map<String, dynamic>.from(json['options'] as Map? ?? const {}),
+        variants: (json['variants'] as Map? ?? const {}).map(
+          (key, value) => MapEntry(
+            key.toString(),
+            Map<String, dynamic>.from(value as Map),
+          ),
         ),
       );
 }
@@ -273,6 +424,7 @@ ProviderListResponse buildProviderListResponse({
         modelId,
         () => fallbackProviderModelInfo(
           modelId,
+          providerId: connection.id,
           cost: connection.id == 'mag'
               ? const ProviderModelCost(input: 0, output: 0)
               : const ProviderModelCost(),
@@ -372,15 +524,327 @@ ProviderModelLimit inferProviderModelLimitFallback(String modelId) {
   );
 }
 
+ProviderModelModalities? inferProviderModelModalitiesFallback(String modelId) {
+  final lower = modelId.toLowerCase();
+  if (lower.contains('claude')) {
+    return const ProviderModelModalities(
+      input: ['text', 'image', 'pdf'],
+      output: ['text'],
+    );
+  }
+  if (lower.contains('gemini')) {
+    return const ProviderModelModalities(
+      input: ['text', 'image'],
+      output: ['text'],
+    );
+  }
+  if (lower.contains('gpt-4o') ||
+      lower.contains('gpt-4.1') ||
+      lower.contains('gpt-4-1') ||
+      lower.contains('o1') ||
+      lower.contains('o3') ||
+      lower.contains('o4')) {
+    return const ProviderModelModalities(
+      input: ['text', 'image'],
+      output: ['text'],
+    );
+  }
+  return const ProviderModelModalities(
+    input: ['text'],
+    output: ['text'],
+  );
+}
+
+double? inferTemperatureForProviderFallback(String modelId) {
+  final lower = modelId.toLowerCase();
+  if (lower.contains('qwen') || lower.contains('qwq')) return 0.55;
+  if (lower.contains('gemini')) return 1.0;
+  if (lower.contains('glm-4.6') || lower.contains('glm-4.7')) return 1.0;
+  if (lower.contains('minimax-m2')) return 1.0;
+  if (lower.contains('kimi-k2')) {
+    if (['thinking', 'k2.', 'k2p', 'k2-5'].any(lower.contains)) return 1.0;
+    return 0.6;
+  }
+  return null;
+}
+
+ProviderModelCapabilities inferProviderModelCapabilitiesFallback(
+  String modelId, {
+  String providerId = '',
+}) {
+  final modalities = inferProviderModelModalitiesFallback(modelId);
+  final lower = modelId.toLowerCase();
+  return ProviderModelCapabilities(
+    temperature: inferTemperatureForProviderFallback(modelId) != null,
+    reasoning: lower.contains('gpt-5') ||
+        RegExp(r'(^|[^a-z0-9])o[134]\b').hasMatch(lower) ||
+        lower.contains('claude') ||
+        lower.contains('gemini-2.5') ||
+        lower.contains('gemini-3') ||
+        lower.contains('grok') ||
+        lower.contains('reasoner') ||
+        lower.contains('deepseek-r1') ||
+        lower.contains('qwen3') ||
+        lower.contains('qwq') ||
+        lower.contains('kimi-k2') ||
+        lower.contains('glm-4.6') ||
+        lower.contains('glm-4.7') ||
+        lower.contains('sonnet-4') ||
+        lower.contains('opus-4') ||
+        lower.contains('haiku-4') ||
+        providerId == 'anthropic',
+    attachment: (modalities?.input.any((item) => item != 'text') ?? false),
+    toolCall: true,
+    interleaved: const ProviderModelInterleaved(),
+  );
+}
+
+JsonMap inferProviderModelOptionsFallback({
+  required String providerId,
+  required String modelId,
+  ProviderModelCapabilities? capabilities,
+}) {
+  final result = <String, dynamic>{};
+  final temperature = inferTemperatureForProviderFallback(modelId);
+  if (temperature != null) {
+    result['temperature'] = temperature;
+  }
+  final lower = modelId.toLowerCase();
+  if (lower.contains('qwen') || lower.contains('qwq')) {
+    result['top_p'] = 1;
+  } else if ([
+    'minimax-m2',
+    'gemini',
+    'kimi-k2.5',
+    'kimi-k2p5',
+    'kimi-k2-5',
+  ].any(lower.contains)) {
+    result['top_p'] = 0.95;
+  }
+  if (lower.contains('minimax-m2')) {
+    result['top_k'] = ['m2.', 'm25', 'm21'].any(lower.contains) ? 40 : 20;
+  } else if (lower.contains('gemini')) {
+    result['top_k'] = 64;
+  }
+  final resolvedCapabilities = capabilities ??
+      inferProviderModelCapabilitiesFallback(
+        modelId,
+        providerId: providerId,
+      );
+  if (providerId == 'openai' || providerId == 'github_models') {
+    result['store'] = false;
+  }
+  if (providerId == 'alibaba-cn' &&
+      resolvedCapabilities.reasoning &&
+      !lower.contains('kimi-k2-thinking')) {
+    result['enable_thinking'] = true;
+  }
+  if (['zai', 'zhipuai'].contains(providerId)) {
+    result['thinking'] = {
+      'type': 'enabled',
+      'clear_thinking': false,
+    };
+  }
+  if ((providerId == 'google' || providerId == 'google-vertex') &&
+      resolvedCapabilities.reasoning) {
+    result['thinkingConfig'] = {
+      'includeThoughts': true,
+      if (lower.contains('gemini-3')) 'thinkingLevel': 'high',
+    };
+  }
+  if (lower.contains('gpt-5') && !lower.contains('gpt-5-chat')) {
+    if (!lower.contains('gpt-5-pro')) {
+      result['reasoningEffort'] = 'medium';
+      result['reasoningSummary'] = 'auto';
+    }
+    if (lower.contains('gpt-5.') &&
+        !lower.contains('codex') &&
+        !lower.contains('-chat') &&
+        providerId != 'azure') {
+      result['textVerbosity'] = 'low';
+    }
+  }
+  return result;
+}
+
+JsonMap inferProviderSmallOptionsFallback({
+  required String providerId,
+  required String modelId,
+}) {
+  final lower = modelId.toLowerCase();
+  if (providerId == 'openai' || providerId == 'github_models') {
+    if (lower.contains('gpt-5')) {
+      if (lower.contains('5.')) {
+        return const {
+          'store': false,
+          'reasoningEffort': 'low',
+        };
+      }
+      return const {
+        'store': false,
+        'reasoningEffort': 'minimal',
+      };
+    }
+    return const {
+      'store': false,
+    };
+  }
+  if (providerId == 'google') {
+    if (lower.contains('gemini-3')) {
+      return const {
+        'thinkingConfig': {'thinkingLevel': 'minimal'},
+      };
+    }
+    return const {
+      'thinkingConfig': {'thinkingBudget': 0},
+    };
+  }
+  if (providerId == 'openrouter') {
+    if (lower.contains('google')) {
+      return const {
+        'reasoning': {'enabled': false},
+      };
+    }
+    return const {
+      'reasoningEffort': 'minimal',
+    };
+  }
+  if (providerId == 'venice') {
+    return const {
+      'veniceParameters': {'disableThinking': true},
+    };
+  }
+  return const {};
+}
+
+Map<String, JsonMap> inferProviderModelVariantsFallback({
+  required String providerId,
+  required String modelId,
+  ProviderModelCapabilities? capabilities,
+  ProviderModelLimit? limit,
+}) {
+  final resolvedCapabilities = capabilities ??
+      inferProviderModelCapabilitiesFallback(
+        modelId,
+        providerId: providerId,
+      );
+  if (!resolvedCapabilities.reasoning) return const {};
+  final lower = modelId.toLowerCase();
+  final resolvedLimit = limit ?? inferProviderModelLimitFallback(modelId);
+  if (lower.contains('deepseek') ||
+      lower.contains('minimax') ||
+      lower.contains('glm') ||
+      lower.contains('mistral') ||
+      lower.contains('kimi') ||
+      lower.contains('k2p5')) {
+    return const {};
+  }
+  if (providerId == 'anthropic' || lower.contains('claude')) {
+    return {
+      'high': {
+        'thinking': {
+          'type': 'enabled',
+          'budgetTokens': math.min(
+            16000,
+            math.max(1, resolvedLimit.output ~/ 2 - 1),
+          ),
+        },
+      },
+      'max': {
+        'thinking': {
+          'type': 'enabled',
+          'budgetTokens': math.min(
+            31999,
+            math.max(1, resolvedLimit.output - 1),
+          ),
+        },
+      },
+    };
+  }
+  if (providerId == 'google' ||
+      providerId == 'google-vertex' ||
+      lower.contains('gemini')) {
+    if (lower.contains('2.5')) {
+      return const {
+        'high': {
+          'thinkingConfig': {
+            'includeThoughts': true,
+            'thinkingBudget': 16000,
+          },
+        },
+        'max': {
+          'thinkingConfig': {
+            'includeThoughts': true,
+            'thinkingBudget': 24576,
+          },
+        },
+      };
+    }
+    return const {
+      'low': {
+        'thinkingConfig': {
+          'includeThoughts': true,
+          'thinkingLevel': 'low',
+        },
+      },
+      'high': {
+        'thinkingConfig': {
+          'includeThoughts': true,
+          'thinkingLevel': 'high',
+        },
+      },
+    };
+  }
+  if (lower.contains('gpt') ||
+      RegExp(r'(^|[^a-z0-9])o[1-9]\b').hasMatch(lower)) {
+    return const {
+      'minimal': {'reasoningEffort': 'minimal'},
+      'low': {'reasoningEffort': 'low'},
+      'medium': {'reasoningEffort': 'medium'},
+      'high': {'reasoningEffort': 'high'},
+    };
+  }
+  if (providerId == 'openai_compatible' ||
+      providerId == 'openrouter' ||
+      providerId == 'xai' ||
+      lower.contains('grok')) {
+    return const {
+      'low': {'reasoningEffort': 'low'},
+      'medium': {'reasoningEffort': 'medium'},
+      'high': {'reasoningEffort': 'high'},
+    };
+  }
+  return const {};
+}
+
 ProviderModelInfo fallbackProviderModelInfo(
   String modelId, {
+  String providerId = '',
   ProviderModelCost cost = const ProviderModelCost(),
 }) {
+  final capabilities = inferProviderModelCapabilitiesFallback(
+    modelId,
+    providerId: providerId,
+  );
+  final limit = inferProviderModelLimitFallback(modelId);
   return ProviderModelInfo(
     id: modelId,
     name: modelId,
     cost: cost,
-    limit: inferProviderModelLimitFallback(modelId),
+    limit: limit,
+    modalities: inferProviderModelModalitiesFallback(modelId),
+    capabilities: capabilities,
+    options: inferProviderModelOptionsFallback(
+      providerId: providerId,
+      modelId: modelId,
+      capabilities: capabilities,
+    ),
+    variants: inferProviderModelVariantsFallback(
+      providerId: providerId,
+      modelId: modelId,
+      capabilities: capabilities,
+      limit: limit,
+    ),
   );
 }
 
@@ -448,6 +912,129 @@ ProviderModelLimit resolveProviderModelLimit({
   return inferProviderModelLimitFallback(modelId);
 }
 
+ProviderModelModalities? lookupProviderModelModalitiesInCatalog({
+  required List<ProviderInfo> catalog,
+  required String providerId,
+  required String modelId,
+}) {
+  if (catalog.isEmpty) return null;
+  final provider = catalog.cast<ProviderInfo?>().firstWhere(
+        (item) => item?.id == providerId,
+        orElse: () => null,
+      );
+  return provider?.models[modelId]?.modalities;
+}
+
+ProviderModelCapabilities? lookupProviderModelCapabilitiesInCatalog({
+  required List<ProviderInfo> catalog,
+  required String providerId,
+  required String modelId,
+}) {
+  if (catalog.isEmpty) return null;
+  final provider = catalog.cast<ProviderInfo?>().firstWhere(
+        (item) => item?.id == providerId,
+        orElse: () => null,
+      );
+  return provider?.models[modelId]?.capabilities;
+}
+
+JsonMap? lookupProviderModelOptionsInCatalog({
+  required List<ProviderInfo> catalog,
+  required String providerId,
+  required String modelId,
+}) {
+  if (catalog.isEmpty) return null;
+  final provider = catalog.cast<ProviderInfo?>().firstWhere(
+        (item) => item?.id == providerId,
+        orElse: () => null,
+      );
+  final options = provider?.models[modelId]?.options;
+  return options == null ? null : Map<String, dynamic>.from(options);
+}
+
+Map<String, JsonMap>? lookupProviderModelVariantsInCatalog({
+  required List<ProviderInfo> catalog,
+  required String providerId,
+  required String modelId,
+}) {
+  if (catalog.isEmpty) return null;
+  final provider = catalog.cast<ProviderInfo?>().firstWhere(
+        (item) => item?.id == providerId,
+        orElse: () => null,
+      );
+  final variants = provider?.models[modelId]?.variants;
+  return variants?.map(
+    (key, value) => MapEntry(key, Map<String, dynamic>.from(value)),
+  );
+}
+
+ProviderModelModalities? resolveProviderModelModalities({
+  required List<ProviderInfo> catalog,
+  required String providerId,
+  required String modelId,
+}) {
+  return lookupProviderModelModalitiesInCatalog(
+        catalog: catalog,
+        providerId: providerId,
+        modelId: modelId,
+      ) ??
+      inferProviderModelModalitiesFallback(modelId);
+}
+
+ProviderModelCapabilities resolveProviderModelCapabilities({
+  required List<ProviderInfo> catalog,
+  required String providerId,
+  required String modelId,
+}) {
+  return lookupProviderModelCapabilitiesInCatalog(
+        catalog: catalog,
+        providerId: providerId,
+        modelId: modelId,
+      ) ??
+      inferProviderModelCapabilitiesFallback(
+        modelId,
+        providerId: providerId,
+      );
+}
+
+JsonMap resolveProviderModelOptions({
+  required List<ProviderInfo> catalog,
+  required String providerId,
+  required String modelId,
+  ProviderModelCapabilities? capabilities,
+}) {
+  return lookupProviderModelOptionsInCatalog(
+        catalog: catalog,
+        providerId: providerId,
+        modelId: modelId,
+      ) ??
+      inferProviderModelOptionsFallback(
+        providerId: providerId,
+        modelId: modelId,
+        capabilities: capabilities,
+      );
+}
+
+Map<String, JsonMap> resolveProviderModelVariants({
+  required List<ProviderInfo> catalog,
+  required String providerId,
+  required String modelId,
+  ProviderModelCapabilities? capabilities,
+  ProviderModelLimit? limit,
+}) {
+  return lookupProviderModelVariantsInCatalog(
+        catalog: catalog,
+        providerId: providerId,
+        modelId: modelId,
+      ) ??
+      inferProviderModelVariantsFallback(
+        providerId: providerId,
+        modelId: modelId,
+        capabilities: capabilities,
+        limit: limit,
+      );
+}
+
 List<ProviderInfo> fallbackProviderCatalog() {
   final ids = [
     'mag',
@@ -482,6 +1069,7 @@ List<ProviderInfo> fallbackProviderCatalog() {
                   for (final item in _defaultConnectedModelsForProvider('mag'))
                     item: fallbackProviderModelInfo(
                       item,
+                      providerId: id,
                       cost: const ProviderModelCost(input: 0, output: 0),
                     ),
                 }

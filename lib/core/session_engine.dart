@@ -57,6 +57,33 @@ bool _isRetryableError(Object error) {
   return false;
 }
 
+bool _isContextOverflowError(Object error) {
+  final msg = error.toString().toLowerCase();
+  if (msg.contains('context_length_exceeded')) return true;
+  if (msg.contains('prompt is too long')) return true;
+  if (msg.contains('input is too long for requested model')) return true;
+  if (msg.contains('exceeds the context window')) return true;
+  if (msg.contains('input token count') &&
+      msg.contains('exceeds the maximum')) {
+    return true;
+  }
+  if (msg.contains('maximum prompt length is')) return true;
+  if (msg.contains('reduce the length of the messages')) return true;
+  if (msg.contains('maximum context length is')) return true;
+  if (msg.contains('exceeds the available context size')) return true;
+  if (msg.contains('greater than the context length')) return true;
+  if (msg.contains('context window exceeds limit')) return true;
+  if (msg.contains('exceeded model token limit')) return true;
+  if (msg.contains('request entity too large')) return true;
+  if (msg.contains('context length is only')) return true;
+  if (msg.contains('input length') && msg.contains('exceeds')) return true;
+  if (msg.contains('prompt too long; exceeded')) return true;
+  if (msg.contains('too large for model with')) return true;
+  if (msg.contains('model_context_window_exceeded')) return true;
+  if (msg.contains('model request failed: 413')) return true;
+  return false;
+}
+
 String _retryMessage(Object error) {
   final msg = error.toString().toLowerCase();
   if (msg.contains('429') ||

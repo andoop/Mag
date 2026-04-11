@@ -373,12 +373,18 @@ class LocalServer {
               ? null
               : MessageFormat.fromJson(
                   Map<String, dynamic>.from(body['format'] as Map));
+          final parts = (body['parts'] as List? ?? const [])
+              .whereType<Map>()
+              .map((item) => Map<String, dynamic>.from(item))
+              .toList();
           final message = await engine.prompt(
             workspace: workspace,
             session: session,
             text: body['text'] as String? ?? '',
             agent: body['agent'] as String?,
             format: format,
+            userParts: parts,
+            variant: body['variant'] as String?,
           );
           await _json(request.response, message.toJson());
           return;
@@ -395,6 +401,7 @@ class LocalServer {
                 ? null
                 : MessageFormat.fromJson(
                     Map<String, dynamic>.from(body['format'] as Map)),
+            variant: body['variant'] as String?,
           );
           await database.saveMessage(message);
           events.emit(ServerEvent(
@@ -402,6 +409,39 @@ class LocalServer {
             properties: message.toJson(),
             directory: workspace.treeUri,
           ));
+          final parts = (body['parts'] as List? ?? const [])
+              .whereType<Map>()
+              .map((item) => Map<String, dynamic>.from(item))
+              .toList();
+          if (!parts.any((item) => item['type'] == PartType.text.name) &&
+              message.text.isNotEmpty) {
+            parts.insert(0, {
+              'type': PartType.text.name,
+              'text': message.text,
+            });
+          }
+          for (final item in parts) {
+            final typeName = item['type'] as String? ?? PartType.text.name;
+            final type = PartType.values.firstWhere(
+              (entry) => entry.name == typeName,
+              orElse: () => PartType.text,
+            );
+            final data = Map<String, dynamic>.from(item)..remove('type');
+            final part = MessagePart(
+              id: newId('part'),
+              sessionId: session.id,
+              messageId: message.id,
+              type: type,
+              createdAt: DateTime.now().millisecondsSinceEpoch,
+              data: data,
+            );
+            await database.savePart(part);
+            events.emit(ServerEvent(
+              type: 'message.part.updated',
+              properties: part.toJson(),
+              directory: workspace.treeUri,
+            ));
+          }
           await _json(request.response, message.toJson());
           return;
         }
@@ -410,6 +450,10 @@ class LocalServer {
               ? null
               : MessageFormat.fromJson(
                   Map<String, dynamic>.from(body['format'] as Map));
+          final parts = (body['parts'] as List? ?? const [])
+              .whereType<Map>()
+              .map((item) => Map<String, dynamic>.from(item))
+              .toList();
           _debugLog('prompt_async', 'session=${session.id}');
           unawaited(
             engine
@@ -419,6 +463,8 @@ class LocalServer {
               text: body['text'] as String? ?? '',
               agent: body['agent'] as String?,
               format: format,
+              parts: parts,
+              variant: body['variant'] as String?,
             )
                 .catchError((error) async {
               events.emit(ServerEvent(

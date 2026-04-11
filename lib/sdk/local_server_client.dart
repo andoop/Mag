@@ -128,11 +128,15 @@ class LocalServerClient {
     String text, {
     String? agent,
     MessageFormat? format,
+    List<JsonMap>? parts,
+    String? variant,
   }) async {
     await _post('/session/$sessionId/prompt_async', {
       'text': text,
       'agent': agent,
       'format': format?.toJson(),
+      'parts': parts,
+      'variant': variant,
     });
   }
 
@@ -141,11 +145,15 @@ class LocalServerClient {
     String text, {
     String? agent,
     MessageFormat? format,
+    List<JsonMap>? parts,
+    String? variant,
   }) async {
     final data = await _post('/session/$sessionId/message', {
       'text': text,
       'agent': agent,
       'format': format?.toJson(),
+      'parts': parts,
+      'variant': variant,
     });
     return MessageInfo.fromJson(Map<String, dynamic>.from(data as Map));
   }

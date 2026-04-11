@@ -5,6 +5,15 @@ String _toolFilePathArg(JsonMap args) {
   return _normalizeWorkspaceRelativePath(jsonStringCoerce(raw, ''));
 }
 
+String _strictFilePathArg(JsonMap args, {required String toolName}) {
+  final raw = jsonStringCoerce(args['filePath'], '');
+  final path = _normalizeWorkspaceRelativePath(raw);
+  if (path.isEmpty) {
+    throw Exception('Missing required `filePath` for `$toolName`.');
+  }
+  return path;
+}
+
 String _normalizeWriteContent(Object? value) {
   if (value == null) {
     return '';
@@ -331,7 +340,7 @@ Future<ToolExecutionResult> _readTool(
 
 Future<ToolExecutionResult> _writeTool(
     JsonMap args, ToolRuntimeContext ctx) async {
-  final filePath = _toolFilePathArg(args);
+  final filePath = _strictFilePathArg(args, toolName: 'write');
   final content = await _resolveWriteContent(args, ctx);
   await ctx.updateToolProgress(
     title: filePath,
@@ -341,9 +350,6 @@ Future<ToolExecutionResult> _writeTool(
       'filePath': filePath,
     },
   );
-  if (filePath.isEmpty) {
-    throw Exception('Missing required `path`.');
-  }
   var existing = '';
   final entry = await ctx.bridge.stat(
     treeUri: ctx.workspace.treeUri,
@@ -438,51 +444,6 @@ String _editDebugEscapedPreview(String s, int maxChars) {
   return '${esc(s.substring(0, half))}…(${s.length} chars)…${esc(s.substring(s.length - half))}';
 }
 
-/// Logs model/tool arguments when edit matching fails (search console: `[mag-edit]`).
-void _logEditToolMismatch({
-  required String filePath,
-  required Map<String, dynamic> rawArgs,
-  required String oldString,
-  required String newString,
-  required bool replaceAll,
-  required String existing,
-}) {
-  final oldLines = _editLogicalLinesNoTrailingBlank(oldString);
-  final fileLines = existing.split('\n').length;
-  var ambiguous = 0;
-  var foundButNotUnique = 0;
-  for (final search in _editSearchCandidates(existing, oldString)) {
-    if (search.isEmpty) continue;
-    final first = existing.indexOf(search);
-    if (first < 0) continue;
-    ambiguous++;
-    if (!replaceAll && first != existing.lastIndexOf(search)) {
-      foundButNotUnique++;
-    }
-  }
-  final payload = <String, dynamic>{
-    'path': filePath,
-    'replaceAll': replaceAll,
-    'argKeys': rawArgs.keys.toList(),
-    'oldStringChars': oldString.length,
-    'oldStringUtf8Bytes': utf8.encode(oldString).length,
-    'oldStringLines': oldLines.length,
-    'newStringChars': newString.length,
-    'oldStringPreview':
-        _editDebugEscapedPreview(oldString, _kEditMismatchLogPreviewChars),
-    'newStringPreview':
-        _editDebugEscapedPreview(newString, _kEditMismatchLogPreviewChars ~/ 2),
-    'fileChars': existing.length,
-    'fileLines': fileLines,
-    'exactSubstringMatch': existing.contains(oldString),
-    'oldStringLeadingRunes': oldString.runes.take(32).toList(),
-    'candidatesWithAnyIndexMatch': ambiguous,
-    'candidatesNonUniqueWithoutReplaceAll': foundButNotUnique,
-  };
-  // ignore: avoid_print
-  print('[mag-edit][mismatch] ${jsonEncode(payload)}');
-}
-
 void _logApplyPatchToolFailure({
   required String phase,
   required String error,
@@ -518,342 +479,15 @@ void _logApplyPatchToolFailure({
   print('[mag-patch][fail] ${jsonEncode(payload)}');
 }
 
-String _editOldStringNotFoundHint(String filePath) =>
-    'BLOCKED: oldString not found in $filePath.\n'
-    'The text you provided in `oldString` does not match anything in the current file.\n\n'
-    'Required action:\n'
-    '1. Call `read` on "$filePath" to see the actual current file contents.\n'
-    '2. Copy the EXACT text from the `read` output into `oldString` (do NOT include the line-number/hash prefixes like "42#VK|").\n'
-    '3. Retry the `edit` call with the corrected `oldString`.\n\n'
-    'Common mistakes: whitespace differences, stale content from a previous read, '
-    'guessing the text instead of copying it exactly.';
-
-/// Split [s] on logical newlines for flexible matching between lines.
-String _editNormalizeNewlines(String s) =>
-    s.replaceAll('\r\n', '\n').replaceAll('\r', '\n');
-
-List<String> _editLogicalLinesNoTrailingBlank(String s) {
-  var lines = _editNormalizeNewlines(s).split('\n');
-  if (lines.isNotEmpty && lines.last.isEmpty) {
-    lines = lines.sublist(0, lines.length - 1);
-  }
-  return lines;
-}
-
-/// Strips the minimum leading whitespace shared by all non-empty lines (OpenCode-style).
-String _editStripCommonIndent(String text) {
-  final lines = text.split('\n');
-  final nonEmpty = lines.where((l) => l.trim().isNotEmpty).toList();
-  if (nonEmpty.isEmpty) return text;
-  var minIndent = nonEmpty
-      .map((l) => RegExp(r'^(\s*)').firstMatch(l)!.group(1)!.length)
-      .reduce((a, b) => a < b ? a : b);
-  return lines.map((l) {
-    if (l.trim().isEmpty) return l;
-    if (l.length >= minIndent) return l.substring(minIndent);
-    return l;
-  }).join('\n');
-}
-
-String _editUnescapeForMatch(String s) {
-  final b = StringBuffer();
-  for (var i = 0; i < s.length; i++) {
-    if (s.codeUnitAt(i) != 0x5C || i + 1 >= s.length) {
-      b.writeCharCode(s.codeUnitAt(i));
-      continue;
-    }
-    i++;
-    final c = s[i];
-    if (c == 'n') {
-      b.write('\n');
-    } else if (c == 't') {
-      b.write('\t');
-    } else if (c == 'r') {
-      b.write('\r');
-    } else if (c == r'\') {
-      b.write(r'\');
-    } else if (c == "'") {
-      b.write("'");
-    } else if (c == '"') {
-      b.write('"');
-    } else {
-      b.write(r'\');
-      b.write(c);
-    }
-  }
-  return b.toString();
-}
-
-/// Substrings of [content] that line-up with [find] when each line is `.trim()` equal.
-Iterable<String> _editLineTrimmedMatchSubstrings(
-    String content, String find) sync* {
-  final searchLines = _editLogicalLinesNoTrailingBlank(find);
-  if (searchLines.isEmpty) return;
-
-  final originalLines = content.split('\n');
-  for (var i = 0; i <= originalLines.length - searchLines.length; i++) {
-    var ok = true;
-    for (var j = 0; j < searchLines.length; j++) {
-      if (originalLines[i + j].trim() != searchLines[j].trim()) {
-        ok = false;
-        break;
-      }
-    }
-    if (!ok) continue;
-    var start = 0;
-    for (var k = 0; k < i; k++) {
-      start += originalLines[k].length + 1;
-    }
-    var end = start;
-    for (var k = 0; k < searchLines.length; k++) {
-      end += originalLines[i + k].length;
-      if (k < searchLines.length - 1) end += 1;
-    }
-    yield content.substring(start, end);
-  }
-}
-
-Iterable<String> _editTrimmedBoundaryMatchSubstrings(
-    String content, String find) sync* {
-  final trimmedFind = find.trim();
-  if (trimmedFind.isEmpty || trimmedFind == find) return;
-  if (content.contains(trimmedFind)) yield trimmedFind;
-
-  final findLines = _editLogicalLinesNoTrailingBlank(find);
-  if (findLines.isEmpty) return;
-
-  final originalLines = content.split('\n');
-  for (var i = 0; i <= originalLines.length - findLines.length; i++) {
-    final block = originalLines.sublist(i, i + findLines.length).join('\n');
-    if (block.trim() == trimmedFind) {
-      yield block;
-    }
-  }
-}
-
-Iterable<String> _editIndentFlexibleMatchSubstrings(
-    String content, String find) sync* {
-  final want = _editStripCommonIndent(_editNormalizeNewlines(find));
-  final findLines = _editLogicalLinesNoTrailingBlank(find);
-  if (findLines.isEmpty) return;
-
-  final originalLines = content.split('\n');
-  for (var i = 0; i <= originalLines.length - findLines.length; i++) {
-    final block = originalLines.sublist(i, i + findLines.length).join('\n');
-    if (_editStripCommonIndent(block) == want) {
-      yield block;
-    }
-  }
-}
-
-Iterable<String> _editNewlineFlexibleMatchSubstrings(
-    String content, String find) sync* {
-  final lines = _editLogicalLinesNoTrailingBlank(find);
-  if (lines.length < 2) return;
-  const sep = r'(?:\r\n|\r|\n)';
-  final pattern = lines.map(RegExp.escape).join(sep);
-  final re = RegExp(pattern);
-  for (final m in re.allMatches(content)) {
-    yield m.group(0)!;
-  }
-}
-
-Iterable<String> _editEscapeNormalizedMatchSubstrings(
-    String content, String find) sync* {
-  final u = _editUnescapeForMatch(find);
-  if (u != find && content.contains(u)) yield u;
-}
-
-/// Ordered search strategies (mirrors OpenCode `edit` tool loosely).
-Iterable<String> _editSearchCandidates(String content, String find) sync* {
-  yield find;
-  yield* _editNewlineFlexibleMatchSubstrings(content, find);
-  yield* _editLineTrimmedMatchSubstrings(content, find);
-  yield* _editTrimmedBoundaryMatchSubstrings(content, find);
-  yield* _editIndentFlexibleMatchSubstrings(content, find);
-  yield* _editEscapeNormalizedMatchSubstrings(content, find);
-}
-
-String _performEditReplacement({
-  required String filePath,
-  required String existing,
-  required String oldString,
-  required String newString,
-  required bool replaceAll,
-  Map<String, dynamic>? mismatchLogArgs,
-}) {
-  if (oldString == newString) {
-    throw Exception(
-      'BLOCKED: No changes to apply — `oldString` and `newString` are identical.\n'
-      'Required action: make `newString` different from `oldString`. '
-      'If you want to verify the file content, use `read` instead.',
-    );
-  }
-  for (final search in _editSearchCandidates(existing, oldString)) {
-    if (search.isEmpty) continue;
-    final first = existing.indexOf(search);
-    if (first < 0) continue;
-    if (replaceAll) {
-      return existing.replaceAll(search, newString);
-    }
-    final last = existing.lastIndexOf(search);
-    if (first != last) {
-      continue;
-    }
-    return existing.replaceRange(first, first + search.length, newString);
-  }
-  if (mismatchLogArgs != null) {
-    _logEditToolMismatch(
-      filePath: filePath,
-      rawArgs: mismatchLogArgs,
-      oldString: oldString,
-      newString: newString,
-      replaceAll: replaceAll,
-      existing: existing,
-    );
-  }
-  throw Exception(_editOldStringNotFoundHint(filePath));
-}
-
 Future<ToolExecutionResult> _editTool(
     JsonMap args, ToolRuntimeContext ctx) async {
-  if (args.containsKey('edits') ||
-      args['delete'] == true ||
-      args['rename'] != null) {
-    return _executeHashlineEditTool(args, ctx);
-  }
-  final filePath =
-      _normalizeWorkspaceRelativePath(jsonStringCoerce(args['filePath'], ''));
-  final oldString = args['oldString'] as String? ?? '';
-  final newString = args['newString'] as String? ?? '';
-  final replaceAll = (args['replaceAll'] as bool?) ?? false;
-  await ctx.updateToolProgress(
-    title: filePath,
-    metadata: {
-      'phase': 'preparing',
-      'path': filePath,
-      'filePath': filePath,
-    },
-  );
-  // ignore: avoid_print
-  print('[mag-edit][start] ${jsonEncode({
-        'path': filePath,
-        'argKeys': args.keys.toList(),
-        'oldStringChars': oldString.length,
-        'newStringChars': newString.length,
-        'replaceAll': replaceAll,
-      })}');
-  if (filePath.isEmpty) {
-    throw Exception('Missing required `filePath`.');
-  }
-  if (oldString.isEmpty) {
+  if (args.containsKey('oldString') ||
+      args.containsKey('newString') ||
+      args.containsKey('replaceAll')) {
     throw Exception(
-      'oldString must not be empty. Use `write` or `apply_patch` to replace entire file content.',
+      'The edit tool no longer accepts `oldString` / `newString` / `replaceAll`.\n'
+      'Required action: call `read`, copy exact LINE#ID anchors, then retry `edit` with `edits` operations only.',
     );
   }
-  await _assertFreshReadForExistingFile(
-    ctx,
-    filePath,
-    toolName: 'edit',
-  );
-  // ignore: avoid_print
-  print('[mag-edit][fresh-read-ok] ${jsonEncode({
-        'path': filePath,
-        'sessionId': ctx.session.id,
-      })}');
-  final existingRaw = await ctx.bridge.readText(
-    treeUri: ctx.workspace.treeUri,
-    relativePath: filePath,
-  );
-  var utf8Bom = '';
-  var existing = existingRaw;
-  if (existingRaw.startsWith('\uFEFF')) {
-    utf8Bom = '\uFEFF';
-    existing = existingRaw.substring(1);
-  }
-  var oldForMatch = oldString;
-  if (oldForMatch.startsWith('\uFEFF')) {
-    oldForMatch = oldForMatch.substring(1);
-  }
-  final updated = _performEditReplacement(
-    filePath: filePath,
-    existing: existing,
-    oldString: oldForMatch,
-    newString: newString,
-    replaceAll: replaceAll,
-    mismatchLogArgs: Map<String, dynamic>.from(args),
-  );
-  final out = utf8Bom + updated;
-  final preview = _buildDiffAttachment(
-    kind: 'edit',
-    path: filePath,
-    before: existingRaw,
-    after: out,
-  );
-  await ctx.updateToolProgress(
-    title: filePath,
-    displayOutput: 'Preparing edit for $filePath',
-    metadata: {
-      'phase': 'preparing',
-      'path': filePath,
-      'filePath': filePath,
-    },
-    attachments: [preview],
-  );
-  // ignore: avoid_print
-  print('[mag-edit][replacement-ok] ${jsonEncode({
-        'path': filePath,
-        'beforeChars': existingRaw.length,
-        'afterChars': out.length,
-      })}');
-  await ctx.askPermission(
-    PermissionRequest(
-      id: newId('perm'),
-      sessionId: ctx.session.id,
-      permission: 'edit',
-      patterns: [filePath],
-      metadata: {
-        'tool': 'edit',
-        'path': filePath,
-        'filePath': filePath,
-        'preview': preview,
-      },
-      always: [filePath],
-      messageId: ctx.message.id,
-      callId: newId('call'),
-    ),
-  );
-  await ctx.bridge.writeText(
-    treeUri: ctx.workspace.treeUri,
-    relativePath: filePath,
-    content: out,
-  );
-  final updatedEntry = await ctx.bridge.stat(
-    treeUri: ctx.workspace.treeUri,
-    relativePath: filePath,
-  );
-  var editOutput = 'Updated file successfully.';
-  final bracketWarning = _checkBracketBalance(out, filePath);
-  if (bracketWarning.isNotEmpty) {
-    editOutput +=
-        '\n\n<diagnostics file="$filePath">\n$bracketWarning\nPlease review and fix the bracket issue.\n</diagnostics>';
-  }
-  return ToolExecutionResult(
-    title: filePath,
-    output: editOutput,
-    displayOutput: 'Updated $filePath',
-    metadata: {
-      'path': filePath,
-      'filepath': filePath,
-      'diagnostics': const <String, dynamic>{},
-      if (updatedEntry != null)
-        'readLedger': _toolReadLedgerMetadata(
-          path: filePath,
-          lastModified: updatedEntry.lastModified,
-        ),
-    },
-    attachments: [
-      preview,
-    ],
-  );
+  return _executeHashlineEditTool(args, ctx);
 }

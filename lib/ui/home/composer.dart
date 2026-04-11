@@ -127,6 +127,251 @@ extension _HomePageComposer on _HomePageState {
     });
   }
 
+  Future<void> _openPromptAttachmentPicker(BuildContext context) async {
+    final workspace = widget.controller.state.workspace;
+    if (workspace == null) {
+      _showInfo(
+        context,
+        l(context, '请先选择工作区', 'Please select a workspace first.'),
+      );
+      return;
+    }
+    final initial = <String, WorkspaceEntry>{
+      for (final entry in _promptAttachments) entry.path: entry,
+    };
+    final selected = await showModalBottomSheet<List<WorkspaceEntry>>(
+      context: context,
+      isScrollControlled: true,
+      builder: (sheetContext) {
+        final queryController = TextEditingController();
+        final selectedMap = <String, WorkspaceEntry>{...initial};
+        var results = <WorkspaceEntry>[];
+        var loading = true;
+        var requestId = 0;
+
+        Future<void> loadResults(
+            StateSetter setModalState, String query) async {
+          final current = ++requestId;
+          setModalState(() => loading = true);
+          final found = await widget.controller.searchWorkspaceEntries(
+            query: query,
+            limit: 40,
+          );
+          if (current != requestId) return;
+          setModalState(() {
+            results = found.where((item) => !item.isDirectory).toList();
+            loading = false;
+          });
+        }
+
+        return StatefulBuilder(
+          builder: (context, setModalState) {
+            if (loading && results.isEmpty && requestId == 0) {
+              unawaited(loadResults(setModalState, ''));
+            }
+            return FractionallySizedBox(
+              heightFactor: 0.82,
+              child: SafeArea(
+                child: Padding(
+                  padding: EdgeInsets.fromLTRB(
+                    16,
+                    16,
+                    16,
+                    MediaQuery.of(context).viewInsets.bottom + 16,
+                  ),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        l(context, '添加附件', 'Add attachments'),
+                        style: const TextStyle(
+                          fontWeight: FontWeight.bold,
+                          fontSize: 16,
+                        ),
+                      ),
+                      const SizedBox(height: 8),
+                      TextField(
+                        controller: queryController,
+                        decoration: InputDecoration(
+                          prefixIcon: const Icon(Icons.search),
+                          hintText:
+                              l(context, '搜索工作区文件', 'Search workspace files'),
+                          border: const OutlineInputBorder(),
+                        ),
+                        onChanged: (value) {
+                          unawaited(loadResults(setModalState, value));
+                        },
+                      ),
+                      const SizedBox(height: 12),
+                      if (selectedMap.isNotEmpty) ...[
+                        Wrap(
+                          spacing: 8,
+                          runSpacing: 8,
+                          children: selectedMap.values
+                              .map(
+                                (entry) => InputChip(
+                                  label: Text(
+                                    entry.path,
+                                    overflow: TextOverflow.ellipsis,
+                                  ),
+                                  onDeleted: () {
+                                    setModalState(() {
+                                      selectedMap.remove(entry.path);
+                                    });
+                                  },
+                                ),
+                              )
+                              .toList(),
+                        ),
+                        const SizedBox(height: 12),
+                      ],
+                      Expanded(
+                        child: loading && results.isEmpty
+                            ? const Center(child: CircularProgressIndicator())
+                            : results.isEmpty
+                                ? Center(
+                                    child: Text(
+                                      l(context, '没有匹配文件', 'No matching files'),
+                                    ),
+                                  )
+                                : ListView.separated(
+                                    itemCount: results.length,
+                                    separatorBuilder: (_, __) =>
+                                        const Divider(height: 1),
+                                    itemBuilder: (context, index) {
+                                      final entry = results[index];
+                                      final selected =
+                                          selectedMap.containsKey(entry.path);
+                                      return ListTile(
+                                        dense: true,
+                                        leading: Icon(
+                                          (entry.mimeType ?? '')
+                                                  .startsWith('image/')
+                                              ? Icons.image_outlined
+                                              : (entry.mimeType ==
+                                                      'application/pdf')
+                                                  ? Icons
+                                                      .picture_as_pdf_outlined
+                                                  : Icons.description_outlined,
+                                        ),
+                                        title: Text(
+                                          entry.name,
+                                          maxLines: 1,
+                                          overflow: TextOverflow.ellipsis,
+                                        ),
+                                        subtitle: Text(
+                                          entry.path,
+                                          maxLines: 1,
+                                          overflow: TextOverflow.ellipsis,
+                                        ),
+                                        trailing: Icon(
+                                          selected
+                                              ? Icons.check_circle
+                                              : Icons.add_circle_outline,
+                                          color: selected
+                                              ? context.oc.accent
+                                              : context.oc.foregroundHint,
+                                        ),
+                                        onTap: () {
+                                          setModalState(() {
+                                            if (selected) {
+                                              selectedMap.remove(entry.path);
+                                            } else {
+                                              selectedMap[entry.path] = entry;
+                                            }
+                                          });
+                                        },
+                                      );
+                                    },
+                                  ),
+                      ),
+                      const SizedBox(height: 12),
+                      Row(
+                        children: [
+                          TextButton(
+                            onPressed: () => Navigator.of(context).pop(),
+                            child: Text(l(context, '取消', 'Cancel')),
+                          ),
+                          const Spacer(),
+                          FilledButton(
+                            onPressed: () => Navigator.of(context)
+                                .pop(selectedMap.values.toList()),
+                            child: Text(l(context, '完成', 'Done')),
+                          ),
+                        ],
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+            );
+          },
+        );
+      },
+    );
+    if (!mounted || selected == null) return;
+    setState(() {
+      _promptAttachments = selected;
+    });
+  }
+
+  Future<List<JsonMap>> _buildPromptParts({
+    required WorkspaceInfo workspace,
+    required String text,
+  }) async {
+    final parts = <JsonMap>[];
+    if (text.isNotEmpty) {
+      parts.add({
+        'type': PartType.text.name,
+        'text': text,
+      });
+    }
+    for (final entry in _promptAttachments) {
+      final mime = entry.mimeType ??
+          (entry.isDirectory ? 'application/x-directory' : 'text/plain');
+      final source = <String, dynamic>{
+        'type': 'file',
+        'path': entry.path,
+      };
+      final base = <String, dynamic>{
+        'type': PartType.file.name,
+        'mime': mime,
+        'filename': entry.name,
+        'path': entry.path,
+        'url': entry.path,
+        'source': source,
+      };
+      if (mime.startsWith('image/') ||
+          mime.startsWith('audio/') ||
+          mime.startsWith('video/') ||
+          mime == 'application/pdf') {
+        final bytes = await widget.controller.loadWorkspaceBytes(
+          treeUri: workspace.treeUri,
+          relativePath: entry.path,
+        );
+        base['url'] = 'data:$mime;base64,${base64Encode(bytes)}';
+      } else if (mime == 'text/plain' ||
+          mime == 'text/markdown' ||
+          mime == 'text/html' ||
+          mime == 'application/json' ||
+          mime == 'application/x-directory') {
+        final content = entry.isDirectory
+            ? 'Directory: ${entry.path}'
+            : await widget.controller.loadWorkspaceText(
+                treeUri: workspace.treeUri,
+                relativePath: entry.path,
+              );
+        source['text'] = {
+          'value': content,
+          'start': 0,
+          'end': content.length,
+        };
+      }
+      parts.add(base);
+    }
+    return parts;
+  }
+
   Widget _buildComposerDock(
       BuildContext context, AppState state, bool isKeyboardOpen) {
     final oc = context.oc;
@@ -136,6 +381,7 @@ extension _HomePageComposer on _HomePageState {
       currentModel.model,
       config: currentModel,
     );
+    final variantOptions = _currentPromptVariantOptions(state);
     return AnimatedContainer(
       duration: const Duration(milliseconds: 180),
       curve: Curves.easeOut,
@@ -437,9 +683,19 @@ extension _HomePageComposer on _HomePageState {
                                           currentModel.model,
                                       onTap: () => _openModelChooser(context),
                                     ),
+                                    if (variantOptions.isNotEmpty) ...[
+                                      const SizedBox(width: 6),
+                                      _PromptTrayButton(
+                                        icon: Icons.tune_outlined,
+                                        label:
+                                            _variantTrayLabel(context, state),
+                                        onTap: () =>
+                                            _openVariantPicker(context),
+                                      ),
+                                    ],
                                     const SizedBox(width: 6),
                                     _PromptTrayButton(
-                                      icon: Icons.tune_outlined,
+                                      icon: Icons.settings_outlined,
                                       label: l(context, '选项', 'Options'),
                                       onTap: () =>
                                           _openComposerOptionsSheet(context),
@@ -449,6 +705,45 @@ extension _HomePageComposer on _HomePageState {
                               ),
                             ),
                     ),
+                    if (_promptAttachments.isNotEmpty)
+                      Padding(
+                        padding: const EdgeInsets.fromLTRB(10, 8, 10, 0),
+                        child: Align(
+                          alignment: Alignment.centerLeft,
+                          child: Wrap(
+                            spacing: 8,
+                            runSpacing: 8,
+                            children: _promptAttachments
+                                .map(
+                                  (entry) => InputChip(
+                                    label: Text(
+                                      entry.name,
+                                      overflow: TextOverflow.ellipsis,
+                                    ),
+                                    avatar: Icon(
+                                      (entry.mimeType ?? '')
+                                              .startsWith('image/')
+                                          ? Icons.image_outlined
+                                          : (entry.mimeType ==
+                                                  'application/pdf')
+                                              ? Icons.picture_as_pdf_outlined
+                                              : Icons.attach_file,
+                                      size: 16,
+                                    ),
+                                    onDeleted: () {
+                                      setState(() {
+                                        _promptAttachments = _promptAttachments
+                                            .where((item) =>
+                                                item.path != entry.path)
+                                            .toList();
+                                      });
+                                    },
+                                  ),
+                                )
+                                .toList(),
+                          ),
+                        ),
+                      ),
                     Stack(
                       children: [
                         Padding(
@@ -499,10 +794,8 @@ extension _HomePageComposer on _HomePageState {
                           bottom: 8,
                           child: _CompactIconButton(
                             tooltip: l(context, '附件', 'Attach'),
-                            onPressed: () => _showInfo(
-                                context,
-                                l(context, '移动端附件入口下一步接入',
-                                    'Attachment support on mobile is coming next.')),
+                            onPressed: () =>
+                                _openPromptAttachmentPicker(context),
                             icon: Icons.add,
                           ),
                         ),
@@ -587,7 +880,13 @@ extension _HomePageComposer on _HomePageState {
                                       onPressed: () async {
                                         final text =
                                             _promptController.text.trim();
-                                        if (text.isEmpty) return;
+                                        final workspace =
+                                            widget.controller.state.workspace;
+                                        if (text.isEmpty &&
+                                            _promptAttachments.isEmpty) {
+                                          return;
+                                        }
+                                        if (workspace == null) return;
                                         MessageFormat? format;
                                         if (_structuredOutputEnabled) {
                                           try {
@@ -611,7 +910,14 @@ extension _HomePageComposer on _HomePageState {
                                             return;
                                           }
                                         }
+                                        final parts = await _buildPromptParts(
+                                          workspace: workspace,
+                                          text: text,
+                                        );
                                         _promptController.clear();
+                                        setState(() {
+                                          _promptAttachments = const [];
+                                        });
                                         FocusManager.instance.primaryFocus
                                             ?.unfocus();
                                         await widget.controller.sendPrompt(
@@ -619,6 +925,9 @@ extension _HomePageComposer on _HomePageState {
                                           agent: _selectedAgent ??
                                               state.session?.agent,
                                           format: format,
+                                          parts: parts,
+                                          variant:
+                                              _effectiveSelectedVariant(state),
                                         );
                                       },
                                       child: const Icon(Icons.arrow_upward,

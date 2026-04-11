@@ -22,6 +22,7 @@ class PromptContext {
     required this.currentStep,
     required this.maxSteps,
     required this.format,
+    this.sessionContracts = const [],
     this.allAgents = const [],
     this.isZh = false,
   });
@@ -36,6 +37,7 @@ class PromptContext {
   final int currentStep;
   final int? maxSteps;
   final MessageFormat? format;
+  final List<String> sessionContracts;
   final List<AgentDefinition> allAgents;
   final bool isZh;
 }
@@ -71,6 +73,10 @@ class PromptAssembler {
     final instructions = await _projectContextPrompt(context.workspace);
     if (instructions.isNotEmpty) {
       output.add({'role': 'system', 'content': instructions});
+    }
+    final contractBlock = _sessionContractsPrompt(context);
+    if (contractBlock.isNotEmpty) {
+      output.add({'role': 'system', 'content': contractBlock});
     }
     if (context.format?.type == OutputFormatType.jsonSchema) {
       output.add({
@@ -210,7 +216,7 @@ class PromptAssembler {
               '绝不能用相同参数重复调用失败的工具。',
               '',
               '## 编辑方式',
-              '`edit` 优先使用基于内容哈希的 `LINE#ID` 锚点；请直接复用 `read` 输出中的精确锚点，不要猜测，也不要带上后面的 `|内容`。',
+              '`edit` 使用 `edits` 数组和基于内容哈希的 `LINE#ID` 锚点；请直接复用 `read` 输出中的精确锚点，不要猜测，也不要带上后面的 `|内容`。',
               '`apply_patch` 也支持 hashline 头部，例如 `@@ replace 12#VK`、`@@ replace 12#VK 15#MB`。',
               '修改已有文件时优先使用 `edit` 或 `apply_patch`。',
             ]
@@ -235,7 +241,7 @@ class PromptAssembler {
               'NEVER repeat the exact same tool call with the same arguments — that will produce the same error.',
               '',
               '## Edit mechanics',
-              '`edit` prefers hash-anchored `LINE#ID` references. Reuse exact anchors from `read` output; do not guess them.',
+              '`edit` uses hash-anchored `LINE#ID` references via the `edits` array. Reuse exact anchors from `read` output; do not guess them.',
               '`apply_patch` also supports hashline headers such as `@@ replace 12#VK`, `@@ replace 12#VK 15#MB`.',
               'Prefer `edit` or `apply_patch` for modifying existing files.',
               'For workspace file operations: `delete` removes files/dirs; `rename` changes name in same folder; `move` for cross-folder; `copy` duplicates.',
@@ -254,6 +260,20 @@ class PromptAssembler {
       }
     }
 
+    return lines.join('\n');
+  }
+
+  String _sessionContractsPrompt(PromptContext context) {
+    if (context.sessionContracts.isEmpty) return '';
+    final lines = <String>[
+      context.isZh
+          ? '# 当前会话中已明确确认的约束与决定'
+          : '# Confirmed constraints and decisions for this session',
+      context.isZh
+          ? '这些内容来自当前会话中用户已经明确说过的话。若后续实现与这些约束冲突，优先遵守这些约束。'
+          : 'These items were stated explicitly by the user earlier in this session. If implementation choices conflict with them, follow these constraints.',
+      for (final item in context.sessionContracts) '- $item',
+    ];
     return lines.join('\n');
   }
 

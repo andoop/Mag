@@ -210,8 +210,7 @@ class ToolRegistry {
             'Use anchors like `42#VK` only; do not include trailing `|content`. '
             'All operations in one call must reference the original file state. '
             'Supported operations: `replace`, `append`, `prepend`; `replace` with `lines: null` deletes the target line or range. '
-            'Anchored edits reject stale LINE#ID references before writing any file changes. '
-            'For compatibility, legacy `oldString`/`newString` edits are still accepted, but LINE#ID edits are preferred.$kMobileWorkspacePathSuffix',
+            'Anchored edits reject stale LINE#ID references before writing any file changes.$kMobileWorkspacePathSuffix',
         parameters: {
           'type': 'object',
           'properties': {
@@ -248,9 +247,6 @@ class ToolRegistry {
                 'additionalProperties': false,
               },
             },
-            'oldString': {'type': 'string'},
-            'newString': {'type': 'string'},
-            'replaceAll': {'type': 'boolean'},
           },
           'required': ['filePath'],
           'additionalProperties': false,

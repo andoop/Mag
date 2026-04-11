@@ -48,6 +48,20 @@ Your output must be:
 </examples>
 ''';
 
+class _PreparedToolExecution {
+  const _PreparedToolExecution({
+    required this.requestedToolName,
+    required this.tool,
+    required this.call,
+    this.argumentError,
+  });
+
+  final String requestedToolName;
+  final ToolDefinition tool;
+  final ToolCall call;
+  final String? argumentError;
+}
+
 extension SessionEngineTools on SessionEngine {
   Future<ToolExecutionResult> _executeTool({
     required WorkspaceInfo workspace,
@@ -60,8 +74,10 @@ extension SessionEngineTools on SessionEngine {
     void Function(MessagePart part)? onPartSaved,
   }) async {
     cancelToken?.throwIfCancelled();
-    final tool = toolRegistry[call.name] ?? toolRegistry['invalid']!;
-    final argumentError = _validateToolArguments(tool, call);
+    final prepared = _prepareToolExecution(call);
+    final tool = prepared.tool;
+    final executableCall = prepared.call;
+    final argumentError = prepared.argumentError;
     final ctx = ToolRuntimeContext(
       workspace: workspace,
       session: session,
@@ -225,9 +241,10 @@ extension SessionEngineTools on SessionEngine {
       _debugLog('tool', 'execute ${call.name}');
       _debugLog('tool-start', 'tool execution starting', {
         'callId': call.id,
-        'tool': call.name,
-        'argKeys': call.arguments.keys.toList(),
-        'args': call.arguments,
+        'tool': executableCall.name,
+        'requestedTool': prepared.requestedToolName,
+        'argKeys': executableCall.arguments.keys.toList(),
+        'args': executableCall.arguments,
       });
       await _updateToolState(
         workspace: workspace,
@@ -240,10 +257,10 @@ extension SessionEngineTools on SessionEngine {
       if (argumentError != null) {
         throw Exception(argumentError);
       }
-      final result = await tool.execute(call.arguments, ctx);
+      final result = await tool.execute(executableCall.arguments, ctx);
       _invalidatePromptContextForToolResult(
         workspace: workspace,
-        toolName: call.name,
+        toolName: executableCall.name,
         metadata: result.metadata,
       );
       await _updateToolState(
@@ -261,7 +278,7 @@ extension SessionEngineTools on SessionEngine {
       );
       _debugLog('tool-done', 'tool execution completed', {
         'callId': call.id,
-        'tool': call.name,
+        'tool': executableCall.name,
         'title': result.title,
         'metadata': result.metadata,
         'outputPreview': result.output.length > 200
@@ -272,17 +289,19 @@ extension SessionEngineTools on SessionEngine {
     } on CancelledException {
       rethrow;
     } catch (error) {
-      _debugLog('tool', 'error ${call.name}: $error');
+      _debugLog('tool', 'error ${prepared.requestedToolName}: $error');
       _debugLog('tool-fail', 'tool execution failed', {
         'callId': call.id,
-        'tool': call.name,
+        'tool': executableCall.name,
+        'requestedTool': prepared.requestedToolName,
         'error': error.toString(),
-        'args': call.arguments,
+        'args': executableCall.arguments,
       });
       final errText = error.toString();
-      final recovery = _toolErrorRecoveryHint(call.name, errText);
+      final recovery =
+          _toolErrorRecoveryHint(prepared.requestedToolName, errText);
       final toolOutput =
-          '<tool_error tool="${call.name}">\n$errText\n</tool_error>\n\n<recovery_instructions>\n$recovery\n</recovery_instructions>';
+          '<tool_error tool="${prepared.requestedToolName}">\n$errText\n</tool_error>\n\n<recovery_instructions>\n$recovery\n</recovery_instructions>';
       await _updateToolState(
         workspace: workspace,
         sessionId: session.id,
@@ -295,9 +314,9 @@ extension SessionEngineTools on SessionEngine {
         onPartSaved: onPartSaved,
       );
       return ToolExecutionResult(
-        title: call.name,
+        title: prepared.requestedToolName,
         output: toolOutput,
-        displayOutput: '${call.name} failed',
+        displayOutput: '${prepared.requestedToolName} failed',
         metadata: {
           'failed': true,
           'error': errText,
@@ -306,31 +325,78 @@ extension SessionEngineTools on SessionEngine {
     }
   }
 
-  String? _validateToolArguments(ToolDefinition tool, ToolCall call) {
-    final args = call.arguments;
+  _PreparedToolExecution _prepareToolExecution(ToolCall call) {
+    final requestedToolName =
+        call.name.trim().isEmpty ? 'unknown' : call.name.trim();
+    final resolvedTool = toolRegistry[requestedToolName];
+    if (resolvedTool == null) {
+      return _PreparedToolExecution(
+        requestedToolName: requestedToolName,
+        tool: toolRegistry['invalid']!,
+        call: ToolCall(
+          id: call.id,
+          name: 'invalid',
+          arguments: {
+            'tool': requestedToolName,
+            'error':
+                'Unknown tool `$requestedToolName`. Re-read the available tool list and call one of the advertised tool names exactly.',
+          },
+        ),
+      );
+    }
+    final args = _normalizedToolArguments(
+      requestedToolName: requestedToolName,
+      args: call.arguments,
+    );
+    return _PreparedToolExecution(
+      requestedToolName: requestedToolName,
+      tool: resolvedTool,
+      call: ToolCall(id: call.id, name: resolvedTool.id, arguments: args),
+      argumentError: _validateToolArguments(
+        tool: resolvedTool,
+        requestedToolName: requestedToolName,
+        args: args,
+      ),
+    );
+  }
+
+  JsonMap _normalizedToolArguments({
+    required String requestedToolName,
+    required JsonMap args,
+  }) {
+    final out = Map<String, dynamic>.from(args);
+    if (_usesStrictFilePath(requestedToolName)) {
+      return out;
+    }
+    if (!out.containsKey('filePath') && out.containsKey('path')) {
+      out['filePath'] = out['path'];
+    }
+    if (!out.containsKey('path') && out.containsKey('filePath')) {
+      out['path'] = out['filePath'];
+    }
+    return out;
+  }
+
+  bool _usesStrictFilePath(String toolName) =>
+      toolName == 'edit' || toolName == 'write';
+
+  String? _validateToolArguments({
+    required ToolDefinition tool,
+    required String requestedToolName,
+    required JsonMap args,
+  }) {
     if (args.containsKey('raw')) {
       final raw = (args['raw'] as String? ?? '').trim();
       final preview = raw.length > 200 ? '${raw.substring(0, 200)}...' : raw;
-      return 'The ${call.name} tool was called with invalid arguments: '
+      return 'The $requestedToolName tool was called with invalid arguments: '
           'expected a valid JSON object matching the tool schema.\n'
           'Please rewrite the input so it satisfies the expected schema.\n'
           '${preview.isNotEmpty ? 'Received (truncated): $preview' : ''}';
     }
-    if (call.name == 'edit' && args.containsKey('path')) {
-      return 'The edit tool requires `filePath` as the target path.\n'
-          'Do NOT send `path`.\n'
+    if (_usesStrictFilePath(requestedToolName) && args.containsKey('path')) {
+      return 'The $requestedToolName tool requires `filePath` as the target path.\n'
+          'Do NOT send `path` for this tool.\n'
           'Rewrite the call with `filePath` and retry.';
-    }
-    // Flexible parameter aliases: 'path' ↔ 'filePath'
-    if (call.name != 'edit' &&
-        !args.containsKey('filePath') &&
-        args.containsKey('path')) {
-      args['filePath'] = args['path'];
-    }
-    if (call.name != 'edit' &&
-        !args.containsKey('path') &&
-        args.containsKey('filePath')) {
-      args['path'] = args['filePath'];
     }
     final required =
         ((tool.parameters['required'] as List?) ?? const <dynamic>[])
@@ -338,7 +404,8 @@ extension SessionEngineTools on SessionEngine {
     final missing = <String>[];
     for (final key in required) {
       final value = args[key];
-      final allowsEmptyString = call.name == 'write' && key == 'content';
+      final allowsEmptyString =
+          requestedToolName == 'write' && key == 'content';
       if (value == null ||
           (value is String && value.trim().isEmpty && !allowsEmptyString)) {
         missing.add(key);
@@ -351,7 +418,7 @@ extension SessionEngineTools on SessionEngine {
         final desc = prop?['description'] as String? ?? '';
         return desc.isNotEmpty ? '  - `$key`: $desc' : '  - `$key`';
       }).join('\n');
-      return 'The ${call.name} tool was called with missing required arguments: '
+      return 'The $requestedToolName tool was called with missing required arguments: '
           '${missing.join(", ")}.\n'
           'Please rewrite the input with all required parameters:\n$hints';
     }
@@ -523,6 +590,8 @@ extension SessionEngineTools on SessionEngine {
         messages: messages,
         tools: const [],
         format: null,
+        sessionId: sessionId,
+        small: true,
         cancelToken: null,
       );
       final cleaned = _cleanGeneratedSessionTitle(response.text);
@@ -659,6 +728,14 @@ extension SessionEngineTools on SessionEngine {
           'Step 2: Copy the exact text from `read` output (without line-number prefixes) into oldString.\n'
           'Do NOT guess or slightly modify the text. It must match exactly.';
     }
+    if (toolName == 'edit' &&
+        lower.contains(
+            'no longer accepts `oldstring` / `newstring` / `replaceall`')) {
+      return 'The legacy string-based edit format is disabled.\n'
+          'Step 1: Call `read` on the file.\n'
+          'Step 2: Copy the exact LINE#ID anchors from the `read` output.\n'
+          'Step 3: Retry `edit` with `edits` operations only.';
+    }
     if (toolName == 'edit' && lower.contains('changed since last read')) {
       return 'Your LINE#ID anchors are stale — the file content has changed.\n'
           'Step 1: Call `read` on the file to get updated LINE#ID anchors.\n'
@@ -672,6 +749,10 @@ extension SessionEngineTools on SessionEngine {
     if (lower.contains('invalid') && lower.contains('arguments')) {
       return 'Your tool arguments are malformed. Check the JSON syntax and '
           'ensure all parameter types match the schema. Then retry.';
+    }
+    if (lower.contains('unknown tool')) {
+      return 'You called a tool that is not available.\n'
+          'Re-read the advertised tool list from the system prompt and retry using an exact tool name.';
     }
     return 'Read the error message above carefully. Fix the issue it describes, '
         'then retry. Do NOT repeat the exact same call — that will produce the same error.';

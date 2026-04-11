@@ -183,6 +183,8 @@ class SessionEngine {
     required String text,
     String? agent,
     MessageFormat? format,
+    List<JsonMap>? parts,
+    String? variant,
   }) {
     return prompt(
       workspace: workspace,
@@ -190,6 +192,8 @@ class SessionEngine {
       text: text,
       agent: agent,
       format: format,
+      userParts: parts,
+      variant: variant,
     ).then((_) {});
   }
 
@@ -235,7 +239,6 @@ class SessionEngine {
       maxSteps: agentDefinition(session.agent).steps,
       currentAgent: session.agent,
       model: modelConfig.model,
-      summaryMessageId: session.summaryMessageId,
     );
     final toolModels = [
       ...toolRegistry.availableForAgent(
@@ -255,6 +258,8 @@ class SessionEngine {
       messages: conversation,
       tools: toolModels,
       format: latestUser?.format,
+      sessionId: session.id,
+      variant: latestUser?.variant,
     );
   }
 

@@ -1,85 +1,99 @@
 part of '../session_engine.dart';
 
 extension SessionEngineSummarize on SessionEngine {
-  String _compactedToolOutput(MessagePart part) {
-    final state = Map<String, dynamic>.from(part.data['state'] as Map? ?? {});
-    final tool = part.data['tool'] as String? ?? 'tool';
-    final displayOutput = (state['displayOutput'] as String? ?? '').trim();
-    final metadata = Map<String, dynamic>.from(state['metadata'] as Map? ?? {});
-    final compactMetadata = <String, dynamic>{};
-    for (final entry in metadata.entries) {
-      final key = entry.key;
-      final value = entry.value;
-      if (value == null) continue;
-      if (value is num || value is bool) {
-        compactMetadata[key] = value;
-        continue;
-      }
-      if (value is String) {
-        final trimmed = value.trim();
-        if (trimmed.isEmpty || trimmed.length > 160) continue;
-        if (key == 'preview') continue;
-        compactMetadata[key] = trimmed;
-      }
-    }
-    final lines = <String>['[output compacted]'];
-    if (displayOutput.isNotEmpty) {
-      lines.add('Summary: $displayOutput');
-    } else {
-      lines.add('Summary: output from `$tool` was compacted.');
-    }
-    if (compactMetadata.isNotEmpty) {
-      lines.add('Metadata: ${jsonEncode(compactMetadata)}');
-    }
-    return lines.join('\n');
-  }
+  static const int _kPruneMinimum = 20000;
+  static const int _kPruneProtect = 40000;
+  static const Set<String> _kPruneProtectedTools = {'skill'};
 
-  /// OpenCode `compaction.prune` 思路的简化版：从大到小清空已完成 tool 的 output，避免 summary 请求本身超窗。
-  Future<int> _pruneLargestToolOutputsForContext({
+  Future<int> _pruneToolOutputsForContext({
     required WorkspaceInfo workspace,
     required String sessionId,
-    int minPrunedEstimate = 20000,
   }) async {
+    final messages = await database.listMessages(sessionId);
     final parts = await database.listPartsForSession(sessionId);
-    final candidates = <MessagePart>[];
-    for (final p in parts) {
-      if (p.type != PartType.tool) continue;
-      final state = Map<String, dynamic>.from(p.data['state'] as Map? ?? {});
-      if (state['status'] != ToolStatus.completed.name) continue;
-      final tool = p.data['tool'] as String? ?? '';
-      if (tool == 'skill') continue;
-      final out = state['output'] as String? ?? '';
-      if (out.isEmpty || out == '[output compacted]') continue;
-      candidates.add(p);
+    if (messages.isEmpty || parts.isEmpty) return 0;
+    final partsByMessage = <String, List<MessagePart>>{};
+    for (final part in parts) {
+      partsByMessage.putIfAbsent(part.messageId, () => []).add(part);
     }
-    candidates.sort((a, b) {
-      final la =
-          ((((a.data['state'] as Map?)?['output']) as String?) ?? '').length;
-      final lb =
-          ((((b.data['state'] as Map?)?['output']) as String?) ?? '').length;
-      return lb.compareTo(la);
-    });
-    var totalEst = 0;
-    for (final p in candidates) {
-      if (totalEst >= minPrunedEstimate) break;
-      final state = Map<String, dynamic>.from(p.data['state'] as Map? ?? {});
-      final out = state['output'] as String? ?? '';
-      if (out.isEmpty || out == '[output compacted]') continue;
-      totalEst += math.max(1, estimateOpenCodeCharsAsTokens(out.length));
-      state['output'] = _compactedToolOutput(p);
+    var total = 0;
+    var pruned = 0;
+    final toPrune = <MessagePart>[];
+    var turns = 0;
+    var reachedCompactedHistory = false;
+    for (var msgIndex = messages.length - 1; msgIndex >= 0; msgIndex--) {
+      final message = messages[msgIndex];
+      if (message.role == SessionRole.user) {
+        turns++;
+      }
+      if (turns < 2) {
+        continue;
+      }
+      if (message.role == SessionRole.assistant && message.summary) {
+        break;
+      }
+      final messageParts = partsByMessage[message.id] ?? const <MessagePart>[];
+      for (var partIndex = messageParts.length - 1;
+          partIndex >= 0;
+          partIndex--) {
+        final part = messageParts[partIndex];
+        if (part.type != PartType.tool) {
+          continue;
+        }
+        final state =
+            Map<String, dynamic>.from(part.data['state'] as Map? ?? const {});
+        if (state['status'] != ToolStatus.completed.name) {
+          continue;
+        }
+        final tool = part.data['tool'] as String? ?? '';
+        if (_kPruneProtectedTools.contains(tool)) {
+          continue;
+        }
+        final time =
+            Map<String, dynamic>.from(state['time'] as Map? ?? const {});
+        if ((time['compacted'] as num?) != null) {
+          reachedCompactedHistory = true;
+          break;
+        }
+        final output = state['output'] as String? ?? '';
+        if (output.isEmpty) {
+          continue;
+        }
+        final estimate =
+            math.max(1, estimateOpenCodeCharsAsTokens(output.length));
+        total += estimate;
+        if (total > _kPruneProtect) {
+          pruned += estimate;
+          toPrune.add(part);
+        }
+      }
+      if (reachedCompactedHistory) {
+        break;
+      }
+    }
+    if (pruned <= _kPruneMinimum) {
+      return 0;
+    }
+    final compactedAt = DateTime.now().millisecondsSinceEpoch;
+    for (final part in toPrune) {
+      final state =
+          Map<String, dynamic>.from(part.data['state'] as Map? ?? const {});
+      final time = Map<String, dynamic>.from(state['time'] as Map? ?? const {});
+      time['compacted'] = compactedAt;
+      state['time'] = time;
       await _savePart(
         workspace: workspace,
         part: MessagePart(
-          id: p.id,
-          sessionId: p.sessionId,
-          messageId: p.messageId,
-          type: p.type,
-          createdAt: p.createdAt,
-          data: {...p.data, 'state': state},
+          id: part.id,
+          sessionId: part.sessionId,
+          messageId: part.messageId,
+          type: part.type,
+          createdAt: part.createdAt,
+          data: {...part.data, 'state': state},
         ),
       );
     }
-    return totalEst;
+    return pruned;
   }
 
   Future<SessionInfo> summarize({
@@ -88,59 +102,54 @@ extension SessionEngineSummarize on SessionEngine {
     required ModelConfig modelConfig,
     required String currentAgent,
   }) async {
-    var messages = await database.listMessages(session.id);
+    final messages = await database.listMessages(session.id);
     if (messages.isEmpty) return session;
-    var parts = await database.listPartsForSession(session.id);
-    final budget = usableInputTokensForModel(
-      modelConfig.model,
-      limit: modelConfig.currentModelLimit,
-    );
-    for (var pass = 0; pass < 16; pass++) {
-      final prompt = <Map<String, dynamic>>[
-        {
-          'role': 'system',
-          'content':
-              'You are Mag summarizer. Produce a concise but information-dense continuation summary for the same coding task. Preserve user constraints, decisions, errors, pending work, important file paths, and next steps.',
-        },
-        ..._messagesToConversation(
-          messages: messages,
-          parts: parts,
-          currentAgent: currentAgent,
-          summaryMessageId: session.summaryMessageId,
-        ),
-        {
-          'role': 'user',
-          'content':
-              'Provide a detailed but concise summary of our conversation above. Focus on information that would be helpful for continuing the conversation, including what we did, what we are doing, which files we are working on, important constraints, and what we should do next.',
-        },
-      ];
-      final est = estimateSerializedMessagesTokens(prompt);
-      if (est < budget) break;
-      final pruned = await _pruneLargestToolOutputsForContext(
-        workspace: workspace,
-        sessionId: session.id,
-        minPrunedEstimate: 8000,
-      );
-      if (pruned == 0) break;
-      messages = await database.listMessages(session.id);
-      parts = await database.listPartsForSession(session.id);
-    }
+    final parts = await database.listPartsForSession(session.id);
+    const summaryPrompt = '''
+Provide a detailed prompt for continuing our conversation above.
+Focus on information that would be helpful for continuing the conversation, including what we did, what we're doing, which files we're working on, and what we're going to do next.
+The summary that you construct will be used so that another agent can read it and continue the work.
+Do not call any tools. Respond only with the summary text.
+Respond in the same language as the user's messages in the conversation.
+
+When constructing the summary, try to stick to this template:
+---
+## Goal
+
+[What goal(s) is the user trying to accomplish?]
+
+## Instructions
+
+- [What important instructions did the user give you that are relevant]
+- [If there is a plan or spec, include information about it so next agent can continue using it]
+
+## Discoveries
+
+[What notable things were learned during this conversation that would be useful for the next agent to know when continuing the work]
+
+## Accomplished
+
+[What work has been completed, what work is still in progress, and what work is left?]
+
+## Relevant files / directories
+
+[Construct a structured list of relevant files that have been read, edited, or created that pertain to the task at hand. If all the files in a directory are relevant, include the path to the directory.]
+---
+''';
     final prompt = <Map<String, dynamic>>[
       {
         'role': 'system',
         'content':
-            'You are Mag summarizer. Produce a concise but information-dense continuation summary for the same coding task. Preserve user constraints, decisions, errors, pending work, important file paths, and next steps.',
+            'You are Mag summarizer. Produce a continuation summary that another agent can use to resume the same coding task.',
       },
       ..._messagesToConversation(
         messages: messages,
         parts: parts,
         currentAgent: currentAgent,
-        summaryMessageId: session.summaryMessageId,
       ),
       {
         'role': 'user',
-        'content':
-            'Provide a detailed but concise summary of our conversation above. Focus on information that would be helpful for continuing the conversation, including what we did, what we are doing, which files we are working on, important constraints, and what we should do next.',
+        'content': summaryPrompt,
       },
     ];
     final response = await modelGateway.complete(
@@ -148,9 +157,33 @@ extension SessionEngineSummarize on SessionEngine {
       messages: prompt,
       tools: const [],
       format: null,
+      sessionId: session.id,
     );
     final summaryText = response.text.trim();
     if (summaryText.isEmpty) return session;
+    final compactionMessage = MessageInfo(
+      id: newId('message'),
+      sessionId: session.id,
+      role: SessionRole.user,
+      agent: currentAgent,
+      createdAt: DateTime.now().millisecondsSinceEpoch,
+      text: '',
+    );
+    await _saveMessage(workspace: workspace, message: compactionMessage);
+    await _savePart(
+      workspace: workspace,
+      part: MessagePart(
+        id: newId('part'),
+        sessionId: session.id,
+        messageId: compactionMessage.id,
+        type: PartType.compaction,
+        createdAt: DateTime.now().millisecondsSinceEpoch,
+        data: {
+          'label': 'Context compacted',
+          'summary': summaryText,
+        },
+      ),
+    );
     final summaryMessage = MessageInfo(
       id: newId('message'),
       sessionId: session.id,
@@ -160,8 +193,21 @@ extension SessionEngineSummarize on SessionEngine {
       text: '',
       model: modelConfig.model,
       provider: modelConfig.provider,
+      parentMessageId: compactionMessage.id,
+      summary: true,
     );
     await _saveMessage(workspace: workspace, message: summaryMessage);
+    await _savePart(
+      workspace: workspace,
+      part: MessagePart(
+        id: newId('part'),
+        sessionId: session.id,
+        messageId: summaryMessage.id,
+        type: PartType.text,
+        createdAt: DateTime.now().millisecondsSinceEpoch,
+        data: _assistantTextPartData(summaryText),
+      ),
+    );
     await _savePart(
       workspace: workspace,
       part: MessagePart(
@@ -178,10 +224,10 @@ extension SessionEngineSummarize on SessionEngine {
     );
     final tracked = await _trackUsage(
       workspace: workspace,
-      session: session.copyWith(summaryMessageId: summaryMessage.id),
+      session: session.copyWith(summaryMessageId: compactionMessage.id),
       usage: response.usage,
     );
-    return tracked.copyWith(summaryMessageId: summaryMessage.id);
+    return tracked.copyWith(summaryMessageId: compactionMessage.id);
   }
 
   Future<SessionInfo> _trackUsage({
