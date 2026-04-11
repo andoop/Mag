@@ -1,5 +1,7 @@
 part of '../models.dart';
 
+const String kModelsDevCatalogCacheKey = 'models_dev_catalog_v1';
+
 class ProviderModelCost {
   const ProviderModelCost({
     this.input = 0,
@@ -182,7 +184,9 @@ class ProviderInfo {
       id: (json['id'] as String?) ?? '',
       name: (json['name'] as String?) ?? (json['id'] as String? ?? ''),
       api: json['api'] as String?,
-      env: (json['env'] as List? ?? const []).map((item) => item.toString()).toList(),
+      env: (json['env'] as List? ?? const [])
+          .map((item) => item.toString())
+          .toList(),
       models: rawModels.map(
         (key, value) => MapEntry(
           key,
@@ -202,7 +206,9 @@ class ProviderInfo {
       id: id,
       name: (json['name'] as String?) ?? id,
       api: json['api'] as String?,
-      env: (json['env'] as List? ?? const []).map((item) => item.toString()).toList(),
+      env: (json['env'] as List? ?? const [])
+          .map((item) => item.toString())
+          .toList(),
       models: rawModels.map(
         (key, value) => MapEntry(
           key,
@@ -234,10 +240,12 @@ class ProviderListResponse {
 
   factory ProviderListResponse.fromJson(JsonMap json) => ProviderListResponse(
         all: (json['all'] as List? ?? const [])
-            .map((item) => ProviderInfo.fromJson(Map<String, dynamic>.from(item as Map)))
+            .map((item) =>
+                ProviderInfo.fromJson(Map<String, dynamic>.from(item as Map)))
             .toList(),
-        connected:
-            (json['connected'] as List? ?? const []).map((item) => item.toString()).toList(),
+        connected: (json['connected'] as List? ?? const [])
+            .map((item) => item.toString())
+            .toList(),
         defaultModels: Map<String, String>.from(
           json['default'] as Map? ?? const <String, String>{},
         ),
@@ -274,14 +282,17 @@ ProviderListResponse buildProviderListResponse({
     connected[connection.id] = (existing ??
             ProviderInfo(
               id: connection.id,
-              name: connection.name.isNotEmpty ? connection.name : connection.id,
+              name:
+                  connection.name.isNotEmpty ? connection.name : connection.id,
               api: connection.baseUrl,
               env: const [],
               models: const {},
               custom: connection.custom,
             ))
         .copyWith(
-      name: connection.name.isNotEmpty ? connection.name : (existing?.name ?? connection.id),
+      name: connection.name.isNotEmpty
+          ? connection.name
+          : (existing?.name ?? connection.id),
       api: connection.baseUrl.isNotEmpty ? connection.baseUrl : existing?.api,
       models: models,
       custom: connection.custom,
@@ -409,6 +420,32 @@ ProviderCatalogModelMatch resolveCatalogModelMatch({
     matchedProviderId: catalogProvider.id,
     matchedModelId: catalogModel.id,
   );
+}
+
+List<ProviderInfo> providerCatalogFromCacheSetting(JsonMap? cached) {
+  if (cached == null) return const [];
+  final providers = (cached['all'] as List? ?? const [])
+      .map((item) =>
+          ProviderInfo.fromJson(Map<String, dynamic>.from(item as Map)))
+      .toList();
+  if (providers.isEmpty) return const [];
+  return normalizeProviderCatalog(providers);
+}
+
+ProviderModelLimit resolveProviderModelLimit({
+  required List<ProviderInfo> catalog,
+  required String providerId,
+  required String modelId,
+}) {
+  if (catalog.isNotEmpty) {
+    final provider = catalog.cast<ProviderInfo?>().firstWhere(
+          (item) => item?.id == providerId,
+          orElse: () => null,
+        );
+    final model = provider?.models[modelId];
+    if (model != null) return model.limit;
+  }
+  return inferProviderModelLimitFallback(modelId);
 }
 
 List<ProviderInfo> fallbackProviderCatalog() {

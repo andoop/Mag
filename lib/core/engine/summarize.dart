@@ -91,7 +91,10 @@ extension SessionEngineSummarize on SessionEngine {
     var messages = await database.listMessages(session.id);
     if (messages.isEmpty) return session;
     var parts = await database.listPartsForSession(session.id);
-    final budget = usableInputTokensForModel(modelConfig.model);
+    final budget = usableInputTokensForModel(
+      modelConfig.model,
+      limit: modelConfig.currentModelLimit,
+    );
     for (var pass = 0; pass < 16; pass++) {
       final prompt = <Map<String, dynamic>>[
         {
@@ -202,8 +205,13 @@ extension SessionEngineSummarize on SessionEngine {
   }
 
   /// OpenCode `session/overflow.ts` + `prompt.ts` 在 turn 末尾的 overflow 判定。
-  bool _shouldAutoCompactAfterTurn(ModelUsage lastUsage, String model) {
+  bool _shouldAutoCompactAfterTurn(
+      ModelUsage lastUsage, ModelConfig modelConfig) {
     if (lastUsage.isEmpty) return false;
-    return isContextOverflowForCompaction(tokens: lastUsage, model: model);
+    return isContextOverflowForCompaction(
+      tokens: lastUsage,
+      model: modelConfig.model,
+      limit: modelConfig.currentModelLimit,
+    );
   }
 }

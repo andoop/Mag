@@ -42,8 +42,8 @@ extension _HomePageTimeline on _HomePageState {
             l(context, '未选择工作区', 'No workspace selected'),
         sessionTitle: state.session?.title ?? l(context, '新会话', 'New session'),
         agentName: _selectedAgent ?? state.session?.agent ?? 'build',
-        providerLabel:
-            _providerLabel(modelConfig.provider, config: modelConfig, state: state),
+        providerLabel: _providerLabel(modelConfig.provider,
+            config: modelConfig, state: state),
         modelLabel: currentModelChoice?.name ?? modelConfig.model,
         showModelFreeTag: showModelFreeTag,
         showModelLatestTag: showModelLatestTag,
@@ -65,8 +65,8 @@ extension _HomePageTimeline on _HomePageState {
       if (index == cursor++) {
         return _EmptyTimelineCard(
           onSelectModel: () => _openModelChooser(context),
-          providerLabel:
-              _providerLabel(modelConfig.provider, config: modelConfig, state: state),
+          providerLabel: _providerLabel(modelConfig.provider,
+              config: modelConfig, state: state),
           modelLabel: currentModelChoice?.name ?? modelConfig.model,
           showModelFreeTag: showModelFreeTag,
           showModelLatestTag: showModelLatestTag,
@@ -112,7 +112,6 @@ extension _HomePageTimeline on _HomePageState {
     }
     return const SizedBox.shrink();
   }
-
 }
 
 class _MessageBubble extends StatefulWidget {
@@ -224,7 +223,8 @@ class _MessageBubbleState extends State<_MessageBubble> {
     final isUser = bundle.message.role == SessionRole.user;
     final label = isUser ? l(context, '你', 'You') : bundle.message.agent;
     final bubbleColor = isUser ? oc.userBubble : oc.agentBubble;
-    final hasCompaction = primaryParts.any((p) => p.type == PartType.compaction);
+    final hasCompaction =
+        primaryParts.any((p) => p.type == PartType.compaction);
     final compactionOnly = !isUser &&
         bundle.message.text.isEmpty &&
         footerParts.isEmpty &&
@@ -313,16 +313,13 @@ class _MessageBubbleState extends State<_MessageBubble> {
                       showAssistantTextMeta: !isUser &&
                           lastPlainTextPart != null &&
                           identical(part, lastPlainTextPart),
-                      onInsertPromptReference:
-                          widget.onInsertPromptReference,
-                      onSendPromptReference:
-                          widget.onSendPromptReference,
+                      onInsertPromptReference: widget.onInsertPromptReference,
+                      onSendPromptReference: widget.onSendPromptReference,
                     ),
                   ],
                   if (footerParts.isNotEmpty) ...[
                     const SizedBox(height: 10),
-                    Divider(
-                        height: 1, thickness: 1, color: oc.softBorderColor),
+                    Divider(height: 1, thickness: 1, color: oc.softBorderColor),
                     const SizedBox(height: 8),
                     Text(
                       l(context, '文件引用', 'File references'),
@@ -343,10 +340,8 @@ class _MessageBubbleState extends State<_MessageBubble> {
                             widget.isStreamingAssistantMessage,
                         turnDurationMs: turnDurationMs,
                         showAssistantTextMeta: false,
-                        onInsertPromptReference:
-                            widget.onInsertPromptReference,
-                        onSendPromptReference:
-                            widget.onSendPromptReference,
+                        onInsertPromptReference: widget.onInsertPromptReference,
+                        onSendPromptReference: widget.onSendPromptReference,
                       ),
                     ],
                   ],
@@ -488,6 +483,7 @@ class _ContextStatsCard extends StatelessWidget {
   const _ContextStatsCard({
     required this.session,
     required this.model,
+    this.modelLimit,
     required this.onInitializeMemory,
     required this.onCompactSession,
     required this.onViewRawContext,
@@ -495,6 +491,7 @@ class _ContextStatsCard extends StatelessWidget {
 
   final SessionInfo? session;
   final String model;
+  final ProviderModelLimit? modelLimit;
   final VoidCallback? onInitializeMemory;
   final VoidCallback? onCompactSession;
   final VoidCallback? onViewRawContext;
@@ -502,7 +499,7 @@ class _ContextStatsCard extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final oc = context.oc;
-    final ratio = _contextUsageRatio(session, model);
+    final ratio = _contextUsageRatio(session, model, limit: modelLimit);
     final progressColor = ratio >= 0.95
         ? Colors.red.shade400
         : ratio >= 0.8
@@ -528,7 +525,7 @@ class _ContextStatsCard extends StatelessWidget {
               ),
               const Spacer(),
               Text(
-                _contextUsageLabel(session, model),
+                _contextUsageLabel(session, model, limit: modelLimit),
                 style: Theme.of(context)
                     .textTheme
                     .bodySmall
@@ -583,8 +580,8 @@ class _ContextStatsCard extends StatelessWidget {
                 _CompactActionButton(
                   onPressed: onInitializeMemory,
                   icon: Icons.note_add_outlined,
-                  label: l(context, '初始化/更新 Mag.md',
-                      'Initialize/Update Mag.md'),
+                  label:
+                      l(context, '初始化/更新 Mag.md', 'Initialize/Update Mag.md'),
                 ),
                 _CompactActionButton(
                   onPressed: onViewRawContext,
@@ -978,7 +975,8 @@ class _ProviderListTile extends StatelessWidget {
               if (selected) ...[
                 Container(
                   margin: const EdgeInsets.only(left: 6, top: 1),
-                  padding: const EdgeInsets.only(left: 8, right: 2, top: 3, bottom: 3),
+                  padding: const EdgeInsets.only(
+                      left: 8, right: 2, top: 3, bottom: 3),
                   decoration: BoxDecoration(
                     color: oc.selectedFill,
                     borderRadius: BorderRadius.circular(999),

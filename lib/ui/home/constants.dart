@@ -189,15 +189,23 @@ String _toolStatusLabel(BuildContext context, String status) {
   }
 }
 
-double _contextUsageRatio(SessionInfo? session, String model) {
+double _contextUsageRatio(
+  SessionInfo? session,
+  String model, {
+  ProviderModelLimit? limit,
+}) {
   if (session == null) return 0;
-  final window = inferContextWindow(model);
+  final window = contextWindowForModel(model, limit: limit);
   if (window <= 0) return 0;
   return (session.totalTokens / window).clamp(0, 1);
 }
 
-String _contextUsageLabel(SessionInfo? session, String model) {
+String _contextUsageLabel(
+  SessionInfo? session,
+  String model, {
+  ProviderModelLimit? limit,
+}) {
   if (session == null) return '--';
-  final window = inferContextWindow(model);
+  final window = contextWindowForModel(model, limit: limit);
   return '${formatTokenCount(session.totalTokens)} / ${formatTokenCount(window)}';
 }

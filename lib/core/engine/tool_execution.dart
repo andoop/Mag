@@ -245,11 +245,20 @@ extension SessionEngineTools on SessionEngine {
           'Please rewrite the input so it satisfies the expected schema.\n'
           '${preview.isNotEmpty ? 'Received (truncated): $preview' : ''}';
     }
+    if (call.name == 'edit' && args.containsKey('path')) {
+      return 'The edit tool requires `filePath` as the target path.\n'
+          'Do NOT send `path`.\n'
+          'Rewrite the call with `filePath` and retry.';
+    }
     // Flexible parameter aliases: 'path' ↔ 'filePath'
-    if (!args.containsKey('filePath') && args.containsKey('path')) {
+    if (call.name != 'edit' &&
+        !args.containsKey('filePath') &&
+        args.containsKey('path')) {
       args['filePath'] = args['path'];
     }
-    if (!args.containsKey('path') && args.containsKey('filePath')) {
+    if (call.name != 'edit' &&
+        !args.containsKey('path') &&
+        args.containsKey('filePath')) {
       args['path'] = args['filePath'];
     }
     final required =
@@ -260,9 +269,7 @@ extension SessionEngineTools on SessionEngine {
       final value = args[key];
       final allowsEmptyString = call.name == 'write' && key == 'content';
       if (value == null ||
-          (value is String &&
-              value.trim().isEmpty &&
-              !allowsEmptyString)) {
+          (value is String && value.trim().isEmpty && !allowsEmptyString)) {
         missing.add(key);
       }
     }
@@ -382,10 +389,7 @@ extension SessionEngineTools on SessionEngine {
       if (firstUser.role != SessionRole.user) return;
       if (firstUser.text.trim().isEmpty) return;
 
-      final modelConfig = ModelConfig.fromJson(
-        await database.getSetting('model_config') ??
-            ModelConfig.defaults().toJson(),
-      );
+      final modelConfig = await _loadResolvedModelConfig();
       final mag = modelConfig.isMagProvider;
       final hasKey = modelConfig.apiKey.trim().isNotEmpty;
       final freeMag = mag && modelConfig.isMagZenFreeModel;

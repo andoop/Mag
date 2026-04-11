@@ -17,8 +17,9 @@ extension AppControllerProvider on AppController {
     final providerList = await _client!.listProviders();
     final providerAuth = await _client!.listProviderAuth();
     final recentModelKeys = await _saveRecentModelKeys(normalized);
+    final resolved = normalized.withResolvedCurrentModelLimit(providerList.all);
     state = state.copyWith(
-      modelConfig: normalized,
+      modelConfig: resolved,
       providerList: providerList,
       providerAuth: providerAuth,
       recentModelKeys: recentModelKeys,
@@ -70,7 +71,9 @@ extension AppControllerProvider on AppController {
     ]..sort((a, b) => a.name.toLowerCase().compareTo(b.name.toLowerCase()));
     final next = config.copyWith(
       currentProviderId: select ? connection.id : config.currentProviderId,
-      currentModelId: select ? (currentModelId ?? config.currentModelId) : config.currentModelId,
+      currentModelId: select
+          ? (currentModelId ?? config.currentModelId)
+          : config.currentModelId,
       connections: nextConnections,
     );
     await saveModelConfig(next);
@@ -119,7 +122,8 @@ extension AppControllerProvider on AppController {
       nextModels = filterMagZenFreeModels(models);
       if (nextModels.isEmpty) {
         nextModels = List<String>.from(
-          ModelConfig.defaults().connections
+          ModelConfig.defaults()
+              .connections
               .firstWhere((c) => c.id == 'mag')
               .models,
         );
@@ -251,7 +255,8 @@ extension AppControllerProvider on AppController {
       );
     }
     if (body.trim().isEmpty) {
-      throw ProviderDiscoveryException('Model discovery returned an empty response.');
+      throw ProviderDiscoveryException(
+          'Model discovery returned an empty response.');
     }
     final decoded = jsonDecode(body);
     return _extractIdsFromDataList(decoded);
@@ -263,7 +268,8 @@ extension AppControllerProvider on AppController {
     required String apiKey,
     bool usePublicToken = false,
   }) async {
-    final client = HttpClient()..connectionTimeout = const Duration(seconds: 15);
+    final client = HttpClient()
+      ..connectionTimeout = const Duration(seconds: 15);
     try {
       final normalized = baseUrl.trim().replaceAll(RegExp(r'/+$'), '');
       final effectiveApiKey = usePublicToken ? 'public' : apiKey.trim();
@@ -316,12 +322,14 @@ extension AppControllerProvider on AppController {
           );
         }
         if (body.trim().isEmpty) {
-          throw ProviderDiscoveryException('Model discovery returned an empty response.');
+          throw ProviderDiscoveryException(
+              'Model discovery returned an empty response.');
         }
         final decoded = jsonDecode(body);
         final models = decoded is Map ? decoded['models'] : null;
         if (models is! List) {
-          throw ProviderDiscoveryException('Model discovery returned an invalid response.');
+          throw ProviderDiscoveryException(
+              'Model discovery returned an invalid response.');
         }
         final items = models
             .map((item) => item is Map ? item['name']?.toString() : null)
@@ -373,7 +381,8 @@ extension AppControllerProvider on AppController {
         'TLS/SSL handshake failed. Check the Base URL or certificate. $error',
       );
     } on HttpException catch (error) {
-      throw ProviderDiscoveryException('HTTP error during model discovery: ${error.message}');
+      throw ProviderDiscoveryException(
+          'HTTP error during model discovery: ${error.message}');
     } on FormatException catch (error) {
       throw ProviderDiscoveryException(
         'Model discovery returned invalid JSON. ${error.message}',

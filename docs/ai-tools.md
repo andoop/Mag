@@ -127,9 +127,9 @@
 **参数**：
 
 
-| 参数                  | 类型      | 说明                   |
-| ------------------- | ------- | -------------------- |
-| `path` / `filePath` | string  | 目标文件，相对路径            |
+| 参数         | 类型      | 说明                             |
+| ---------- | ------- | ------------------------------ |
+| `filePath` | string  | 目标文件，相对路径；**必须使用 `filePath`** |
 | `edits`             | array   | hashline 编辑操作数组，推荐用法 |
 | `delete`            | boolean | 可选，删除文件              |
 | `rename`            | string  | 可选，编辑后另存/移动到新路径      |
@@ -141,6 +141,7 @@
 **行为要点**：
 
 - 必须先 `read` 目标文件，并直接复用返回的 `LINE#ID` 锚点。
+- 每次调用都必须传 `filePath`；`edit` 不再接受 `path` 别名。
 - `edits` 中每项只支持 `replace` / `append` / `prepend` 三种操作。
 - `replace` 的 `lines: null` 等价于删除目标行或目标区间。
 - 如果文件在读取后发生变化，锚点校验会失败，并返回带 `>>>` 标记的最新可用锚点片段。
@@ -151,7 +152,7 @@
 
 ```json
 {
-  "path": "lib/foo.dart",
+  "filePath": "lib/foo.dart",
   "edits": [
     {
       "op": "replace",

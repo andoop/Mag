@@ -81,6 +81,8 @@ ModelConfig normalizeMagFreeModelsOnly(ModelConfig config) {
   return config.copyWith(
     connections: nextConnections,
     currentModelId: modelId,
+    currentModelLimit:
+        modelId == config.currentModelId ? config.currentModelLimit : null,
   );
 }
 
@@ -143,7 +145,8 @@ class ProviderConnection {
     return ProviderConnection(
       id: id,
       name: (json['name'] as String?) ?? 'Mag',
-      baseUrl: (json['baseUrl'] as String?) ?? _defaultBaseUrlForProvider('mag'),
+      baseUrl:
+          (json['baseUrl'] as String?) ?? _defaultBaseUrlForProvider('mag'),
       apiKey: (json['apiKey'] as String?) ?? '',
       models: models,
       custom: (json['custom'] as bool?) ?? false,
@@ -175,8 +178,9 @@ class ModelVisibilityRule {
     return ModelVisibilityRule(
       providerId: (json['providerId'] as String?) ?? '',
       modelId: (json['modelId'] as String?) ?? '',
-      visibility:
-          raw == ModelVisibility.hide.name ? ModelVisibility.hide : ModelVisibility.show,
+      visibility: raw == ModelVisibility.hide.name
+          ? ModelVisibility.hide
+          : ModelVisibility.show,
     );
   }
 }
@@ -187,12 +191,14 @@ class ModelConfig {
     required this.currentModelId,
     required this.connections,
     required this.visibilityRules,
+    this.currentModelLimit,
   });
 
   final String currentProviderId;
   final String currentModelId;
   final List<ProviderConnection> connections;
   final List<ModelVisibilityRule> visibilityRules;
+  final ProviderModelLimit? currentModelLimit;
 
   static const String _defaultMagBaseUrl = 'https://opencode.ai/zen/v1';
   static const String _defaultMagModel = 'minimax-m2.5-free';
@@ -224,8 +230,11 @@ class ModelConfig {
 
   String get baseUrl => currentConnection?.baseUrl ?? _defaultMagBaseUrl;
   String get apiKey => currentConnection?.apiKey ?? '';
+  ProviderModelLimit get resolvedCurrentModelLimit =>
+      currentModelLimit ?? inferProviderModelLimitFallback(model);
 
-  List<String> get configuredProviderIds => connections.map((item) => item.id).toList();
+  List<String> get configuredProviderIds =>
+      connections.map((item) => item.id).toList();
 
   ProviderConnection? connectionFor(String providerId) {
     for (final item in connections) {
@@ -239,12 +248,26 @@ class ModelConfig {
     String? currentModelId,
     List<ProviderConnection>? connections,
     List<ModelVisibilityRule>? visibilityRules,
+    Object? currentModelLimit = _unset,
   }) {
     return ModelConfig(
       currentProviderId: currentProviderId ?? this.currentProviderId,
       currentModelId: currentModelId ?? this.currentModelId,
       connections: connections ?? this.connections,
       visibilityRules: visibilityRules ?? this.visibilityRules,
+      currentModelLimit: identical(currentModelLimit, _unset)
+          ? this.currentModelLimit
+          : currentModelLimit as ProviderModelLimit?,
+    );
+  }
+
+  ModelConfig withResolvedCurrentModelLimit(List<ProviderInfo> catalog) {
+    return copyWith(
+      currentModelLimit: resolveProviderModelLimit(
+        catalog: catalog,
+        providerId: currentProviderId,
+        modelId: currentModelId,
+      ),
     );
   }
 
@@ -277,29 +300,40 @@ class ModelConfig {
         'currentProviderId': currentProviderId,
         'currentModelId': currentModelId,
         'connections': connections.map((item) => item.toJson()).toList(),
-        'visibilityRules': visibilityRules.map((item) => item.toJson()).toList(),
+        'visibilityRules':
+            visibilityRules.map((item) => item.toJson()).toList(),
+        if (currentModelLimit != null)
+          'currentModelLimit': currentModelLimit!.toJson(),
       };
 
   factory ModelConfig.fromJson(JsonMap json) {
-    if (json.containsKey('connections') || json.containsKey('currentProviderId')) {
+    if (json.containsKey('connections') ||
+        json.containsKey('currentProviderId')) {
       final connections = (json['connections'] as List? ?? const [])
           .map((item) => ProviderConnection.fromJson(
               Map<String, dynamic>.from(item as Map)))
           .toList();
-      final normalizedConnections =
-          connections.isEmpty ? ModelConfig.defaults().connections : connections;
-      final currentProviderId =
-          (json['currentProviderId'] as String?) ?? normalizedConnections.first.id;
-      final currentModelId = (json['currentModelId'] as String?) ?? _defaultMagModel;
+      final normalizedConnections = connections.isEmpty
+          ? ModelConfig.defaults().connections
+          : connections;
+      final currentProviderId = (json['currentProviderId'] as String?) ??
+          normalizedConnections.first.id;
+      final currentModelId =
+          (json['currentModelId'] as String?) ?? _defaultMagModel;
       final visibilityRules = (json['visibilityRules'] as List? ?? const [])
-          .map((item) =>
-              ModelVisibilityRule.fromJson(Map<String, dynamic>.from(item as Map)))
+          .map((item) => ModelVisibilityRule.fromJson(
+              Map<String, dynamic>.from(item as Map)))
           .toList();
       return normalizeMagFreeModelsOnly(ModelConfig(
         currentProviderId: currentProviderId,
         currentModelId: currentModelId,
         connections: normalizedConnections,
         visibilityRules: visibilityRules,
+        currentModelLimit: json['currentModelLimit'] == null
+            ? null
+            : ProviderModelLimit.fromJson(
+                Map<String, dynamic>.from(json['currentModelLimit'] as Map),
+              ),
       ));
     }
 

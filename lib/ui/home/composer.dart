@@ -107,8 +107,8 @@ extension _HomePageComposer on _HomePageState {
 
   void _confirmPromptMentionSelection() {
     if (_promptMentionSuggestions.isEmpty) return;
-    final index =
-        _promptMentionSelectedIndex.clamp(0, _promptMentionSuggestions.length - 1);
+    final index = _promptMentionSelectedIndex.clamp(
+        0, _promptMentionSuggestions.length - 1);
     _insertPromptMentionSuggestion(_promptMentionSuggestions[index]);
   }
 
@@ -131,8 +131,7 @@ extension _HomePageComposer on _HomePageState {
       BuildContext context, AppState state, bool isKeyboardOpen) {
     final oc = context.oc;
     final currentModel = state.modelConfig ?? ModelConfig.defaults();
-    final currentModelChoice =
-        _findModelChoice(
+    final currentModelChoice = _findModelChoice(
       currentModel.provider,
       currentModel.model,
       config: currentModel,
@@ -193,8 +192,8 @@ extension _HomePageComposer on _HomePageState {
                 decoration: BoxDecoration(
                   color: oc.panelBackground,
                   borderRadius: BorderRadius.circular(24),
-                  border: Border.fromBorderSide(
-                      BorderSide(color: oc.borderColor)),
+                  border:
+                      Border.fromBorderSide(BorderSide(color: oc.borderColor)),
                   boxShadow: [
                     BoxShadow(
                       color: oc.shadow,
@@ -236,9 +235,7 @@ extension _HomePageComposer on _HomePageState {
                                                 'Reference workspace files or folders')
                                             : l(
                                                 context,
-                                                '搜索 "${
-                                                    _activePromptMention!.query
-                                                  }"',
+                                                '搜索 "${_activePromptMention!.query}"',
                                                 'Search "${_activePromptMention!.query}"',
                                               ),
                                         style: Theme.of(context)
@@ -285,14 +282,14 @@ extension _HomePageComposer on _HomePageState {
                                         shrinkWrap: true,
                                         itemCount:
                                             _promptMentionSuggestions.length,
-                                        separatorBuilder: (_, __) =>
-                                            Divider(height: 1,
-                                                color: oc.softBorderColor),
+                                        separatorBuilder: (_, __) => Divider(
+                                            height: 1,
+                                            color: oc.softBorderColor),
                                         itemBuilder: (context, index) {
                                           final entry =
                                               _promptMentionSuggestions[index];
-                                          final selected =
-                                              index == _promptMentionSelectedIndex;
+                                          final selected = index ==
+                                              _promptMentionSelectedIndex;
                                           final fullPath = entry.path +
                                               (entry.isDirectory &&
                                                       !entry.path.endsWith('/')
@@ -329,8 +326,10 @@ extension _HomePageComposer on _HomePageState {
                                                   children: [
                                                     Icon(
                                                       entry.isDirectory
-                                                          ? Icons.folder_outlined
-                                                          : Icons.description_outlined,
+                                                          ? Icons
+                                                              .folder_outlined
+                                                          : Icons
+                                                              .description_outlined,
                                                       size: 16,
                                                       color: selected
                                                           ? oc.accent
@@ -350,8 +349,8 @@ extension _HomePageComposer on _HomePageState {
                                                                 TextOverflow
                                                                     .ellipsis,
                                                             style: TextStyle(
-                                                              color: oc
-                                                                  .foreground,
+                                                              color:
+                                                                  oc.foreground,
                                                               fontSize: 13,
                                                               height: 1.25,
                                                               fontWeight: selected
@@ -379,10 +378,12 @@ extension _HomePageComposer on _HomePageState {
                                                               height: 2),
                                                           Text(
                                                             entry.isDirectory
-                                                                ? l(context,
+                                                                ? l(
+                                                                    context,
                                                                     '目录',
                                                                     'Directory')
-                                                                : l(context,
+                                                                : l(
+                                                                    context,
                                                                     '文件',
                                                                     'File'),
                                                             style: Theme.of(
@@ -460,8 +461,7 @@ extension _HomePageComposer on _HomePageState {
                                   _activePromptMention != null
                                       ? () => _movePromptMentionSelection(1)
                                       : () {},
-                              const SingleActivator(
-                                      LogicalKeyboardKey.arrowUp):
+                              const SingleActivator(LogicalKeyboardKey.arrowUp):
                                   _activePromptMention != null
                                       ? () => _movePromptMentionSelection(-1)
                                       : () {},
@@ -478,11 +478,10 @@ extension _HomePageComposer on _HomePageState {
                               minLines: 1,
                               maxLines: isKeyboardOpen ? 4 : 3,
                               textInputAction: TextInputAction.newline,
-                              style: const TextStyle(fontSize: 14, height: 1.32),
+                              style:
+                                  const TextStyle(fontSize: 14, height: 1.32),
                               decoration: InputDecoration(
-                                hintText: l(
-                                    context,
-                                    '问我关于这个工作区的任何事，输入 @ 引用文件',
+                                hintText: l(context, '问我关于这个工作区的任何事，输入 @ 引用文件',
                                     'Ask anything about this workspace, type @ to reference files'),
                                 border: InputBorder.none,
                                 contentPadding: EdgeInsets.fromLTRB(
@@ -516,12 +515,17 @@ extension _HomePageComposer on _HomePageState {
                               if (state.session != null) ...[
                                 _ContextRingButton(
                                   ratio: _contextUsageRatio(
-                                      state.session, currentModel.model),
+                                    state.session,
+                                    currentModel.model,
+                                    limit: state.modelConfig?.currentModelLimit,
+                                  ),
                                   compacted: state.session?.hasSummary == true,
                                   onPressed: () => _openContextStatsSheet(
                                     context,
                                     session: state.session,
                                     model: currentModel.model,
+                                    modelLimit:
+                                        state.modelConfig?.currentModelLimit,
                                     onInitializeMemory: state.isBusy
                                         ? null
                                         : widget
@@ -773,6 +777,7 @@ extension _HomePageComposer on _HomePageState {
     BuildContext context, {
     required SessionInfo? session,
     required String model,
+    ProviderModelLimit? modelLimit,
     required VoidCallback? onInitializeMemory,
     required VoidCallback? onCompactSession,
     required VoidCallback? onViewRawContext,
@@ -802,7 +807,8 @@ extension _HomePageComposer on _HomePageState {
                           ),
                           const SizedBox(height: 4),
                           Text(
-                            _contextUsageLabel(session, model),
+                            _contextUsageLabel(session, model,
+                                limit: modelLimit),
                             style: Theme.of(context)
                                 .textTheme
                                 .bodySmall
@@ -821,6 +827,7 @@ extension _HomePageComposer on _HomePageState {
                 _ContextStatsCard(
                   session: session,
                   model: model,
+                  modelLimit: modelLimit,
                   onInitializeMemory: onInitializeMemory,
                   onCompactSession: onCompactSession,
                   onViewRawContext: onViewRawContext,
@@ -998,7 +1005,11 @@ class _RawContextSheetState extends State<_RawContextSheet> {
                         spacing: 6,
                         runSpacing: 6,
                         children: [
-                          for (final view in const ['payload', 'messages', 'tools'])
+                          for (final view in const [
+                            'payload',
+                            'messages',
+                            'tools'
+                          ])
                             ChoiceChip(
                               label: Text(_viewLabel(context, view)),
                               selected: _view == view,
@@ -1012,8 +1023,8 @@ class _RawContextSheetState extends State<_RawContextSheet> {
                               if (context.mounted) {
                                 ScaffoldMessenger.of(context).showSnackBar(
                                   SnackBar(
-                                    content: Text(l(context, '已复制',
-                                        'Copied to clipboard')),
+                                    content: Text(l(
+                                        context, '已复制', 'Copied to clipboard')),
                                   ),
                                 );
                               }
@@ -1034,8 +1045,7 @@ class _RawContextSheetState extends State<_RawContextSheet> {
                               controller: _horizontalScrollController,
                               thumbVisibility: true,
                               notificationPredicate: (notification) =>
-                                  notification.metrics.axis ==
-                                  Axis.horizontal,
+                                  notification.metrics.axis == Axis.horizontal,
                               child: SingleChildScrollView(
                                 controller: _horizontalScrollController,
                                 scrollDirection: Axis.horizontal,

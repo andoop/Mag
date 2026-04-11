@@ -44,10 +44,7 @@ extension SessionEnginePrompt on SessionEngine {
       directory: workspace.treeUri,
     );
     try {
-      final modelConfig = ModelConfig.fromJson(
-        await database.getSetting('model_config') ??
-            ModelConfig.defaults().toJson(),
-      );
+      final modelConfig = await _loadResolvedModelConfig();
       final cacheLoadStartedAt = DateTime.now().millisecondsSinceEpoch;
       final cachedMessages = await database.listMessages(session.id);
       final cachedParts = await database.listPartsForSession(session.id);
@@ -196,6 +193,7 @@ extension SessionEnginePrompt on SessionEngine {
         if (!isContextOverflowForCompaction(
           tokens: usageCheck,
           model: modelConfig.model,
+          limit: modelConfig.currentModelLimit,
         )) {
           return;
         }
@@ -213,17 +211,25 @@ extension SessionEnginePrompt on SessionEngine {
             summaryMessageId: activeSession.summaryMessageId,
           );
           final est = estimateSerializedMessagesTokens(probe);
-          final budget = usableInputTokensForModel(modelConfig.model);
+          final budget = usableInputTokensForModel(
+            modelConfig.model,
+            limit: modelConfig.currentModelLimit,
+          );
           if (est < budget) {
-            _debugLog('compaction', 'skipping step-1 — stale usage but '
-                'actual estimate $est < budget $budget');
+            _debugLog(
+                'compaction',
+                'skipping step-1 — stale usage but '
+                    'actual estimate $est < budget $budget');
             return;
           }
         }
         final now = DateTime.now().millisecondsSinceEpoch;
-        if (lastSummarizeAt > 0 && now - lastSummarizeAt < summarizeCooldownMs) {
-          _debugLog('compaction', 'skipping — cooldown active '
-              '(${now - lastSummarizeAt}ms since last)');
+        if (lastSummarizeAt > 0 &&
+            now - lastSummarizeAt < summarizeCooldownMs) {
+          _debugLog(
+              'compaction',
+              'skipping — cooldown active '
+                  '(${now - lastSummarizeAt}ms since last)');
           return;
         }
         lastSummarizeAt = now;
@@ -247,18 +253,18 @@ extension SessionEnginePrompt on SessionEngine {
       var emptyResponseRetries = 0;
       const maxEmptyResponseRetries = 2;
 
-      dynamic _canonicalToolArgValue(dynamic value) {
+      dynamic canonicalToolArgValue(dynamic value) {
         if (value is Map) {
           final normalized = <String, dynamic>{};
           final entries = value.entries.toList()
             ..sort((a, b) => a.key.compareTo(b.key));
           for (final entry in entries) {
-            normalized[entry.key] = _canonicalToolArgValue(entry.value);
+            normalized[entry.key] = canonicalToolArgValue(entry.value);
           }
           return normalized;
         }
         if (value is List) {
-          return value.map(_canonicalToolArgValue).toList();
+          return value.map(canonicalToolArgValue).toList();
         }
         if (value is String) {
           if (value.length <= 80) return value;
@@ -267,24 +273,25 @@ extension SessionEnginePrompt on SessionEngine {
         return value;
       }
 
-      String _toolSignature(ToolCall call) {
+      String toolSignature(ToolCall call) {
         final normalizedArgs = Map<String, dynamic>.from(call.arguments);
         final path = normalizedArgs['filePath'] ?? normalizedArgs['path'];
         if (path != null) {
           normalizedArgs['filePath'] = path;
           normalizedArgs.remove('path');
         }
-        final canonicalArgs = _canonicalToolArgValue(normalizedArgs);
+        final canonicalArgs = canonicalToolArgValue(normalizedArgs);
         return '${call.name}:${jsonEncode(canonicalArgs)}';
       }
 
-      bool _isRepetitiveToolPattern(List<ToolCall> calls) {
+      bool isRepetitiveToolPattern(List<ToolCall> calls) {
         if (calls.isEmpty) return false;
-        final sig = calls.map(_toolSignature).join('|');
+        final sig = calls.map(toolSignature).join('|');
         recentToolSignatures.add(sig);
         if (recentToolSignatures.length < repetitionThreshold) return false;
         final window = recentToolSignatures.length > repetitionWindow
-            ? recentToolSignatures.sublist(recentToolSignatures.length - repetitionWindow)
+            ? recentToolSignatures
+                .sublist(recentToolSignatures.length - repetitionWindow)
             : recentToolSignatures;
         final counts = <String, int>{};
         for (final s in window) {
@@ -303,7 +310,9 @@ extension SessionEnginePrompt on SessionEngine {
       }
 
       var ranOutOfSteps = true;
-      for (var step = 1; (maxSteps == null || step <= maxSteps) && step <= hardMaxSteps; step++) {
+      for (var step = 1;
+          (maxSteps == null || step <= maxSteps) && step <= hardMaxSteps;
+          step++) {
         cancelToken.throwIfCancelled();
         final elapsed = DateTime.now().millisecondsSinceEpoch - promptStartedAt;
         if (elapsed > maxElapsedMs) {
@@ -329,16 +338,26 @@ extension SessionEnginePrompt on SessionEngine {
           summaryMessageId: activeSession.summaryMessageId,
         );
         const maxPreSendCompact = 3;
-        final contextWindow = inferContextWindow(modelConfig.model);
-        final maxOutputTokens = inferMaxOutputTokens(modelConfig.model);
-        final inputBudget = usableInputTokensForModel(modelConfig.model);
+        final contextWindow = contextWindowForModel(
+          modelConfig.model,
+          limit: modelConfig.currentModelLimit,
+        );
+        final maxOutputTokens = maxOutputTokensForModel(
+          modelConfig.model,
+          limit: modelConfig.currentModelLimit,
+        );
+        final inputBudget = usableInputTokensForModel(
+          modelConfig.model,
+          limit: modelConfig.currentModelLimit,
+        );
         _debugLog('model-limit', 'computed model limits', {
           'provider': modelConfig.provider,
           'model': modelConfig.model,
           'contextWindow': contextWindow,
           'maxOutputTokens': maxOutputTokens,
           'inputBudget': inputBudget,
-          'conversationEstimate': estimateSerializedMessagesTokens(conversation),
+          'conversationEstimate':
+              estimateSerializedMessagesTokens(conversation),
         });
         for (var preSendRound = 0;
             preSendRound < maxPreSendCompact;
@@ -415,8 +434,7 @@ extension SessionEnginePrompt on SessionEngine {
               ...conversation,
               {
                 'role': 'user',
-                'content':
-                    '<system-warning>\nYou have made repeated tool errors:\n$errSummary\n\n'
+                'content': '<system-warning>\nYou have made repeated tool errors:\n$errSummary\n\n'
                     'STOP and reconsider your approach. Do NOT retry the same failing call.\n'
                     'Common fixes:\n'
                     '- If `write` failed because file exists → use `edit` instead\n'
@@ -636,16 +654,22 @@ extension SessionEnginePrompt on SessionEngine {
         if (response.toolCalls.isEmpty) {
           final isEmptyResponse = response.text.trim().isEmpty;
           final isTimeout = response.finishReason == 'timeout';
-          if (isEmptyResponse && isTimeout && emptyResponseRetries < maxEmptyResponseRetries) {
+          if (isEmptyResponse &&
+              isTimeout &&
+              emptyResponseRetries < maxEmptyResponseRetries) {
             emptyResponseRetries++;
-            _debugLog('prompt-retry', 'empty/timeout response — retry $emptyResponseRetries/$maxEmptyResponseRetries', {
-              'step': step,
-              'finishReason': response.finishReason,
-              'textLength': response.text.length,
-            });
+            _debugLog(
+                'prompt-retry',
+                'empty/timeout response — retry $emptyResponseRetries/$maxEmptyResponseRetries',
+                {
+                  'step': step,
+                  'finishReason': response.finishReason,
+                  'textLength': response.text.length,
+                });
             continue;
           }
-          _debugLog('prompt-stop', 'breaking because model returned no tool calls', {
+          _debugLog(
+              'prompt-stop', 'breaking because model returned no tool calls', {
             'step': step,
             'finishReason': response.finishReason,
             'textLength': response.text.length,
@@ -698,7 +722,8 @@ extension SessionEnginePrompt on SessionEngine {
               ),
             );
             shouldBreak = true;
-            _debugLog('prompt-stop', 'breaking because structured output returned', {
+            _debugLog(
+                'prompt-stop', 'breaking because structured output returned', {
               'step': step,
               'keys': structured.keys.toList(),
             });
@@ -741,8 +766,10 @@ extension SessionEnginePrompt on SessionEngine {
                 : result.output,
           });
           if (metadata['failed'] == true) {
-            final errorKey = '${call.name}:${_classifyToolError(metadata['error'] as String? ?? '')}';
-            consecutiveToolErrors[errorKey] = (consecutiveToolErrors[errorKey] ?? 0) + 1;
+            final errorKey =
+                '${call.name}:${_classifyToolError(metadata['error'] as String? ?? '')}';
+            consecutiveToolErrors[errorKey] =
+                (consecutiveToolErrors[errorKey] ?? 0) + 1;
             totalConsecutiveErrors++;
           } else {
             consecutiveToolErrors.clear();
@@ -761,7 +788,7 @@ extension SessionEnginePrompt on SessionEngine {
           ranOutOfSteps = false;
           break;
         }
-        if (_isRepetitiveToolPattern(response.toolCalls)) {
+        if (isRepetitiveToolPattern(response.toolCalls)) {
           _debugLog('prompt',
               'repetitive tool call pattern detected at step $step — breaking');
           ranOutOfSteps = false;
@@ -873,8 +900,9 @@ extension SessionEnginePrompt on SessionEngine {
           },
         ),
       );
-      final sinceLastSummarize = DateTime.now().millisecondsSinceEpoch - lastSummarizeAt;
-      if (_shouldAutoCompactAfterTurn(lastUsage, modelConfig.model) &&
+      final sinceLastSummarize =
+          DateTime.now().millisecondsSinceEpoch - lastSummarizeAt;
+      if (_shouldAutoCompactAfterTurn(lastUsage, modelConfig) &&
           (lastSummarizeAt == 0 || sinceLastSummarize >= summarizeCooldownMs)) {
         activeSession = await summarize(
           workspace: workspace,

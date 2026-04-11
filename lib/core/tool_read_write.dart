@@ -700,7 +700,8 @@ Future<ToolExecutionResult> _editTool(
       args['rename'] != null) {
     return _executeHashlineEditTool(args, ctx);
   }
-  final filePath = _toolFilePathArg(args);
+  final filePath =
+      _normalizeWorkspaceRelativePath(jsonStringCoerce(args['filePath'], ''));
   final oldString = args['oldString'] as String? ?? '';
   final newString = args['newString'] as String? ?? '';
   final replaceAll = (args['replaceAll'] as bool?) ?? false;
@@ -713,7 +714,7 @@ Future<ToolExecutionResult> _editTool(
     'replaceAll': replaceAll,
   })}');
   if (filePath.isEmpty) {
-    throw Exception('Missing required `path`.');
+    throw Exception('Missing required `filePath`.');
   }
   if (oldString.isEmpty) {
     throw Exception(

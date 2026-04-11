@@ -197,16 +197,29 @@ class SessionEngine {
     return promptAssembler.prewarmWorkspaceContext(workspace);
   }
 
+  Future<List<ProviderInfo>> _loadProviderCatalogFromCache() async {
+    return providerCatalogFromCacheSetting(
+      await database.getSetting(kModelsDevCatalogCacheKey),
+    );
+  }
+
+  Future<ModelConfig> _loadResolvedModelConfig() async {
+    final config = ModelConfig.fromJson(
+      await database.getSetting('model_config') ??
+          ModelConfig.defaults().toJson(),
+    );
+    return config.withResolvedCurrentModelLimit(
+      await _loadProviderCatalogFromCache(),
+    );
+  }
+
   Future<JsonMap> previewModelRequest({
     required WorkspaceInfo workspace,
     required SessionInfo session,
   }) async {
     final messages = await database.listMessages(session.id);
     final parts = await database.listPartsForSession(session.id);
-    final modelConfig = ModelConfig.fromJson(
-      await database.getSetting('model_config') ??
-          ModelConfig.defaults().toJson(),
-    );
+    final modelConfig = await _loadResolvedModelConfig();
     MessageInfo? latestUser;
     for (var i = messages.length - 1; i >= 0; i--) {
       if (messages[i].role == SessionRole.user) {
@@ -252,10 +265,7 @@ class SessionEngine {
     if (_busy[session.id] == true) {
       throw Exception('Session is already running');
     }
-    final modelConfig = ModelConfig.fromJson(
-      await database.getSetting('model_config') ??
-          ModelConfig.defaults().toJson(),
-    );
+    final modelConfig = await _loadResolvedModelConfig();
     final cancelToken = CancelToken();
     _cancelTokens[session.id] = cancelToken;
     _busy[session.id] = true;

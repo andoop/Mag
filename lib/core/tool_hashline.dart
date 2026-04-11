@@ -633,9 +633,10 @@ Future<ToolExecutionResult> _executeHashlineEditTool(
   JsonMap args,
   ToolRuntimeContext ctx,
 ) async {
-  final filePath = _toolFilePathArg(args);
+  final filePath =
+      _normalizeWorkspaceRelativePath(jsonStringCoerce(args['filePath'], ''));
   if (filePath.isEmpty) {
-    throw Exception('Missing required `path`.');
+    throw Exception('Missing required `filePath`.');
   }
   final deleteMode = args['delete'] == true;
   final rename = (args['rename'] as String?)?.trim();

@@ -49,8 +49,10 @@ class ModelGateway {
       id.replaceAll(RegExp(r'[^a-zA-Z0-9_-]'), '_');
 
   /// Normalize tool call IDs for Mistral: exactly 9 alphanumeric chars.
-  String _normalizeToolCallIdForMistral(String id) =>
-      id.replaceAll(RegExp(r'[^a-zA-Z0-9]'), '').padRight(9, '0').substring(0, 9);
+  String _normalizeToolCallIdForMistral(String id) => id
+      .replaceAll(RegExp(r'[^a-zA-Z0-9]'), '')
+      .padRight(9, '0')
+      .substring(0, 9);
 
   /// Normalize messages for OpenAI-compatible providers.
   /// Handles tool call ID sanitization and sequence fixes.
@@ -59,8 +61,9 @@ class ModelGateway {
     ModelConfig config,
   ) {
     final lower = config.model.toLowerCase();
-    final isMistral =
-        config.provider == 'mistral' || lower.contains('mistral') || lower.contains('devstral');
+    final isMistral = config.provider == 'mistral' ||
+        lower.contains('mistral') ||
+        lower.contains('devstral');
     if (!isMistral) return messages;
 
     final result = <Map<String, dynamic>>[];
@@ -98,12 +101,20 @@ class ModelGateway {
     return result;
   }
 
+  int _resolvedMaxOutputTokens(ModelConfig config) => maxOutputTokensForModel(
+        config.model,
+        limit: config.currentModelLimit,
+      );
+
+  int? _requestedMaxOutputTokens(ModelConfig config) =>
+      _usesGitHubModelsApi(config) ? null : _resolvedMaxOutputTokens(config);
+
   Map<String, dynamic> _buildOpenAiPayload({
     required ModelConfig config,
     required List<Map<String, dynamic>> messages,
     required List<ToolDefinitionModel> tools,
     required MessageFormat? format,
-    required int maxOutputTokens,
+    required int? maxOutputTokens,
   }) {
     final normalized = _normalizeOpenAiMessages(messages, config);
     final payload = <String, dynamic>{
@@ -111,8 +122,8 @@ class ModelGateway {
       'messages': normalized,
       'stream': true,
       'stream_options': {'include_usage': true},
-      'max_tokens': maxOutputTokens,
     };
+    if (maxOutputTokens != null) payload['max_tokens'] = maxOutputTokens;
     final temperature = _inferTemperature(config.model);
     if (temperature != null) payload['temperature'] = temperature;
     final topP = _inferTopP(config.model);
@@ -219,7 +230,9 @@ class ModelGateway {
         final filtered = content.where((block) {
           if (block is Map) {
             final type = block['type'] as String? ?? '';
-            if (type == 'text') return (block['text'] as String? ?? '').isNotEmpty;
+            if (type == 'text') {
+              return (block['text'] as String? ?? '').isNotEmpty;
+            }
             return true;
           }
           return true;
@@ -267,7 +280,7 @@ class ModelGateway {
     required List<ToolDefinitionModel> tools,
     required MessageFormat? format,
   }) {
-    final maxOut = inferMaxOutputTokens(config.model);
+    final maxOut = _resolvedMaxOutputTokens(config);
     if (_usesAnthropicApi(config)) {
       return _buildAnthropicPayload(
         config: config,
@@ -282,7 +295,7 @@ class ModelGateway {
       messages: messages,
       tools: tools,
       format: format,
-      maxOutputTokens: maxOut,
+      maxOutputTokens: _requestedMaxOutputTokens(config),
     );
   }
 
@@ -309,7 +322,8 @@ class ModelGateway {
         client.close(force: true);
       }));
     }
-    final request = await client.postUrl(Uri.parse('${config.baseUrl}/messages'));
+    final request =
+        await client.postUrl(Uri.parse('${config.baseUrl}/messages'));
     request.headers.set('x-api-key', apiKey);
     request.headers.set('anthropic-version', '2023-06-01');
     request.headers.contentType = ContentType(
@@ -352,7 +366,7 @@ class ModelGateway {
     required List<Map<String, dynamic>> messages,
     required List<ToolDefinitionModel> tools,
     required MessageFormat? format,
-    required int maxOutputTokens,
+    required int? maxOutputTokens,
     CancelToken? cancelToken,
     FutureOr<void> Function(String delta)? onTextDelta,
     FutureOr<void> Function(String delta)? onReasoningDelta,
@@ -544,9 +558,10 @@ class ModelGateway {
     client.close(force: true);
     if (closedByTimeout && !receivedModelFinishReason) {
       finishReason = 'timeout';
-      _debugLog('gateway',
+      _debugLog(
+          'gateway',
           'stream closed by idle timeout without model finish_reason '
-          '(events=$eventCount text=${text.length} reasoning=${reasoning.length})');
+              '(events=$eventCount text=${text.length} reasoning=${reasoning.length})');
     }
     _debugLog('gateway',
         'complete end events=$eventCount tools=${toolBuffers.length}');
@@ -593,7 +608,7 @@ class ModelGateway {
     FutureOr<void> Function(String delta)? onTextDelta,
     FutureOr<void> Function(String delta)? onReasoningDelta,
   }) async {
-    final maxOut = inferMaxOutputTokens(config.model);
+    final maxOut = _resolvedMaxOutputTokens(config);
     if (_usesAnthropicApi(config)) {
       return _completeAnthropic(
         config: config,
@@ -609,7 +624,7 @@ class ModelGateway {
       messages: messages,
       tools: tools,
       format: format,
-      maxOutputTokens: maxOut,
+      maxOutputTokens: _requestedMaxOutputTokens(config),
       cancelToken: cancelToken,
       onTextDelta: onTextDelta,
       onReasoningDelta: onReasoningDelta,

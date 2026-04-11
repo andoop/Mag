@@ -198,6 +198,7 @@ class ToolRegistry {
         id: 'edit',
         description:
             'Edit files using hash-anchored LINE#ID references for precise, safe modifications. '
+            'Every call MUST include `filePath` as the target path; do not use `path`. '
             'Workflow: call `read`, copy exact LINE#ID anchors, submit one `edit` call per file with the smallest possible operations, and if the same file needs another call, `read` it again first. '
             'Use anchors like `42#VK` only; do not include trailing `|content`. '
             'All operations in one call must reference the original file state. '
@@ -207,8 +208,11 @@ class ToolRegistry {
         parameters: {
           'type': 'object',
           'properties': {
-            'path': {'type': 'string'},
-            'filePath': {'type': 'string'},
+            'filePath': {
+              'type': 'string',
+              'description':
+                  'REQUIRED. Workspace-relative path to the file being edited. Use `filePath` on every call; do not send `path`.',
+            },
             'delete': {'type': 'boolean'},
             'rename': {'type': 'string'},
             'edits': {
@@ -241,6 +245,7 @@ class ToolRegistry {
             'newString': {'type': 'string'},
             'replaceAll': {'type': 'boolean'},
           },
+          'required': ['filePath'],
           'additionalProperties': false,
         },
         execute: _editTool,

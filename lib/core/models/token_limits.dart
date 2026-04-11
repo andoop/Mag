@@ -1,7 +1,7 @@
 part of '../models.dart';
 
-/// OpenCode `ProviderTransform.OUTPUT_TOKEN_MAX`（未设置实验 flag 时默认 32k）。
-const int kMagOutputTokenHardCap = 32000;
+/// OpenCode `ProviderTransform.OUTPUT_TOKEN_MAX`（本客户端当前放宽到 64k）。
+const int kMagOutputTokenHardCap = 64000;
 
 /// OpenCode `session/overflow.ts` `COMPACTION_BUFFER`.
 const int kOpenCodeCompactionBuffer = 20000;
@@ -9,6 +9,20 @@ const int kOpenCodeCompactionBuffer = 20000;
 /// OpenCode `util/token.ts`：`Math.round(length / 4)`。
 int estimateOpenCodeCharsAsTokens(int charCount) =>
     math.max(0, (charCount / 4).round());
+
+/// OpenCode `ProviderTransform.maxOutputTokens`：优先使用真实 `limit.output`，否则回退到本地推断。
+int maxOutputTokensForModel(String model, {ProviderModelLimit? limit}) {
+  final output = limit?.output ?? 0;
+  if (output > 0) return math.min(output, kMagOutputTokenHardCap);
+  return inferMaxOutputTokens(model);
+}
+
+/// OpenCode `session/overflow.ts`：优先使用真实 `limit.context`，否则回退到本地推断。
+int contextWindowForModel(String model, {ProviderModelLimit? limit}) {
+  final context = limit?.context ?? 0;
+  if (context > 0) return context;
+  return inferContextWindow(model);
+}
 
 /// 对即将发给模型的 `messages` JSON 做 token 粗估。
 ///
@@ -30,12 +44,18 @@ int estimateSerializedMessagesTokens(List<Map<String, dynamic>> messages) {
 }
 
 /// 与 OpenCode `overflow.ts` 中「可放入上下文」的 input 预算一致（无 `limit.input` 时为 `context - maxOut`）。
-int usableInputTokensForModel(String model, {int? limitInput}) {
-  final context = inferContextWindow(model);
+int usableInputTokensForModel(
+  String model, {
+  ProviderModelLimit? limit,
+  int? limitInput,
+}) {
+  final context = contextWindowForModel(model, limit: limit);
   if (context == 0) return 1 << 30;
-  final maxOut = inferMaxOutputTokens(model);
+  final maxOut = maxOutputTokensForModel(model, limit: limit);
   final reserved = math.min(kOpenCodeCompactionBuffer, maxOut);
-  return limitInput != null ? limitInput - reserved : context - maxOut;
+  final input = limitInput ?? limit?.input;
+  final usable = input != null ? input - reserved : context - maxOut;
+  return math.max(0, usable);
 }
 
 /// 与 OpenCode `session/overflow.ts` `isOverflow` 一致（换模型时用**当前**模型的 limit）。
@@ -45,14 +65,19 @@ int usableInputTokensForModel(String model, {int? limitInput}) {
 bool isContextOverflowForCompaction({
   required ModelUsage tokens,
   required String model,
+  ProviderModelLimit? limit,
   int? limitInput,
   bool compactionAutoDisabled = false,
 }) {
   if (compactionAutoDisabled) return false;
-  final context = inferContextWindow(model);
+  final context = contextWindowForModel(model, limit: limit);
   if (context == 0) return false;
   final count = tokens.opencodeCompactionCount;
-  final usable = usableInputTokensForModel(model, limitInput: limitInput);
+  final usable = usableInputTokensForModel(
+    model,
+    limit: limit,
+    limitInput: limitInput,
+  );
   return count >= usable;
 }
 
@@ -61,7 +86,9 @@ ModelUsage? modelUsageFromLatestCompletedAssistant({
   required List<MessageInfo> messages,
   required List<MessagePart> parts,
 }) {
-  final assistants = messages.where((m) => m.role == SessionRole.assistant).toList()
+  final assistants = messages
+      .where((m) => m.role == SessionRole.assistant)
+      .toList()
     ..sort((a, b) => b.createdAt.compareTo(a.createdAt));
   for (final msg in assistants) {
     MessagePart? finish;

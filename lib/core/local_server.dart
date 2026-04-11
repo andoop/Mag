@@ -29,7 +29,6 @@ class LocalServer {
   final WorkspaceBridge workspaceBridge;
 
   HttpServer? _server;
-  static const _modelsDevCacheKey = 'models_dev_catalog_v1';
   static const _modelsDevUrl = 'https://models.dev/api.json';
   static const _modelsDevRefreshMs = 60 * 60 * 1000;
   List<ProviderInfo>? _modelsDevCatalogCache;
@@ -118,9 +117,9 @@ class LocalServer {
           final modelIds = connection.id == 'mag'
               ? filterMagZenFreeModels(connection.models)
               : connection.models;
-          final provider = response.all
-              .cast<ProviderInfo?>()
-              .firstWhere((item) => item?.id == connection.id, orElse: () => null);
+          final provider = response.all.cast<ProviderInfo?>().firstWhere(
+              (item) => item?.id == connection.id,
+              orElse: () => null);
           for (final modelId in modelIds) {
             final match = resolveCatalogModelMatch(
               catalog: catalog,
@@ -130,39 +129,38 @@ class LocalServer {
             final resolved = provider?.models[modelId];
             // ignore: avoid_print
             print('[provider-limit][merge] ${jsonEncode({
-              'provider': connection.id,
-              'model': modelId,
-              'source': match.source,
-              if (match.matchedProviderId != null)
-                'catalogProvider': match.matchedProviderId,
-              if (match.matchedModelId != null) 'catalogModel': match.matchedModelId,
-              'context': resolved?.limit.context,
-              'input': resolved?.limit.input,
-              'output': resolved?.limit.output,
-            })}');
+                  'provider': connection.id,
+                  'model': modelId,
+                  'source': match.source,
+                  if (match.matchedProviderId != null)
+                    'catalogProvider': match.matchedProviderId,
+                  if (match.matchedModelId != null)
+                    'catalogModel': match.matchedModelId,
+                  'context': resolved?.limit.context,
+                  'input': resolved?.limit.input,
+                  'output': resolved?.limit.output,
+                })}');
           }
         }
-        final selectedProvider = response.all
-            .cast<ProviderInfo?>()
-            .firstWhere(
+        final selectedProvider = response.all.cast<ProviderInfo?>().firstWhere(
               (item) => item?.id == config.provider,
               orElse: () => null,
             );
         final selectedModel = selectedProvider?.models[config.model];
         // ignore: avoid_print
         print('[provider-limit][selected] ${jsonEncode({
-          'provider': config.provider,
-          'model': config.model,
-          'providerFound': selectedProvider != null,
-          'source': selectedMatch.source,
-          if (selectedMatch.matchedProviderId != null)
-            'catalogProvider': selectedMatch.matchedProviderId,
-          if (selectedMatch.matchedModelId != null)
-            'catalogModel': selectedMatch.matchedModelId,
-          'context': selectedModel?.limit.context,
-          'input': selectedModel?.limit.input,
-          'output': selectedModel?.limit.output,
-        })}');
+              'provider': config.provider,
+              'model': config.model,
+              'providerFound': selectedProvider != null,
+              'source': selectedMatch.source,
+              if (selectedMatch.matchedProviderId != null)
+                'catalogProvider': selectedMatch.matchedProviderId,
+              if (selectedMatch.matchedModelId != null)
+                'catalogModel': selectedMatch.matchedModelId,
+              'context': selectedModel?.limit.context,
+              'input': selectedModel?.limit.input,
+              'output': selectedModel?.limit.output,
+            })}');
         await _json(request.response, response.toJson());
         return;
       }
@@ -233,14 +231,18 @@ class LocalServer {
         final config = ModelConfig.fromJson(
           await database.getSetting('model_config') ??
               ModelConfig.defaults().toJson(),
-        );
+        ).withResolvedCurrentModelLimit(await _loadModelsDevCatalog());
+        await database.putSetting('model_config', config.toJson());
         await _json(request.response, config.toJson());
         return;
       }
       if (path == '/settings/model' && request.method == 'POST') {
         final body = await _readJson(request);
-        await database.putSetting('model_config', body);
-        await _json(request.response, body);
+        final config = ModelConfig.fromJson(body).withResolvedCurrentModelLimit(
+          await _loadModelsDevCatalog(),
+        );
+        await database.putSetting('model_config', config.toJson());
+        await _json(request.response, config.toJson());
         return;
       }
       final segments = request.uri.pathSegments;
@@ -606,7 +608,7 @@ class LocalServer {
   Future<List<ProviderInfo>> _loadModelsDevCatalogImpl(
       {bool refresh = false}) async {
     if (!refresh) {
-      final cached = await database.getSetting(_modelsDevCacheKey);
+      final cached = await database.getSetting(kModelsDevCatalogCacheKey);
       if (cached != null) {
         final providers = (cached['all'] as List? ?? const [])
             .map((item) =>
@@ -652,7 +654,7 @@ class LocalServer {
       );
       _modelsDevCatalogCache = providers;
       _modelsDevCatalogFetchedAt = DateTime.now().millisecondsSinceEpoch;
-      await database.putSetting(_modelsDevCacheKey, {
+      await database.putSetting(kModelsDevCatalogCacheKey, {
         'fetchedAt': _modelsDevCatalogFetchedAt,
         'all': providers.map((item) => item.toJson()).toList(),
       });
@@ -661,7 +663,7 @@ class LocalServer {
       if (_modelsDevCatalogCache != null) {
         return _modelsDevCatalogCache!;
       }
-      final cached = await database.getSetting(_modelsDevCacheKey);
+      final cached = await database.getSetting(kModelsDevCatalogCacheKey);
       if (cached != null) {
         final providers = (cached['all'] as List? ?? const [])
             .map((item) =>
