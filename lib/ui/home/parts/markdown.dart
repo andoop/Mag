@@ -26,18 +26,84 @@ class _StreamingMarkdownText extends StatefulWidget {
 }
 
 class _StreamingMarkdownTextState extends State<_StreamingMarkdownText> {
+  static const int _throttleMs = 100;
+
   String _stableText = '';
   Widget? _stableWidget;
 
   String _completeText = '';
   Widget? _completeWidget;
   int? _cachedThemeKey;
+  String _displayedText = '';
+  Timer? _pending;
+  int _lastFlush = 0;
 
   void _invalidateCachedMarkdown() {
     _stableText = '';
     _stableWidget = null;
     _completeText = '';
     _completeWidget = null;
+  }
+
+  @override
+  void initState() {
+    super.initState();
+    _displayedText = widget.text;
+  }
+
+  @override
+  void dispose() {
+    _pending?.cancel();
+    super.dispose();
+  }
+
+  void _flushThrottled() {
+    final next = widget.text;
+    final now = DateTime.now().millisecondsSinceEpoch;
+    final remaining = _throttleMs - (now - _lastFlush);
+    if (remaining <= 0) {
+      _pending?.cancel();
+      _pending = null;
+      _lastFlush = now;
+      if (_displayedText != next) {
+        setState(() => _displayedText = next);
+      }
+      return;
+    }
+    _pending?.cancel();
+    _pending = Timer(Duration(milliseconds: remaining), () {
+      if (!mounted) return;
+      _pending = null;
+      _lastFlush = DateTime.now().millisecondsSinceEpoch;
+      final text = widget.text;
+      if (_displayedText != text) {
+        setState(() => _displayedText = text);
+      }
+    });
+  }
+
+  @override
+  void didUpdateWidget(covariant _StreamingMarkdownText oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.streaming && !widget.streaming) {
+      _pending?.cancel();
+      _pending = null;
+      _lastFlush = DateTime.now().millisecondsSinceEpoch;
+      if (_displayedText != widget.text) {
+        setState(() => _displayedText = widget.text);
+      }
+      return;
+    }
+    if (oldWidget.text != widget.text) {
+      if (widget.streaming) {
+        _flushThrottled();
+      } else {
+        _pending?.cancel();
+        _pending = null;
+        _lastFlush = DateTime.now().millisecondsSinceEpoch;
+        _displayedText = widget.text;
+      }
+    }
   }
 
   /// Find the last paragraph boundary (\n\n) that is NOT inside a code fence.
@@ -104,7 +170,7 @@ class _StreamingMarkdownTextState extends State<_StreamingMarkdownText> {
   }
 
   Widget _buildStreaming(BuildContext context) {
-    final text = widget.text;
+    final text = _displayedText;
     final splitAt = _safeSplitPoint(text);
     final stableText = splitAt > 0 ? text.substring(0, splitAt) : '';
     final activeText = text.substring(splitAt);

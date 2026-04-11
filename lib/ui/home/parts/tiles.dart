@@ -327,7 +327,24 @@ class _ToolPartTile extends StatefulWidget {
 }
 
 class _ToolPartTileState extends State<_ToolPartTile> {
-  bool? _expanded;
+  late bool _expanded;
+  bool _userToggled = false;
+
+  @override
+  void initState() {
+    super.initState();
+    _expanded = _defaultExpanded();
+  }
+
+  @override
+  void didUpdateWidget(covariant _ToolPartTile oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (_userToggled) return;
+    final becameError = oldWidget.status != 'error' && widget.status == 'error';
+    if (becameError) {
+      _expanded = true;
+    }
+  }
 
   bool _defaultExpanded() {
     final isRunning = widget.status == 'running' || widget.status == 'pending';
@@ -1023,7 +1040,7 @@ class _ToolPartTileState extends State<_ToolPartTile> {
     final isRunning = widget.status == 'running' || widget.status == 'pending';
     final isError = widget.status == 'error';
     final label = _localizedToolLabel(context);
-    final expanded = _expanded ?? _defaultExpanded();
+    final expanded = _expanded;
     final localizedSummary = _localizedToolSummary(context);
     final collapsedOutput = localizedSummary ?? widget.output;
     final expandedOutput = widget.hasDisplayOutput
@@ -1052,7 +1069,10 @@ class _ToolPartTileState extends State<_ToolPartTile> {
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           InkWell(
-            onTap: () => setState(() => _expanded = !expanded),
+            onTap: () => setState(() {
+              _userToggled = true;
+              _expanded = !expanded;
+            }),
             child: Row(
               children: [
                 if (isRunning)

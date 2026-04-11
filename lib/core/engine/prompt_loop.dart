@@ -139,6 +139,139 @@ extension SessionEnginePrompt on SessionEngine {
             .join('\n');
       }
 
+      String? normalizeGuardPath(dynamic raw) {
+        if (raw is! String) return null;
+        var value = raw.trim().replaceAll('\\', '/');
+        if (value.isEmpty || value == '.') return null;
+        while (value.startsWith('./')) {
+          value = value.substring(2);
+        }
+        if (value.startsWith('/')) {
+          value = value.substring(1);
+        }
+        if (value.endsWith('/')) {
+          value = value.substring(0, value.length - 1);
+        }
+        return value.isEmpty ? null : value;
+      }
+
+      Set<String> readTargetsForCall(ToolCall call) {
+        if (call.name != 'read') return const <String>{};
+        final path = normalizeGuardPath(
+          call.arguments['filePath'] ?? call.arguments['path'],
+        );
+        return path == null ? const <String>{} : {path};
+      }
+
+      Set<String> mutationTargetsForCall(ToolCall call) {
+        if (call.name == 'edit') {
+          final path = normalizeGuardPath(call.arguments['filePath']);
+          return path == null ? const <String>{} : {path};
+        }
+        if (call.name != 'apply_patch') return const <String>{};
+        final patchText = call.arguments['patchText'] as String? ?? '';
+        final matches = RegExp(
+          r'^\*\*\* (?:Update|Delete) File:\s+(.+?)\s*$',
+          multiLine: true,
+        ).allMatches(patchText);
+        final paths = <String>{};
+        for (final match in matches) {
+          final path = normalizeGuardPath(match.group(1));
+          if (path != null) {
+            paths.add(path);
+          }
+        }
+        return paths;
+      }
+
+      Map<String, JsonMap> blockedToolCallsForResponse(List<ToolCall> calls) {
+        final readPaths = <String>{};
+        for (final call in calls) {
+          readPaths.addAll(readTargetsForCall(call));
+        }
+
+        final mutationCounts = <String, int>{};
+        final blocked = <String, JsonMap>{};
+        for (final call in calls) {
+          if (call.name != 'edit' && call.name != 'apply_patch') continue;
+          final targets = mutationTargetsForCall(call).toList()..sort();
+          if (targets.isEmpty) continue;
+
+          final sameTurnReadPaths =
+              targets.where((path) => readPaths.contains(path)).toList();
+          if (sameTurnReadPaths.isNotEmpty) {
+            final joined = sameTurnReadPaths.join(', ');
+            blocked[call.id] = {
+              'guard': 'same_turn_read_then_mutate',
+              'error':
+                  'Invalid same-turn tool sequence: this assistant response emitted `read` and `${call.name}` for the same file(s): $joined.',
+              'recovery':
+                  'Do not emit `read` and `${call.name}` for the same file in one assistant response.\n'
+                      'Step 1: End the current response after the `read` call.\n'
+                      'Step 2: Wait for the `read` result.\n'
+                      'Step 3: In the next assistant response, submit one batched `${call.name}` call built from the fresh output.',
+            };
+          } else {
+            final repeatedPaths = targets
+                .where((path) => (mutationCounts[path] ?? 0) > 0)
+                .toList();
+            if (repeatedPaths.isNotEmpty) {
+              final joined = repeatedPaths.join(', ');
+              blocked[call.id] = {
+                'guard': 'same_turn_multiple_mutations',
+                'error':
+                    'Invalid same-turn tool sequence: this assistant response emitted multiple mutation calls for the same file(s): $joined.',
+                'recovery': 'Only one `edit` or `apply_patch` call per file is allowed in a single assistant response.\n'
+                    'Step 1: Merge related changes for the same file into one batched mutation call.\n'
+                    'Step 2: If another pass is still needed, wait for the tool result, then `read` the file again in a later assistant response.',
+              };
+            }
+          }
+
+          for (final path in targets) {
+            mutationCounts[path] = (mutationCounts[path] ?? 0) + 1;
+          }
+        }
+        return blocked;
+      }
+
+      Future<ToolExecutionResult> rejectBlockedToolCall({
+        required ToolCall call,
+        required JsonMap block,
+      }) async {
+        final errText = block['error'] as String? ?? 'Tool call blocked.';
+        final recovery =
+            block['recovery'] as String? ?? 'Retry with a valid tool sequence.';
+        final toolOutput =
+            '<tool_error tool="${call.name}">\n$errText\n</tool_error>\n\n<recovery_instructions>\n$recovery\n</recovery_instructions>';
+        await _updateToolState(
+          workspace: workspace,
+          sessionId: session.id,
+          callId: call.id,
+          status: ToolStatus.error,
+          error: errText,
+          output: toolOutput,
+          displayOutput: '${call.name} blocked: $errText',
+          metadata: {
+            'failed': true,
+            'error': errText,
+            'guard': block['guard'],
+          },
+          toolPartCache: toolPartByCallId,
+          onPartSaved: upsertCachedPart,
+        );
+        return ToolExecutionResult(
+          title: call.name,
+          output: toolOutput,
+          displayOutput: '${call.name} blocked',
+          metadata: {
+            'failed': true,
+            'error': errText,
+            'guard': block['guard'],
+          },
+        );
+      }
+
       Future<void> saveUserPartsForMessage(
         MessageInfo message, {
         String? fallbackText,
@@ -504,6 +637,7 @@ extension SessionEnginePrompt on SessionEngine {
                       '- If `write` failed because file exists → use `edit` instead\n'
                       '- If `edit` failed because no read → call `read` first\n'
                       '- If `edit` failed because oldString not found → call `read` to get current contents, then use exact text from the output\n'
+                      '- If `edit` was a no-op → do not repeat it; if you still need another change on the same file, `read` again and batch the next edit\n'
                       '- If anchors are stale → copy updated LINE#ID anchors from the `>>>` error output; only call `read` if needed anchors are missing\n'
                       'Read the error messages above carefully and take a DIFFERENT action.\n'
                       '</system-warning>',
@@ -773,6 +907,8 @@ extension SessionEnginePrompt on SessionEngine {
             break;
           }
           emptyResponseRetries = 0;
+          final blockedToolCalls =
+              blockedToolCallsForResponse(response.toolCalls);
           var shouldBreak = false;
           for (final call in response.toolCalls) {
             cancelToken.throwIfCancelled();
@@ -842,16 +978,19 @@ extension SessionEnginePrompt on SessionEngine {
               },
             );
             await saveTrackedPart(toolPart);
-            final result = await _executeTool(
-              workspace: workspace,
-              session: activeSession.copyWith(agent: currentAgent),
-              message: assistant,
-              agent: currentAgent,
-              call: call,
-              cancelToken: cancelToken,
-              toolPartCache: toolPartByCallId,
-              onPartSaved: upsertCachedPart,
-            );
+            final blockedCall = blockedToolCalls[call.id];
+            final result = blockedCall != null
+                ? await rejectBlockedToolCall(call: call, block: blockedCall)
+                : await _executeTool(
+                    workspace: workspace,
+                    session: activeSession.copyWith(agent: currentAgent),
+                    message: assistant,
+                    agent: currentAgent,
+                    call: call,
+                    cancelToken: cancelToken,
+                    toolPartCache: toolPartByCallId,
+                    onPartSaved: upsertCachedPart,
+                  );
             final metadata = result.metadata;
             _debugLog('prompt-tool', 'tool execution finished', {
               'step': step,

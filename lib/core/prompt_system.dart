@@ -201,6 +201,7 @@ class PromptAssembler {
               '',
               '## 规则 1：先读后改（绝对要求）',
               '对已有文件做任何 `edit` 或 `apply_patch` 之前，必须先用 `read` 读取该文件最新内容。',
+              '`read` 的结果必须先返回给你，之后你才能在后续响应里生成该文件的 `edit` / `apply_patch` 调用；不要在同一个助手响应里同时发出它们。',
               '如果工具报错说"必须先读取"，你必须调用 `read` 再重试，而不是重复同样的调用。',
               '',
               '## 规则 2：已有文件使用 `write` 前必须先 `read`（绝对要求）',
@@ -208,8 +209,11 @@ class PromptAssembler {
               '如果 `write` 报错说必须先读取，或提示文件在你上次读取后已变化，你必须重新 `read` 后再重建这次 `write` 调用。',
               '',
               '## 规则 3：每次编辑后重新读取',
+              '同一文件的一组相关修改应尽量合并到一次 `edit` / `apply_patch` 调用里。',
               '如果你刚刚修改过某个文件，又要再次修改同一文件，先重新 `read` 一次最新内容。',
+              '再次修改必须发生在后续响应里，不要在同一个助手响应中连续发多个同文件编辑调用。',
               '不要复用上一次读取或修改前的旧片段、旧锚点。',
+              '如果你要修改的那一行不在最近一次 `read` 返回的窗口里，先重新 `read` 覆盖该行的正确范围，再生成 `edit` / `apply_patch`。',
               '',
               '## 规则 4：工具报错时必须认真处理',
               '当工具返回错误时，你必须：仔细阅读错误信息，按照错误信息中的恢复步骤操作。',
@@ -217,6 +221,7 @@ class PromptAssembler {
               '',
               '## 编辑方式',
               '`edit` 使用 `edits` 数组和基于内容哈希的 `LINE#ID` 锚点；请直接复用 `read` 输出中的精确锚点，不要猜测，也不要带上后面的 `|内容`。',
+              '`replace` 只有 `pos` 时只会替换那 1 行；如果要替换 2 行或更多已有内容，必须同时提供 `pos` 和 `end` 覆盖完整旧范围，否则后面的旧行会保留并容易出现重复。',
               '`apply_patch` 也支持 hashline 头部，例如 `@@ replace 12#VK`、`@@ replace 12#VK 15#MB`。',
               '修改已有文件时优先使用 `edit` 或 `apply_patch`。',
             ]
@@ -226,6 +231,7 @@ class PromptAssembler {
               '',
               '## Rule 1: Read before edit (absolute requirement)',
               'Before any `edit` or `apply_patch` on an existing file, you MUST call `read` on that file and use the fresh contents.',
+              'The `read` result must arrive before you generate the later `edit` / `apply_patch` call for that file. Do not emit both for the same file in one assistant response.',
               'If the tool returns an error saying "must read first", you MUST call `read` then retry — do NOT repeat the same failing call.',
               '',
               '## Rule 2: Existing files require a fresh `read` before `write`',
@@ -233,8 +239,11 @@ class PromptAssembler {
               'If `write` says you must read first, or says the file changed since your last read, call `read` again and rebuild the `write` call.',
               '',
               '## Rule 3: Re-read after each edit',
-              'If you just changed a file and need to modify the same file again, call `read` first.',
+              'Put all related changes for the same file into one `edit` or `apply_patch` call whenever possible.',
+              'If you just changed a file and need to modify that same file again, call `read` first.',
+              'The next modification must happen in a later assistant response, not as another same-file mutation in the current response.',
               'Do not reuse stale content or anchors from before the previous edit.',
+              'If the line you want to change is not inside your most recent `read` window, call `read` again for a range that includes that line before generating `edit` / `apply_patch`.',
               '',
               '## Rule 4: Handle tool errors carefully',
               'When a tool returns an error, you MUST: read the error message, follow the recovery steps it describes.',
@@ -242,10 +251,21 @@ class PromptAssembler {
               '',
               '## Edit mechanics',
               '`edit` uses hash-anchored `LINE#ID` references via the `edits` array. Reuse exact anchors from `read` output; do not guess them.',
+              '`replace` with `pos` only replaces exactly one existing line. If you need to replace 2 or more existing lines, you MUST provide both `pos` and `end` for the full old range; otherwise trailing old lines survive and often get duplicated.',
               '`apply_patch` also supports hashline headers such as `@@ replace 12#VK`, `@@ replace 12#VK 15#MB`.',
+              'For one file, prefer one batched edit call over multiple sequential edit calls.',
               'Prefer `edit` or `apply_patch` for modifying existing files.',
               'For workspace file operations: `delete` removes files/dirs; `rename` changes name in same folder; `move` for cross-folder; `copy` duplicates.',
             ]);
+      final sequenceGuide = _toolSequenceGuide(
+        tools,
+        zh: zh,
+        canDelegate: context.allAgents.isNotEmpty && tools.contains('task'),
+      );
+      if (sequenceGuide.isNotEmpty) {
+        lines.add('');
+        lines.add(sequenceGuide);
+      }
     }
 
     if (context.allAgents.isNotEmpty && tools.contains('task')) {
@@ -343,16 +363,135 @@ class PromptAssembler {
                 '你是默认的 BUILD（构建）智能体，拥有完整的读写能力。',
                 '使用所有可用工具执行用户的请求。',
                 '编辑前先阅读。已有文件优先使用 edit 而非 write。',
+                '不要在同一个响应里对同一文件同时发出 `read` 和 `edit` / `apply_patch`。',
+                '同一文件的相关修改尽量合并到一次 edit / apply_patch；如果还要再改，必须先重新 read。',
               ].join('\n')
             : [
                 '',
                 'You are the default BUILD agent with full read/write capabilities.',
                 'Execute the user\'s request using all available tools.',
                 'Read before editing. Prefer edit over write for existing files.',
+                'Do not emit `read` and `edit` / `apply_patch` for the same file in the same response.',
+                'For the same file, merge related changes into one edit/apply_patch call whenever possible; if you need another pass, re-read first.',
               ].join('\n');
       default:
         return '';
     }
+  }
+
+  String _toolSequenceGuide(
+    List<String> tools, {
+    required bool zh,
+    required bool canDelegate,
+  }) {
+    final hasRead = tools.contains('read');
+    final hasEdit = tools.contains('edit');
+    final hasWrite = tools.contains('write');
+    final hasApplyPatch = tools.contains('apply_patch');
+    final hasGrep = tools.contains('grep');
+    final hasGlob = tools.contains('glob');
+    final hasTask = tools.contains('task') && canDelegate;
+    if (!hasRead && !hasEdit && !hasApplyPatch) return '';
+
+    final lines = <String>[];
+    if (zh) {
+      lines.addAll([
+        '# 工具顺序指南（按 oh-my-openagent 风格对齐）',
+        '违反这些顺序会被视为失败响应。',
+        '',
+        '## 编辑（串行，必须先 Read）',
+      ]);
+      if (hasEdit) {
+        lines.add('- `edit`：修改已有文件前必须先 `read`，拿到最新 `LINE#ID` 锚点后再编辑。');
+      }
+      if (hasApplyPatch) {
+        lines.add(
+            '- `apply_patch`：修改已有文件前必须先 `read`；若同一文件刚修改过，再次修改前必须重新 `read`。');
+      }
+      if (hasWrite) {
+        lines.add('- `write`：用于新文件，或你明确需要整文件重写时。');
+      }
+      lines.add('');
+      lines.add('## 正确顺序（必须严格遵守）');
+      if (hasRead) lines.add('- 解释代码：`read` -> 分析 -> 回答');
+      if (hasRead && hasEdit) {
+        lines.add('- 修改已有文件：响应 A `read` -> 等待工具结果；响应 B `edit` -> 报告');
+      } else if (hasRead && hasApplyPatch) {
+        lines.add('- 修改已有文件：响应 A `read` -> 等待工具结果；响应 B `apply_patch` -> 报告');
+      }
+      if (hasGrep || hasGlob) {
+        final searchTools = [
+          if (hasGrep) '`grep`',
+          if (hasGlob) '`glob`',
+        ].join(' / ');
+        lines.add('- 查找位置：$searchTools（独立搜索应并行） -> `read` 结果文件 -> 报告');
+      }
+      if (hasTask) {
+        lines.add('- 非平凡实现：优先 `task` 委派 -> 验证结果 -> 报告');
+      }
+      lines.add('');
+      lines.add('## 严禁');
+      lines.add('- 不要在没有 `read` 的情况下直接对已有文件调用 `edit` 或 `apply_patch`。');
+      lines.add('- 不要在同一个助手响应里对同一文件同时发出 `read` 和 `edit` / `apply_patch`。');
+      lines.add('- 不要把同一文件拆成多次连续 `edit` / `apply_patch`，除非中间已经重新 `read`。');
+      lines.add('- 不要在同一文件第二次修改时继续复用上一次的旧锚点。');
+      lines.add('- 不要用最近一次 `read` 没有覆盖到的旧锚点去修改别的行；目标行不在窗口里就先重读正确范围。');
+      return lines.join('\n');
+    }
+
+    lines.addAll([
+      '# Tool Sequence Guide (aligned with oh-my-openagent style)',
+      'Violating these sequences is a failed response.',
+      '',
+      '## Editing (SEQUENTIAL - must Read first)',
+    ]);
+    if (hasEdit) {
+      lines.add(
+          '- `edit`: modifying existing files. MUST `read` the file first to get fresh `LINE#ID` anchors.');
+    }
+    if (hasApplyPatch) {
+      lines.add(
+          '- `apply_patch`: modifying existing files. MUST `read` first. If you changed the same file already, `read` again before patching it.');
+    }
+    if (hasWrite) {
+      lines.add(
+          '- `write`: use for new files, or when you intentionally need a full-file rewrite.');
+    }
+    lines.add('');
+    lines.add('## Correct Sequences (MANDATORY - follow these exactly)');
+    if (hasRead) lines.add('- Answer about code: `read` -> analyze -> answer');
+    if (hasRead && hasEdit) {
+      lines.add(
+          '- Edit existing code: response A `read` -> wait for the tool result; response B `edit` -> report');
+    } else if (hasRead && hasApplyPatch) {
+      lines.add(
+          '- Edit existing code: response A `read` -> wait for the tool result; response B `apply_patch` -> report');
+    }
+    if (hasGrep || hasGlob) {
+      final searchTools = [
+        if (hasGrep) '`grep`',
+        if (hasGlob) '`glob`',
+      ].join(' / ');
+      lines.add(
+          '- Find something: $searchTools (parallel if independent) -> `read` matching files -> report');
+    }
+    if (hasTask) {
+      lines.add(
+          '- Non-trivial implementation: `task` delegation -> verify results -> report');
+    }
+    lines.add('');
+    lines.add('## NEVER DO THIS');
+    lines.add(
+        '- Do not call `edit` or `apply_patch` on an existing file before `read`.');
+    lines.add(
+        '- Do not emit `read` and `edit` / `apply_patch` for the same file in the same assistant response.');
+    lines.add(
+        '- Do not split one file into multiple consecutive `edit` / `apply_patch` calls unless you re-read in between.');
+    lines.add(
+        '- Do not reuse anchors from before the previous successful edit on the same file.');
+    lines.add(
+        '- Do not edit with anchors from an older read window when your latest read did not cover the target line; re-read the correct range first.');
+    return lines.join('\n');
   }
 
   String _skillsPrompt(PromptContext context) {

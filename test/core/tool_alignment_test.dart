@@ -148,6 +148,9 @@ void main() {
   Future<void> seedReadLedger({
     required String filePath,
     required int lastModified,
+    int? startLine,
+    int? endLine,
+    int? createdAt,
   }) async {
     await database.savePart(
       MessagePart(
@@ -155,7 +158,7 @@ void main() {
         sessionId: session.id,
         messageId: message.id,
         type: PartType.tool,
-        createdAt: DateTime.now().millisecondsSinceEpoch,
+        createdAt: createdAt ?? DateTime.now().millisecondsSinceEpoch,
         data: {
           'tool': 'read',
           'callID': newId('call'),
@@ -165,6 +168,9 @@ void main() {
               'readLedger': {
                 'path': filePath,
                 'lastModified': lastModified,
+                if (startLine != null) 'startLine': startLine,
+                if (endLine != null) 'endLine': endLine,
+                'sourceTool': 'read',
               },
             },
           },
@@ -322,9 +328,8 @@ void main() {
       ),
       throwsA(
         predicate(
-          (error) => error
-              .toString()
-              .contains('File "note_stale.txt" has been modified since your last `read`'),
+          (error) => error.toString().contains(
+              'File "note_stale.txt" has been modified since your last `read`'),
         ),
       ),
     );
@@ -439,6 +444,39 @@ void main() {
     expect(result.output, contains(RegExp(r'2#[A-Z]{2}\|beta')));
   });
 
+  test('read requires an explicit path argument', () async {
+    await expectLater(
+      readTool.execute(
+        {},
+        makeContext(),
+      ),
+      throwsA(
+        predicate(
+          (error) => error.toString().contains(
+              'Missing required read path. Provide `filePath` explicitly'),
+        ),
+      ),
+    );
+  });
+
+  test('read rejects workspace root paths', () async {
+    await expectLater(
+      readTool.execute(
+        {
+          'path': '.',
+        },
+        makeContext(),
+      ),
+      throwsA(
+        predicate(
+          (error) => error
+              .toString()
+              .contains('Reading the workspace root is not supported'),
+        ),
+      ),
+    );
+  });
+
   test('write accepts empty content for new files', () async {
     final result = await writeTool.execute(
       {
@@ -532,6 +570,8 @@ void main() {
     await seedReadLedger(
       filePath: 'hashline_edit.txt',
       lastModified: entry!.lastModified,
+      startLine: 1,
+      endLine: 2,
     );
 
     final result = await editTool.execute(
@@ -553,7 +593,8 @@ void main() {
     expect(permissionRequests, hasLength(1));
   });
 
-  test('hashline edit reports noop edits when replacement is identical', () async {
+  test('hashline edit reports noop edits when replacement is identical',
+      () async {
     final target = File('${tempDir.path}/hashline_noop.txt');
     await target.writeAsString('alpha\nbeta\n');
 
@@ -573,6 +614,8 @@ void main() {
     await seedReadLedger(
       filePath: 'hashline_noop.txt',
       lastModified: entry!.lastModified,
+      startLine: 1,
+      endLine: 2,
     );
 
     await expectLater(
@@ -623,6 +666,8 @@ void main() {
     await seedReadLedger(
       filePath: 'hashline_stale.txt',
       lastModified: entry!.lastModified,
+      startLine: 1,
+      endLine: 2,
     );
 
     await target.writeAsString('changed\nbeta\n');
@@ -649,6 +694,68 @@ void main() {
         ),
       ),
     );
+    expect(permissionRequests, isEmpty);
+  });
+
+  test('edit blocks anchors outside the most recent read window', () async {
+    final target = File('${tempDir.path}/hashline_window_guard.txt');
+    await target.writeAsString('alpha\nbeta\ngamma\ndelta\n');
+
+    final readResult = await readTool.execute(
+      {
+        'path': 'hashline_window_guard.txt',
+      },
+      makeContext(),
+    );
+    final firstAnchor =
+        RegExp(r'1#[A-Z]{2}').firstMatch(readResult.output)?.group(0);
+    expect(firstAnchor, isNotNull);
+
+    final entry = await bridge.stat(
+      treeUri: workspace.treeUri,
+      relativePath: 'hashline_window_guard.txt',
+    );
+    expect(entry, isNotNull);
+    final now = DateTime.now().millisecondsSinceEpoch;
+    await seedReadLedger(
+      filePath: 'hashline_window_guard.txt',
+      lastModified: entry!.lastModified,
+      startLine: 1,
+      endLine: 4,
+      createdAt: now,
+    );
+    await seedReadLedger(
+      filePath: 'hashline_window_guard.txt',
+      lastModified: entry.lastModified,
+      startLine: 3,
+      endLine: 4,
+      createdAt: now + 1,
+    );
+
+    await expectLater(
+      editTool.execute(
+        {
+          'filePath': 'hashline_window_guard.txt',
+          'edits': [
+            {
+              'op': 'replace',
+              'pos': firstAnchor,
+              'lines': ['ALPHA'],
+            }
+          ],
+        },
+        makeContext(),
+      ),
+      throwsA(
+        predicate(
+          (error) =>
+              error.toString().contains('most recent `read` window') &&
+              error.toString().contains('only covered lines 3-4') &&
+              error.toString().contains('anchor line(s) 1'),
+        ),
+      ),
+    );
+    expect(await target.readAsString(), 'alpha\nbeta\ngamma\ndelta\n');
     expect(permissionRequests, isEmpty);
   });
 
@@ -712,7 +819,17 @@ void main() {
     expect(advertisedTools.contains('edit'), isFalse);
     expect(
       envPrompt.contains(
-          'If you just changed a file and need to modify the same file again, call `read` first.'),
+          'The next modification must happen in a later assistant response, not as another same-file mutation in the current response.'),
+      isTrue,
+    );
+    expect(
+      envPrompt.contains(
+          'If the line you want to change is not inside your most recent `read` window, call `read` again for a range that includes that line before generating `edit` / `apply_patch`.'),
+      isTrue,
+    );
+    expect(
+      envPrompt.contains(
+          '`replace` with `pos` only replaces exactly one existing line. If you need to replace 2 or more existing lines, you MUST provide both `pos` and `end` for the full old range; otherwise trailing old lines survive and often get duplicated.'),
       isTrue,
     );
     expect(envPrompt.contains('@@ replace 12#VK'), isTrue);
@@ -3053,5 +3170,184 @@ void main() {
       state['output'] as String? ?? '',
       contains('The write tool requires `filePath` as the target path.'),
     );
+  });
+
+  test('prompt blocks same-turn read then edit for the same file', () async {
+    final target = File('${tempDir.path}/same_turn_read_edit.txt');
+    await target.writeAsString('alpha\nbeta\n');
+
+    final gateway = _QueuedModelGateway([
+      ModelResponse(
+        text: '',
+        toolCalls: [
+          ToolCall(
+            id: 'call_read',
+            name: 'read',
+            arguments: const {'path': 'same_turn_read_edit.txt'},
+          ),
+          ToolCall(
+            id: 'call_edit',
+            name: 'edit',
+            arguments: const {
+              'filePath': 'same_turn_read_edit.txt',
+              'edits': [
+                {
+                  'op': 'replace',
+                  'pos': '1#AA',
+                  'lines': ['gamma'],
+                }
+              ],
+            },
+          ),
+        ],
+        finishReason: 'tool_calls',
+        raw: const {},
+      ),
+      ModelResponse(
+        text: 'done',
+        toolCalls: const [],
+        finishReason: 'stop',
+        raw: const {},
+      ),
+    ]);
+    final engine = SessionEngine(
+      database: database,
+      events: LocalEventBus(),
+      workspaceBridge: bridge,
+      promptAssembler: promptAssembler,
+      permissionCenter: PermissionCenter(database, LocalEventBus()),
+      questionCenter: QuestionCenter(database, LocalEventBus()),
+      toolRegistry: registry,
+      modelGateway: gateway,
+    );
+
+    await engine.prompt(
+      workspace: workspace,
+      session: session,
+      text: 'Edit the file',
+      agent: 'build',
+    );
+
+    final parts = await database.listPartsForSession(session.id);
+    final toolPart = parts.firstWhere(
+      (part) =>
+          part.type == PartType.tool && part.data['callID'] == 'call_edit',
+    );
+    final state =
+        Map<String, dynamic>.from(toolPart.data['state'] as Map? ?? const {});
+    expect(state['status'], ToolStatus.error.name);
+    expect(
+      state['output'] as String? ?? '',
+      contains('Invalid same-turn tool sequence'),
+    );
+    expect(
+      state['output'] as String? ?? '',
+      contains('Do not emit `read` and `edit` for the same file'),
+    );
+    expect(await target.readAsString(), 'alpha\nbeta\n');
+  });
+
+  test('prompt blocks a second same-turn mutation for the same file', () async {
+    final target = File('${tempDir.path}/same_turn_double_edit.txt');
+    await target.writeAsString('alpha\nbeta\n');
+
+    final readResult = await readTool.execute(
+      {
+        'path': 'same_turn_double_edit.txt',
+      },
+      makeContext(),
+    );
+    final firstAnchor =
+        RegExp(r'1#[A-Z]{2}').firstMatch(readResult.output)?.group(0);
+    final secondAnchor =
+        RegExp(r'2#[A-Z]{2}').firstMatch(readResult.output)?.group(0);
+    expect(firstAnchor, isNotNull);
+    expect(secondAnchor, isNotNull);
+    final entry = await bridge.stat(
+      treeUri: workspace.treeUri,
+      relativePath: 'same_turn_double_edit.txt',
+    );
+    await seedReadLedger(
+      filePath: 'same_turn_double_edit.txt',
+      lastModified: entry!.lastModified,
+      startLine: 1,
+      endLine: 2,
+    );
+
+    final gateway = _QueuedModelGateway([
+      ModelResponse(
+        text: '',
+        toolCalls: [
+          ToolCall(
+            id: 'call_edit_first',
+            name: 'edit',
+            arguments: {
+              'filePath': 'same_turn_double_edit.txt',
+              'edits': [
+                {
+                  'op': 'replace',
+                  'pos': firstAnchor,
+                  'lines': ['gamma'],
+                }
+              ],
+            },
+          ),
+          ToolCall(
+            id: 'call_edit_second',
+            name: 'edit',
+            arguments: {
+              'filePath': 'same_turn_double_edit.txt',
+              'edits': [
+                {
+                  'op': 'replace',
+                  'pos': secondAnchor,
+                  'lines': ['delta'],
+                }
+              ],
+            },
+          ),
+        ],
+        finishReason: 'tool_calls',
+        raw: const {},
+      ),
+      ModelResponse(
+        text: 'done',
+        toolCalls: const [],
+        finishReason: 'stop',
+        raw: const {},
+      ),
+    ]);
+    final engine = SessionEngine(
+      database: database,
+      events: LocalEventBus(),
+      workspaceBridge: bridge,
+      promptAssembler: promptAssembler,
+      permissionCenter: PermissionCenter(database, LocalEventBus()),
+      questionCenter: QuestionCenter(database, LocalEventBus()),
+      toolRegistry: registry,
+      modelGateway: gateway,
+    );
+
+    await engine.prompt(
+      workspace: workspace,
+      session: session,
+      text: 'Edit twice',
+      agent: 'build',
+    );
+
+    final parts = await database.listPartsForSession(session.id);
+    final toolPart = parts.firstWhere(
+      (part) =>
+          part.type == PartType.tool &&
+          part.data['callID'] == 'call_edit_second',
+    );
+    final state =
+        Map<String, dynamic>.from(toolPart.data['state'] as Map? ?? const {});
+    expect(state['status'], ToolStatus.error.name);
+    expect(
+      state['output'] as String? ?? '',
+      contains('multiple mutation calls for the same file'),
+    );
+    expect(await target.readAsString(), 'gamma\nbeta\n');
   });
 }

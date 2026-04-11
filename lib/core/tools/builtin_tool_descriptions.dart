@@ -4,7 +4,7 @@ const String kReadToolDescription = r'''
 Read a file or directory from the local filesystem. If the path does not exist, an error is returned.
 
 Usage:
-- The filePath parameter should be an absolute path.
+- The `filePath` parameter is required. In this workspace it is project-root-relative.
 - By default, this tool returns up to 2000 lines from the start of the file.
 - The offset parameter is the line number to start from (1-indexed).
 - To read later sections, call this tool again with a larger offset.
@@ -36,16 +36,21 @@ Edit files using LINE#ID format for precise, safe modifications.
 
 WORKFLOW:
 1. Read target file/range and copy exact LINE#ID tags.
+1.5. Never emit `read` and `edit` / `apply_patch` for the same file in the same assistant response.
 2. Pick the smallest operation per logical mutation site.
 3. Submit one edit call per file with all related operations.
-4. If same file needs another call, re-read first.
+4. If same file needs another call, wait for the tool result, then re-read first.
 5. Use anchors as "LINE#ID" only (never include trailing "|content").
+6. The anchor you use must come from the most recent `read` output that actually includes that line/range.
+7. `replace` with `pos` only replaces exactly one existing line. If you need to replace multiple existing lines, you MUST provide both `pos` and `end`.
 
 <must>
 - SNAPSHOT: All edits in one call reference the ORIGINAL file state. Do NOT adjust line numbers for prior edits in the same call - the system applies them bottom-up automatically.
 - replace removes lines pos..end (inclusive) and inserts lines in their place. Lines BEFORE pos and AFTER end are UNTOUCHED - do NOT include them in lines. If you do, they will appear twice.
 - lines must contain ONLY the content that belongs inside the consumed range. Content after end survives unchanged.
+- If you are rewriting 2 or more existing lines, use a range replace with both `pos` and `end`. Using only `pos` leaves later old lines in place and often causes duplicated content.
 - Tags MUST be copied exactly from read output or >>> mismatch output. NEVER guess tags.
+- Do NOT use anchors from an older read window if your latest read did not include the target line. Read the correct range first.
 - Batch = multiple operations in edits[], NOT one big replace covering everything. Each operation targets the smallest possible change.
 - lines must contain plain replacement text only (no LINE#ID prefixes, no diff + markers).
 </must>
@@ -81,7 +86,9 @@ RULES:
   6. Use exact current tokens: NEVER rewrite approximately.
   7. For swaps/moves: prefer one range operation over multiple single-line operations.
   8. Anchor to structural lines (function/class/brace), NEVER blank lines.
-  9. Re-read after each successful edit call before issuing another on the same file.
+  9. Re-read after each successful edit call in a later assistant response before issuing another on the same file.
+  10. If the line you want to edit is not present in your most recent `read` result, you MUST `read` a range that includes it before editing.
+  11. If you intend to replace a block of existing lines, include the full old block in the consumed range via `pos` + `end`; do not try to replace a multi-line block with `pos` alone.
 </operations>
 
 <examples>
@@ -100,6 +107,11 @@ Single-line replace (change line 11):
 Range replace (rewrite function body, lines 11-12):
   { op: "replace", pos: "11#XJ", end: "12#MB", lines: ["  return \"hello world\";"] }
   Result: lines 11-12 removed, replaced by 1 new line. Lines 10, 13-15 unchanged.
+
+BAD - using pos only for a multi-line rewrite leaves old line 12 behind:
+  { op: "replace", pos: "11#XJ", lines: ["  return \"hello world\";"] }
+  Only line 11 is consumed. Old line 12 survives, so the old block is only partially replaced.
+  CORRECT: { op: "replace", pos: "11#XJ", end: "12#MB", lines: ["  return \"hello world\";"] }
 
 Delete a line:
   { op: "replace", pos: "12#MB", lines: null }
@@ -195,7 +207,7 @@ Usage notes:
 /// Client-specific: workspace-relative paths; `path` and `filePath` are both accepted.
 const String kMobileWorkspacePathSuffix = '''
 
-In this workspace, paths are relative to the project root (not host absolute paths). Use forward slashes. For `read`, use `path` or `filePath` (either is accepted). You may write the root as `.`, `./`, or an empty path where allowed; segments like `./lib/main.dart` work. `..` is resolved lexically; paths that would escape above the workspace root are rejected.''';
+In this workspace, paths are relative to the project root (not host absolute paths). Use forward slashes. For `read`, provide `filePath` explicitly; `path` is accepted for compatibility. Empty read paths are rejected, and reading the workspace root directly is not supported. Segments like `./lib/main.dart` work. `..` is resolved lexically; paths that would escape above the workspace root are rejected.''';
 
 /// Client-specific: fetch returns plain text; format/timeout options are not exposed.
 const String kMobileWebFetchSuffix = '''

@@ -68,13 +68,26 @@ Future<ToolExecutionResult> _applyPatchTool(
           relativePath: section.path,
         );
         if (_sectionUsesHashlineAnchors(section)) {
+          final hashlineEdits = _hashlineEditsFromPatchSection(section);
+          final refs = <String>{
+            for (final edit in hashlineEdits) ...[
+              if (edit.pos != null) edit.pos!,
+              if (edit.end != null) edit.end!,
+            ],
+          };
+          await _assertHashlineAnchorsCoveredByLatestReadWindow(
+            ctx,
+            section.path,
+            refs: refs,
+            toolName: 'apply_patch',
+          );
           final envelope = _canonicalizeHashlineFileText(existing);
           final originalLines = envelope.content.isEmpty
               ? <String>[]
               : envelope.content.split('\n');
           final editResult = _applyHashlineEditsToLines(
             originalLines,
-            _hashlineEditsFromPatchSection(section),
+            hashlineEdits,
           );
           after = _restoreHashlineFileText(
             editResult.lines.join('\n'),
@@ -198,6 +211,7 @@ Future<ToolExecutionResult> _applyPatchTool(
         _toolReadLedgerMetadata(
           path: change.targetPath,
           lastModified: updatedEntry.lastModified,
+          sourceTool: 'apply_patch',
         ),
       );
     }

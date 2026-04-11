@@ -96,6 +96,7 @@ class _HomePageState extends State<HomePage> {
   final ValueNotifier<int> _messageVersion = ValueNotifier<int>(0);
   bool _isAutoScrolling = false;
   bool _pendingTimelineSync = false;
+  Timer? _timelineSyncDebounce;
   String _lastTimelineAnchor = '';
   String _historySessionId = '';
   int _historyStartIndex = 0;
@@ -137,6 +138,7 @@ class _HomePageState extends State<HomePage> {
       ..removeListener(_handleTimelineScroll)
       ..dispose();
     _promptMentionDebounce?.cancel();
+    _timelineSyncDebounce?.cancel();
     _promptController.removeListener(_handlePromptComposerChanged);
     _promptFocusNode.removeListener(_handlePromptComposerChanged);
     _promptController.dispose();
@@ -790,7 +792,24 @@ class _HomePageState extends State<HomePage> {
     }
     final now = DateTime.now().millisecondsSinceEpoch;
     final canAnimate = !state.isBusy;
-    if (!canAnimate && now - _lastTimelineSyncAt < 64) {
+    if (!canAnimate) {
+      _pendingTimelineSync = true;
+      _timelineSyncDebounce?.cancel();
+      final elapsed = now - _lastTimelineSyncAt;
+      final waitMs = elapsed >= 140 ? 0 : 140 - elapsed;
+      _timelineSyncDebounce = Timer(Duration(milliseconds: waitMs), () {
+        if (!mounted || !_stickToBottom.value || _isAutoScrolling) return;
+        _pendingTimelineSync = false;
+        _lastTimelineSyncAt = DateTime.now().millisecondsSinceEpoch;
+        WidgetsBinding.instance.addPostFrameCallback((_) {
+          if (!mounted ||
+              !_stickToBottom.value ||
+              !_timelineController.hasClients) {
+            return;
+          }
+          _scrollTimelineToBottom(animate: false);
+        });
+      });
       return;
     }
     _lastTimelineSyncAt = now;
@@ -808,6 +827,16 @@ class _HomePageState extends State<HomePage> {
   void _scrollTimelineToBottom({bool animate = true}) {
     if (!_timelineController.hasClients) return;
     final offset = _timelineController.position.maxScrollExtent;
+    final current = _timelineController.offset;
+    final delta = (offset - current).abs();
+    if (delta < 6) {
+      if (_timelineController.hasClients) {
+        final dist = _timelineController.position.maxScrollExtent -
+            _timelineController.offset;
+        _stickToBottom.value = dist < 24;
+      }
+      return;
+    }
     if (animate) {
       _isAutoScrolling = true;
       _pendingTimelineSync = false;

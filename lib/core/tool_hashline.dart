@@ -919,6 +919,18 @@ Future<ToolExecutionResult> _executeHashlineEditTool(
         'Required action: call `read` with path "$filePath" first, then retry.',
       );
     }
+    final refs = <String>{
+      for (final edit in edits) ...[
+        if (edit.pos != null) edit.pos!,
+        if (edit.end != null) edit.end!,
+      ],
+    };
+    await _assertHashlineAnchorsCoveredByLatestReadWindow(
+      ctx,
+      filePath,
+      refs: refs,
+      toolName: 'edit',
+    );
   }
 
   final existingRaw = exists
@@ -1031,6 +1043,7 @@ Future<ToolExecutionResult> _executeHashlineEditTool(
         'readLedger': _toolReadLedgerMetadata(
           path: targetPath,
           lastModified: updatedEntry.lastModified,
+          sourceTool: 'edit',
         ),
     },
     attachments: [

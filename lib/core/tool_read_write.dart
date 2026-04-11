@@ -5,6 +5,23 @@ String _toolFilePathArg(JsonMap args) {
   return _normalizeWorkspaceRelativePath(jsonStringCoerce(raw, ''));
 }
 
+String _strictReadPathArg(JsonMap args) {
+  final raw = jsonStringCoerce(args['filePath'] ?? args['path'], '').trim();
+  if (raw.isEmpty) {
+    throw Exception(
+      'Missing required read path. Provide `filePath` explicitly.',
+    );
+  }
+  final normalized = _normalizeWorkspaceRelativePath(raw);
+  if (normalized.isEmpty) {
+    throw Exception(
+      'Reading the workspace root is not supported. '
+      'Provide a specific file or directory path.',
+    );
+  }
+  return normalized;
+}
+
 String _strictFilePathArg(JsonMap args, {required String toolName}) {
   final raw = jsonStringCoerce(args['filePath'], '');
   final path = _normalizeWorkspaceRelativePath(raw);
@@ -42,23 +59,47 @@ class _ToolReadLedgerEntry {
   _ToolReadLedgerEntry({
     required this.path,
     required this.lastModified,
+    this.startLine,
+    this.endLine,
+    this.sourceTool,
   });
 
   final String path;
   final int lastModified;
+  final int? startLine;
+  final int? endLine;
+  final String? sourceTool;
+
+  bool get hasCoverage =>
+      startLine != null &&
+      endLine != null &&
+      startLine! > 0 &&
+      endLine! >= startLine!;
+
+  bool coversLine(int line) =>
+      hasCoverage && line >= startLine! && line <= endLine!;
 }
 
 JsonMap _toolReadLedgerMetadata({
   required String path,
   required int lastModified,
+  int? startLine,
+  int? endLine,
+  String? sourceTool,
 }) =>
     {
       'path': path,
       'lastModified': lastModified,
+      if (startLine != null) 'startLine': startLine,
+      if (endLine != null) 'endLine': endLine,
+      if (sourceTool != null && sourceTool.isNotEmpty) 'sourceTool': sourceTool,
     };
 
 _ToolReadLedgerEntry? _toolReadLedgerFromMetadata(
-    JsonMap metadata, String path) {
+  JsonMap metadata,
+  String path, {
+  String? fallbackSourceTool,
+}) {
   final normalized = _normalizeWorkspaceRelativePath(path);
   final single = metadata['readLedger'];
   if (single is Map) {
@@ -69,6 +110,12 @@ _ToolReadLedgerEntry? _toolReadLedgerFromMetadata(
       return _ToolReadLedgerEntry(
         path: ledgerPath,
         lastModified: (map['lastModified'] as num?)?.toInt() ?? 0,
+        startLine: (map['startLine'] as num?)?.toInt(),
+        endLine: (map['endLine'] as num?)?.toInt(),
+        sourceTool: jsonStringCoerce(
+          map['sourceTool'],
+          fallbackSourceTool ?? '',
+        ),
       );
     }
   }
@@ -82,6 +129,12 @@ _ToolReadLedgerEntry? _toolReadLedgerFromMetadata(
         return _ToolReadLedgerEntry(
           path: ledgerPath,
           lastModified: (map['lastModified'] as num?)?.toInt() ?? 0,
+          startLine: (map['startLine'] as num?)?.toInt(),
+          endLine: (map['endLine'] as num?)?.toInt(),
+          sourceTool: jsonStringCoerce(
+            map['sourceTool'],
+            fallbackSourceTool ?? '',
+          ),
         );
       }
     }
@@ -92,6 +145,10 @@ _ToolReadLedgerEntry? _toolReadLedgerFromMetadata(
 Future<_ToolReadLedgerEntry?> _latestToolReadLedgerForPath(
   ToolRuntimeContext ctx,
   String filePath,
+  {
+  String? requiredSourceTool,
+  bool requireCoverage = false,
+}
 ) async {
   final parts = await ctx.database.listPartsForSession(ctx.session.id);
   for (final part in parts.reversed) {
@@ -101,14 +158,72 @@ Future<_ToolReadLedgerEntry?> _latestToolReadLedgerForPath(
     if (state['status'] != ToolStatus.completed.name) continue;
     final metadata =
         Map<String, dynamic>.from(state['metadata'] as Map? ?? const {});
-    final ledger = _toolReadLedgerFromMetadata(metadata, filePath);
-    if (ledger != null) return ledger;
+    final toolName = jsonStringCoerce(part.data['tool'], '');
+    final ledger = _toolReadLedgerFromMetadata(
+      metadata,
+      filePath,
+      fallbackSourceTool: toolName,
+    );
+    if (ledger == null) continue;
+    if (requiredSourceTool != null && ledger.sourceTool != requiredSourceTool) {
+      continue;
+    }
+    if (requireCoverage && !ledger.hasCoverage) continue;
+    return ledger;
   }
   return null;
 }
 
 String _formatLedgerTimestamp(int millis) =>
     DateTime.fromMillisecondsSinceEpoch(millis).toIso8601String();
+
+String _formatLineList(List<int> lines) {
+  if (lines.isEmpty) return '';
+  final sorted = lines.toSet().toList()..sort();
+  if (sorted.length == 1) return '${sorted.first}';
+  if (sorted.length <= 4) return sorted.join(', ');
+  return '${sorted.first}-${sorted.last}';
+}
+
+Future<void> _assertHashlineAnchorsCoveredByLatestReadWindow(
+  ToolRuntimeContext ctx,
+  String filePath, {
+  required Iterable<String> refs,
+  required String toolName,
+}) async {
+  final anchorLines = refs
+      .map((ref) => _parseHashlineRef(ref).line)
+      .toSet()
+      .toList()
+    ..sort();
+  if (anchorLines.isEmpty) return;
+  final ledger = await _latestToolReadLedgerForPath(
+    ctx,
+    filePath,
+    requiredSourceTool: 'read',
+    requireCoverage: true,
+  );
+  if (ledger == null) {
+    throw Exception(
+      'BLOCKED: Your `$toolName` call for "$filePath" uses LINE#ID anchors, '
+      'but there is no recent `read` window recorded for those lines.\n'
+      'Required action: call `read` on "$filePath" with an `offset`/`limit` '
+      'range that includes line(s) ${_formatLineList(anchorLines)}, then '
+      'rebuild the `$toolName` call using anchors from that newest output.',
+    );
+  }
+  final uncovered =
+      anchorLines.where((line) => !ledger.coversLine(line)).toList();
+  if (uncovered.isEmpty) return;
+  throw Exception(
+    'BLOCKED: Your `$toolName` call for "$filePath" uses LINE#ID anchor line(s) '
+    '${_formatLineList(uncovered)}, but the most recent `read` window for this '
+    'file only covered lines ${ledger.startLine}-${ledger.endLine}.\n'
+    'Required action: call `read` on "$filePath" again with an `offset`/`limit` '
+    'range that includes the target lines, then rebuild `$toolName` using '
+    'anchors from that newest output. Do not reuse anchors from an older read window.',
+  );
+}
 
 Future<void> _assertFreshReadForExistingFile(
   ToolRuntimeContext ctx,
@@ -141,7 +256,7 @@ Future<void> _assertFreshReadForExistingFile(
 
 Future<ToolExecutionResult> _readTool(
     JsonMap args, ToolRuntimeContext ctx) async {
-  final filePath = _toolFilePathArg(args);
+  final filePath = _strictReadPathArg(args);
   await ctx.updateToolProgress(
     title: filePath.isEmpty ? ctx.workspace.name : filePath,
     metadata: {
@@ -322,6 +437,9 @@ Future<ToolExecutionResult> _readTool(
       'readLedger': _toolReadLedgerMetadata(
         path: filePath,
         lastModified: entry.lastModified,
+        startLine: safeOffset,
+        endLine: lastReadLine < safeOffset ? safeOffset : lastReadLine,
+        sourceTool: 'read',
       ),
     },
     attachments: [
@@ -424,6 +542,7 @@ Future<ToolExecutionResult> _writeTool(
         'readLedger': _toolReadLedgerMetadata(
           path: filePath,
           lastModified: updatedEntry.lastModified,
+          sourceTool: 'write',
         ),
     },
     attachments: [

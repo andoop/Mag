@@ -740,8 +740,18 @@ extension SessionEngineTools on SessionEngine {
         lower.contains('changed since last read')) {
       return 'Your LINE#ID anchors are stale — the file content has changed.\n'
           'Step 1: Copy the updated LINE#ID anchors shown in the `>>>` error output directly.\n'
-          'Step 2: Retry your `$toolName` call using those updated anchors.\n'
-          'Only call `read` again if the anchors you need are missing from the error output.';
+          'Step 2: If the target line you want to edit is not covered by those updated anchors, call `read` for the correct range first.\n'
+          'Step 3: Retry your `$toolName` call using anchors from the newest output that actually covers the target lines.\n'
+          'Do not reuse anchors from an older `read` window.';
+    }
+    if (toolName == 'edit' &&
+        lower.contains('no changes made to') &&
+        lower.contains('no-op edits')) {
+      return 'Your `edit` call was a no-op — the replacement content is identical to the current file.\n'
+          'Step 1: Do NOT repeat the same `edit` call.\n'
+          'Step 2: If the file already matches your intent, stop editing this section.\n'
+          'Step 3: If you intended a different change, call `read` and submit only lines that actually differ.\n'
+          'For the same file, prefer one batched `edit` call instead of several sequential calls.';
     }
     if (lower.contains('missing required')) {
       return 'You omitted required parameters. Re-read the error message carefully, '

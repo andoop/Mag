@@ -155,11 +155,13 @@ class ToolRegistry {
           'properties': {
             'path': {
               'type': 'string',
-              'description': 'Workspace-relative path to the file or directory',
+              'description':
+                  'Workspace-relative path to the file or directory. Required.',
             },
             'filePath': {
               'type': 'string',
-              'description': 'Alias for path (accepted for compatibility)',
+              'description':
+                  'Preferred path argument for compatibility with opencode. Required.',
             },
             'offset': {
               'type': 'integer',
@@ -170,6 +172,14 @@ class ToolRegistry {
               'description': 'Maximum number of lines to read',
             },
           },
+          'anyOf': [
+            {
+              'required': ['path'],
+            },
+            {
+              'required': ['filePath'],
+            },
+          ],
           'additionalProperties': false,
         },
         execute: _readTool,
