@@ -133,6 +133,14 @@ Future<void> _assertFreshReadForExistingFile(
 Future<ToolExecutionResult> _readTool(
     JsonMap args, ToolRuntimeContext ctx) async {
   final filePath = _toolFilePathArg(args);
+  await ctx.updateToolProgress(
+    title: filePath.isEmpty ? ctx.workspace.name : filePath,
+    metadata: {
+      'phase': 'reading',
+      'path': filePath,
+      if (filePath.isNotEmpty) 'filePath': filePath,
+    },
+  );
   final safeOffset = ((args['offset'] as int?) ?? 1).clamp(1, 1 << 30);
   final limit = ((args['limit'] as int?) ?? _kDefaultReadLimit).clamp(1, 5000);
   final pathLabel = filePath.isEmpty ? '.' : filePath;
@@ -325,6 +333,14 @@ Future<ToolExecutionResult> _writeTool(
     JsonMap args, ToolRuntimeContext ctx) async {
   final filePath = _toolFilePathArg(args);
   final content = await _resolveWriteContent(args, ctx);
+  await ctx.updateToolProgress(
+    title: filePath,
+    metadata: {
+      'phase': 'preparing',
+      'path': filePath,
+      'filePath': filePath,
+    },
+  );
   if (filePath.isEmpty) {
     throw Exception('Missing required `path`.');
   }
@@ -347,6 +363,22 @@ Future<ToolExecutionResult> _writeTool(
       'Required action: call `read` on "$filePath", then use `edit` or `apply_patch` to modify it.',
     );
   }
+  final preview = _buildDiffAttachment(
+    kind: exists ? 'write_update' : 'write',
+    path: filePath,
+    before: existing,
+    after: content,
+  );
+  await ctx.updateToolProgress(
+    title: filePath,
+    displayOutput: 'Preparing write to $filePath',
+    metadata: {
+      'phase': 'preparing',
+      'path': filePath,
+      'filePath': filePath,
+    },
+    attachments: [preview],
+  );
   await ctx.askPermission(
     PermissionRequest(
       id: newId('perm'),
@@ -357,12 +389,7 @@ Future<ToolExecutionResult> _writeTool(
         'tool': 'write',
         'path': filePath,
         'filePath': filePath,
-        'preview': _buildDiffAttachment(
-          kind: exists ? 'write_update' : 'write',
-          path: filePath,
-          before: existing,
-          after: content,
-        ),
+        'preview': preview,
       },
       always: [filePath],
       messageId: ctx.message.id,
@@ -394,12 +421,7 @@ Future<ToolExecutionResult> _writeTool(
         ),
     },
     attachments: [
-      _buildDiffAttachment(
-        kind: exists ? 'write_update' : 'write',
-        path: filePath,
-        before: existing,
-        after: content,
-      ),
+      preview,
     ],
   );
 }
@@ -705,14 +727,22 @@ Future<ToolExecutionResult> _editTool(
   final oldString = args['oldString'] as String? ?? '';
   final newString = args['newString'] as String? ?? '';
   final replaceAll = (args['replaceAll'] as bool?) ?? false;
+  await ctx.updateToolProgress(
+    title: filePath,
+    metadata: {
+      'phase': 'preparing',
+      'path': filePath,
+      'filePath': filePath,
+    },
+  );
   // ignore: avoid_print
   print('[mag-edit][start] ${jsonEncode({
-    'path': filePath,
-    'argKeys': args.keys.toList(),
-    'oldStringChars': oldString.length,
-    'newStringChars': newString.length,
-    'replaceAll': replaceAll,
-  })}');
+        'path': filePath,
+        'argKeys': args.keys.toList(),
+        'oldStringChars': oldString.length,
+        'newStringChars': newString.length,
+        'replaceAll': replaceAll,
+      })}');
   if (filePath.isEmpty) {
     throw Exception('Missing required `filePath`.');
   }
@@ -728,9 +758,9 @@ Future<ToolExecutionResult> _editTool(
   );
   // ignore: avoid_print
   print('[mag-edit][fresh-read-ok] ${jsonEncode({
-    'path': filePath,
-    'sessionId': ctx.session.id,
-  })}');
+        'path': filePath,
+        'sessionId': ctx.session.id,
+      })}');
   final existingRaw = await ctx.bridge.readText(
     treeUri: ctx.workspace.treeUri,
     relativePath: filePath,
@@ -754,12 +784,28 @@ Future<ToolExecutionResult> _editTool(
     mismatchLogArgs: Map<String, dynamic>.from(args),
   );
   final out = utf8Bom + updated;
+  final preview = _buildDiffAttachment(
+    kind: 'edit',
+    path: filePath,
+    before: existingRaw,
+    after: out,
+  );
+  await ctx.updateToolProgress(
+    title: filePath,
+    displayOutput: 'Preparing edit for $filePath',
+    metadata: {
+      'phase': 'preparing',
+      'path': filePath,
+      'filePath': filePath,
+    },
+    attachments: [preview],
+  );
   // ignore: avoid_print
   print('[mag-edit][replacement-ok] ${jsonEncode({
-    'path': filePath,
-    'beforeChars': existingRaw.length,
-    'afterChars': out.length,
-  })}');
+        'path': filePath,
+        'beforeChars': existingRaw.length,
+        'afterChars': out.length,
+      })}');
   await ctx.askPermission(
     PermissionRequest(
       id: newId('perm'),
@@ -770,12 +816,7 @@ Future<ToolExecutionResult> _editTool(
         'tool': 'edit',
         'path': filePath,
         'filePath': filePath,
-        'preview': _buildDiffAttachment(
-          kind: 'edit',
-          path: filePath,
-          before: existingRaw,
-          after: out,
-        ),
+        'preview': preview,
       },
       always: [filePath],
       messageId: ctx.message.id,
@@ -794,7 +835,8 @@ Future<ToolExecutionResult> _editTool(
   var editOutput = 'Updated file successfully.';
   final bracketWarning = _checkBracketBalance(out, filePath);
   if (bracketWarning.isNotEmpty) {
-    editOutput += '\n\n<diagnostics file="$filePath">\n$bracketWarning\nPlease review and fix the bracket issue.\n</diagnostics>';
+    editOutput +=
+        '\n\n<diagnostics file="$filePath">\n$bracketWarning\nPlease review and fix the bracket issue.\n</diagnostics>';
   }
   return ToolExecutionResult(
     title: filePath,
@@ -811,12 +853,7 @@ Future<ToolExecutionResult> _editTool(
         ),
     },
     attachments: [
-      _buildDiffAttachment(
-        kind: 'edit',
-        path: filePath,
-        before: existingRaw,
-        after: out,
-      ),
+      preview,
     ],
   );
 }

@@ -36,6 +36,10 @@ Future<ToolExecutionResult> _todoTool(
         },
       )
       .toList();
+  await ctx.updateToolProgress(
+    title: '${items.length} todo${items.length == 1 ? '' : 's'}',
+    metadata: {'phase': 'processing', 'todos': openCodeShape},
+  );
   final remaining = items.where((t) => t.status != 'completed').length;
   return ToolExecutionResult(
     title: '$remaining todos',
@@ -67,6 +71,15 @@ Future<ToolExecutionResult> _questionTool(
     questions: parsed,
     messageId: ctx.message.id,
     callId: ctx.callId,
+  );
+  await ctx.updateToolProgress(
+    title: parsed.length == 1
+        ? 'Asking 1 question'
+        : 'Asking ${parsed.length} questions',
+    metadata: {
+      'phase': 'awaiting_input',
+      'questionCount': parsed.length,
+    },
   );
   final answersRaw = await ctx.askQuestion(request);
   final n = parsed.length;
@@ -102,6 +115,11 @@ Future<ToolExecutionResult> _questionTool(
 Future<ToolExecutionResult> _webFetchTool(
     JsonMap args, ToolRuntimeContext ctx) async {
   final url = Uri.parse(args['url'] as String? ?? '');
+  await ctx.updateToolProgress(
+    title: url.host.isEmpty ? 'WebFetch' : url.host,
+    displayOutput: 'Fetching ${url.toString()}',
+    metadata: {'phase': 'fetching', 'url': url.toString()},
+  );
   await ctx.askPermission(
     PermissionRequest(
       id: newId('perm'),
@@ -146,6 +164,10 @@ Future<ToolExecutionResult> _browserTool(
   if (requestedPath.isEmpty) {
     throw Exception('Missing workspace page path');
   }
+  await ctx.updateToolProgress(
+    title: requestedPath,
+    metadata: {'phase': 'opening', 'path': requestedPath},
+  );
   final resolvedPath = await _resolveBrowserPath(requestedPath, ctx);
   return ToolExecutionResult(
     title: 'Browser',
@@ -209,6 +231,10 @@ Future<ToolExecutionResult> _filerefTool(
       metadata: {'refs': <JsonMap>[]},
     );
   }
+  await ctx.updateToolProgress(
+    title: '${out.length} file ref${out.length == 1 ? '' : 's'}',
+    metadata: {'phase': 'processing', 'refs': out},
+  );
   final pretty = const JsonEncoder.withIndent('  ').convert(out);
   final warnBlock =
       warnings.isEmpty ? '' : '\n\nWarnings:\n${warnings.join('\n')}';

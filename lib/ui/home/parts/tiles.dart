@@ -50,9 +50,7 @@ class _PartTile extends StatelessWidget {
         final cacheMap =
             Map<String, dynamic>.from(tokenMap['cache'] as Map? ?? const {});
         final detailParts = <String>[
-          isMaxSteps
-              ? l(context, '已达最大步数', 'Max steps reached')
-              : reason,
+          isMaxSteps ? l(context, '已达最大步数', 'Max steps reached') : reason,
           if (((tokenMap['input'] as num?)?.toInt() ?? 0) > 0)
             '${l(context, '输入', 'Input')} ${formatTokenCount((tokenMap['input'] as num?)?.toInt() ?? 0)}',
           if (((tokenMap['output'] as num?)?.toInt() ?? 0) > 0)
@@ -66,7 +64,9 @@ class _PartTile extends StatelessWidget {
               : l(context, '步骤完成', 'Step Complete'),
           detail: detailParts.join(' · '),
           color: isMaxSteps
-              ? (context.isDarkMode ? const Color(0xFF422006) : const Color(0xFFFEF3C7))
+              ? (context.isDarkMode
+                  ? const Color(0xFF422006)
+                  : const Color(0xFFFEF3C7))
               : oc.userBubble,
         );
       case PartType.compaction:
@@ -89,14 +89,14 @@ class _PartTile extends StatelessWidget {
         final text = part.data['text'] as String? ?? '';
         final isStructured = (part.data['structured'] as bool?) ?? false;
         if (!isStructured) {
-          final footerMeta = showAssistantTextMeta &&
-                  message.role == SessionRole.assistant
-              ? _assistantReplyFooterMeta(
-                  context,
-                  message,
-                  turnDurationMs,
-                )
-              : null;
+          final footerMeta =
+              showAssistantTextMeta && message.role == SessionRole.assistant
+                  ? _assistantReplyFooterMeta(
+                      context,
+                      message,
+                      turnDurationMs,
+                    )
+                  : null;
           return _StreamingMarkdownText(
             text: text,
             streaming: streamAssistantContent,
@@ -105,15 +105,17 @@ class _PartTile extends StatelessWidget {
             onInsertPromptReference: onInsertPromptReference,
             onSendPromptReference: onSendPromptReference,
             footerMeta: footerMeta,
-            showResponseCopy: showAssistantTextMeta &&
-                message.role == SessionRole.assistant,
+            showResponseCopy:
+                showAssistantTextMeta && message.role == SessionRole.assistant,
           );
         }
         return Container(
           width: double.infinity,
           padding: const EdgeInsets.all(12),
           decoration: _panelDecoration(context,
-              background: context.oc.composerOptionBg, radius: 14, elevated: false),
+              background: context.oc.composerOptionBg,
+              radius: 14,
+              elevated: false),
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
@@ -134,8 +136,8 @@ class _PartTile extends StatelessWidget {
             Map<String, dynamic>.from(toolState['input'] as Map? ?? const {});
         final rawOutput = toolState['output'] as String?;
         final rawDisplayOutput = toolState['displayOutput'] as String?;
-        final metadata =
-            Map<String, dynamic>.from(toolState['metadata'] as Map? ?? const {});
+        final metadata = Map<String, dynamic>.from(
+            toolState['metadata'] as Map? ?? const {});
         final attachments = (toolState['attachments'] as List? ?? const [])
             .map((item) => Map<String, dynamic>.from(item as Map))
             .toList();
@@ -153,8 +155,8 @@ class _PartTile extends StatelessWidget {
           );
         }
         if (toolName == 'fileref') {
-          final metadata =
-              Map<String, dynamic>.from(toolState['metadata'] as Map? ?? const {});
+          final metadata = Map<String, dynamic>.from(
+              toolState['metadata'] as Map? ?? const {});
           List<Map<String, dynamic>> refs;
           final metaRefs = metadata['refs'];
           if (metaRefs is List) {
@@ -198,6 +200,7 @@ class _PartTile extends StatelessWidget {
               status: toolStatus,
               callId: callId,
               rawInput: rawInput,
+              rawInputText: toolState['raw'] as String?,
               rawOutput: rawOutput,
               hasDisplayOutput: rawDisplayOutput != null,
               metadata: metadata,
@@ -231,6 +234,7 @@ class _PartTile extends StatelessWidget {
           status: toolStatus,
           callId: callId,
           rawInput: rawInput,
+          rawInputText: toolState['raw'] as String?,
           rawOutput: rawOutput,
           hasDisplayOutput: rawDisplayOutput != null,
           metadata: metadata,
@@ -276,15 +280,11 @@ List<Map<String, dynamic>> _resolveQuestionToolQuestions(
   final input = toolState['input'] as Map?;
   final raw = input?['questions'];
   if (raw is! List) return [];
-  return raw
-      .whereType<Map>()
-      .map((e) => Map<String, dynamic>.from(e))
-      .toList();
+  return raw.whereType<Map>().map((e) => Map<String, dynamic>.from(e)).toList();
 }
 
 /// `metadata.answers`：与题目顺序对应的标签数组列表。
-List<List<String>> _resolveQuestionToolAnswers(
-    Map<String, dynamic> toolState) {
+List<List<String>> _resolveQuestionToolAnswers(Map<String, dynamic> toolState) {
   final metadata = toolState['metadata'] as Map?;
   final raw = metadata?['answers'];
   if (raw is! List) return [];
@@ -306,6 +306,7 @@ class _ToolPartTile extends StatefulWidget {
     required this.status,
     required this.callId,
     required this.rawInput,
+    required this.rawInputText,
     required this.rawOutput,
     required this.hasDisplayOutput,
     required this.metadata,
@@ -323,6 +324,7 @@ class _ToolPartTile extends StatefulWidget {
   final String status;
   final String? callId;
   final JsonMap rawInput;
+  final String? rawInputText;
   final String? rawOutput;
   final bool hasDisplayOutput;
   final Map<String, dynamic> metadata;
@@ -372,32 +374,153 @@ class _ToolPartTileState extends State<_ToolPartTile> {
   }
 
   String _entryKindLabel(BuildContext context, bool isDirectory) {
-    return isDirectory ? l(context, '目录', 'directory') : l(context, '文件', 'file');
+    return isDirectory
+        ? l(context, '目录', 'directory')
+        : l(context, '文件', 'file');
+  }
+
+  String? _localizedRunningPhaseSummary(BuildContext context) {
+    final phase = (widget.metadata['phase'] as String?) ?? '';
+    if (phase.isEmpty) return null;
+    final path = (widget.metadata['path'] as String?) ??
+        (widget.rawInput['filePath'] as String?) ??
+        (widget.rawInput['path'] as String?) ??
+        (widget.rawInput['url'] as String?) ??
+        (widget.rawInput['pattern'] as String?);
+    final newPath = (widget.metadata['newPath'] as String?) ??
+        (widget.rawInput['toPath'] as String?) ??
+        (widget.rawInput['newName'] as String?);
+    final isDirectory = widget.metadata['isDirectory'] == true;
+    final objectKind = _entryKindLabel(context, isDirectory);
+    switch (phase) {
+      case 'reading':
+        if (path == null || path.isEmpty) return null;
+        return l(context, '正在读取 $path', 'Reading $path');
+      case 'fetching':
+        if (path == null || path.isEmpty) return null;
+        return l(context, '正在抓取 $path', 'Fetching $path');
+      case 'opening':
+        if (path == null || path.isEmpty) return null;
+        return l(context, '正在打开 $path', 'Opening $path');
+      case 'scanning':
+        if (widget.toolName == 'list') {
+          final target = path == null || path.isEmpty ? '.' : path;
+          return l(context, '正在列出 $target', 'Listing $target');
+        }
+        if (path == null || path.isEmpty) return null;
+        return l(context, '正在搜索 $path', 'Searching $path');
+      case 'inspecting':
+        final target = path == null || path.isEmpty ? '.' : path;
+        return l(context, '正在查看信息 $target', 'Inspecting $target');
+      case 'awaiting_approval':
+        if (widget.toolName == 'apply_patch') {
+          return l(context, '等待批准应用补丁', 'Waiting approval to apply patch');
+        }
+        if (widget.toolName == 'delete' && path != null && path.isNotEmpty) {
+          return l(context, '等待批准删除$objectKind $path',
+              'Waiting approval to delete $objectKind $path');
+        }
+        if ((widget.toolName == 'rename' ||
+                widget.toolName == 'move' ||
+                widget.toolName == 'copy') &&
+            path != null &&
+            path.isNotEmpty &&
+            newPath != null &&
+            newPath.isNotEmpty) {
+          final verbZh = widget.toolName == 'rename'
+              ? '重命名'
+              : widget.toolName == 'move'
+                  ? '移动'
+                  : '复制';
+          final verbEn = widget.toolName == 'rename'
+              ? 'rename'
+              : widget.toolName == 'move'
+                  ? 'move'
+                  : 'copy';
+          return l(context, '等待批准$verbZh$objectKind $path -> $newPath',
+              'Waiting approval to $verbEn $objectKind $path -> $newPath');
+        }
+        if (path == null || path.isEmpty) {
+          return l(context, '等待批准执行', 'Waiting for approval');
+        }
+        return l(context, '等待批准修改 $path', 'Waiting approval for $path');
+      case 'applying':
+        if (widget.toolName == 'apply_patch') {
+          return l(context, '正在应用补丁', 'Applying patch');
+        }
+        if (path == null || path.isEmpty) {
+          return l(context, '正在应用更改', 'Applying changes');
+        }
+        return l(context, '正在应用更改 $path', 'Applying changes to $path');
+      case 'awaiting_input':
+        return l(context, '等待用户输入', 'Waiting for user input');
+      case 'processing':
+        return l(context, '正在整理结果', 'Processing results');
+      case 'preparing':
+        if (widget.toolName == 'apply_patch') {
+          return l(context, '正在准备补丁预览', 'Preparing patch preview');
+        }
+        if (path == null || path.isEmpty) {
+          return l(context, '正在准备更改', 'Preparing changes');
+        }
+        return l(context, '正在准备更改 $path', 'Preparing changes for $path');
+      case 'executing':
+        final command =
+            ((widget.metadata['command'] as String?) ?? widget.toolName).trim();
+        return l(context, '正在执行 $command', 'Running $command');
+      default:
+        return null;
+    }
   }
 
   String? _localizedFileOpSummary(BuildContext context) {
     final isDirectory = widget.metadata['isDirectory'] == true;
     final objectKind = _entryKindLabel(context, isDirectory);
+    final isRunning = widget.status == 'running' || widget.status == 'pending';
     final path = (widget.metadata['path'] as String?) ??
+        (widget.rawInput['filePath'] as String?) ??
         (widget.rawInput['path'] as String?) ??
         (widget.rawInput['toPath'] as String?);
     final from = (widget.metadata['from'] as String?) ??
         (widget.rawInput['fromPath'] as String?) ??
+        (widget.rawInput['filePath'] as String?) ??
         (widget.rawInput['path'] as String?);
     switch (widget.toolName) {
       case 'delete':
         if (path == null || path.isEmpty) return null;
+        if (isRunning) {
+          return l(context, '准备删除$objectKind $path',
+              'Preparing to delete $objectKind $path');
+        }
         return l(context, '已删除$objectKind $path', 'Deleted $objectKind $path');
       case 'rename':
-        if (from == null || from.isEmpty || path == null || path.isEmpty) return null;
+        if (from == null || from.isEmpty || path == null || path.isEmpty) {
+          return null;
+        }
+        if (isRunning) {
+          return l(context, '准备重命名$objectKind $from -> $path',
+              'Preparing to rename $objectKind $from -> $path');
+        }
         return l(context, '已重命名$objectKind $from -> $path',
             'Renamed $objectKind $from -> $path');
       case 'move':
-        if (from == null || from.isEmpty || path == null || path.isEmpty) return null;
+        if (from == null || from.isEmpty || path == null || path.isEmpty) {
+          return null;
+        }
+        if (isRunning) {
+          return l(context, '准备移动$objectKind $from -> $path',
+              'Preparing to move $objectKind $from -> $path');
+        }
         return l(context, '已移动$objectKind $from -> $path',
             'Moved $objectKind $from -> $path');
       case 'copy':
-        if (from == null || from.isEmpty || path == null || path.isEmpty) return null;
+        if (from == null || from.isEmpty || path == null || path.isEmpty) {
+          return null;
+        }
+        if (isRunning) {
+          return l(context, '准备复制$objectKind $from -> $path',
+              'Preparing to copy $objectKind $from -> $path');
+        }
         return l(context, '已复制$objectKind $from -> $path',
             'Copied $objectKind $from -> $path');
       default:
@@ -406,14 +529,23 @@ class _ToolPartTileState extends State<_ToolPartTile> {
   }
 
   String? _localizedToolSummary(BuildContext context) {
+    final isRunning = widget.status == 'running' || widget.status == 'pending';
+    if (isRunning) {
+      final phaseSummary = _localizedRunningPhaseSummary(context);
+      if (phaseSummary != null) return phaseSummary;
+    }
     final fileOpSummary = _localizedFileOpSummary(context);
     if (fileOpSummary != null) return fileOpSummary;
 
     switch (widget.toolName) {
       case 'read':
         final path = (widget.metadata['path'] as String?) ??
+            (widget.rawInput['filePath'] as String?) ??
             (widget.rawInput['path'] as String?) ??
             '.';
+        if (isRunning) {
+          return l(context, '正在读取 $path', 'Reading $path');
+        }
         final kind = widget.metadata['kind'] as String?;
         if (kind == 'directory') {
           return l(context, '已列出目录 $path', 'Listed directory $path');
@@ -425,12 +557,15 @@ class _ToolPartTileState extends State<_ToolPartTile> {
           final preview = _firstAttachmentOfType('text_preview');
           final startLine = preview?['startLine'] as int?;
           final endLine = preview?['endLine'] as int?;
-          final lineCount = preview?['lineCount'] as int? ?? widget.metadata['lineCount'] as int?;
+          final lineCount = preview?['lineCount'] as int? ??
+              widget.metadata['lineCount'] as int?;
           if (startLine != null && endLine != null && lineCount != null) {
             if (lineCount == 0) {
               return l(context, '已读取文件 $path · 空文件', 'Read $path · empty file');
             }
-            return l(context, '已读取文件 $path · 第 $startLine-$endLine 行 / 共 $lineCount 行',
+            return l(
+                context,
+                '已读取文件 $path · 第 $startLine-$endLine 行 / 共 $lineCount 行',
                 'Read $path · lines $startLine-$endLine / $lineCount');
           }
           return l(context, '已读取文件 $path', 'Read file $path');
@@ -438,21 +573,36 @@ class _ToolPartTileState extends State<_ToolPartTile> {
         return null;
       case 'write':
         final path = (widget.metadata['path'] as String?) ??
+            (widget.rawInput['filePath'] as String?) ??
             (widget.rawInput['path'] as String?);
         if (path == null || path.isEmpty) return null;
+        if (isRunning) {
+          return l(context, '准备写入文件 $path', 'Preparing write to $path');
+        }
         return l(context, '已写入文件 $path', 'Wrote file $path');
       case 'edit':
         final path = (widget.metadata['path'] as String?) ??
+            (widget.rawInput['filePath'] as String?) ??
             (widget.rawInput['path'] as String?);
         if (path == null || path.isEmpty) return null;
+        if (isRunning) {
+          return l(context, '准备更新文件 $path', 'Preparing edit for $path');
+        }
         return l(context, '已更新文件 $path', 'Updated file $path');
       case 'apply_patch':
         final files = widget.metadata['files'];
         final count = files is List ? files.length : null;
+        if (isRunning) {
+          return l(context, '准备应用补丁', 'Preparing patch');
+        }
         if (count == null) return l(context, '已应用补丁', 'Applied patch');
-        return l(context, '已应用补丁 · $count 个文件', 'Applied patch · $count file(s)');
+        return l(
+            context, '已应用补丁 · $count 个文件', 'Applied patch · $count file(s)');
       case 'grep':
         final pattern = (widget.rawInput['pattern'] as String?) ?? '';
+        if (isRunning) {
+          return l(context, '正在搜索 $pattern', 'Searching $pattern');
+        }
         final count = (widget.metadata['count'] as int?) ??
             (widget.metadata['matches'] as int?) ??
             0;
@@ -465,20 +615,32 @@ class _ToolPartTileState extends State<_ToolPartTile> {
       case 'list':
         final path = (widget.rawInput['path'] as String?)?.trim();
         final resolvedPath = (path == null || path.isEmpty) ? '.' : path;
+        if (isRunning) {
+          return l(context, '正在列出 $resolvedPath', 'Listing $resolvedPath');
+        }
         final count = (widget.metadata['count'] as int?) ?? 0;
         final truncated = widget.metadata['truncated'] == true;
-        return l(context, '已列出 $resolvedPath · $count${truncated ? '+' : ''} 个文件',
+        return l(
+            context,
+            '已列出 $resolvedPath · $count${truncated ? '+' : ''} 个文件',
             'Listed $resolvedPath · $count${truncated ? '+' : ''} files');
       case 'glob':
         final pattern = (widget.rawInput['pattern'] as String?) ?? '*';
+        if (isRunning) {
+          return l(context, '正在通配搜索 $pattern', 'Searching glob $pattern');
+        }
         final count = (widget.metadata['count'] as int?) ?? 0;
         final truncated = widget.metadata['truncated'] == true;
         return l(context, '通配搜索 $pattern · $count${truncated ? '+' : ''} 个匹配',
             'Glob $pattern · $count${truncated ? '+' : ''} matches');
       case 'stat':
         final path = (widget.metadata['path'] as String?) ??
+            (widget.rawInput['filePath'] as String?) ??
             (widget.rawInput['path'] as String?) ??
             '.';
+        if (isRunning) {
+          return l(context, '正在查看信息 $path', 'Inspecting $path');
+        }
         final isDirectory = widget.metadata['isDirectory'] == true;
         final kind = _entryKindLabel(context, isDirectory);
         return l(context, '查看$kind信息 $path', 'Stat $kind $path');
@@ -489,6 +651,9 @@ class _ToolPartTileState extends State<_ToolPartTile> {
         final statusCode = widget.metadata['statusCode'];
         final contentType = widget.metadata['contentType'];
         if (url == null || url.isEmpty) return null;
+        if (isRunning) {
+          return l(context, '正在抓取 $url', 'Fetching $url');
+        }
         return l(context, '已抓取 $url · $statusCode · $contentType',
             'Fetched $url · $statusCode · $contentType');
       case 'browser':
@@ -520,10 +685,20 @@ class _ToolPartTileState extends State<_ToolPartTile> {
 
   String? _localizedGitSummary(BuildContext context) {
     final title = widget.toolTitle ?? '';
+    final isRunning = widget.status == 'running' || widget.status == 'pending';
+    if (isRunning) {
+      final phase = (widget.metadata['phase'] as String?) ?? '';
+      if (phase == 'awaiting_approval') {
+        return l(context, '等待 Git 操作授权', 'Waiting for git approval');
+      }
+      final command = ((widget.metadata['command'] as String?) ?? 'git').trim();
+      return l(context, '正在执行 git $command', 'Running git $command');
+    }
     if (title == 'git init') {
       final workDir = widget.metadata['workDir'] as String?;
       if (workDir == null || workDir.isEmpty) return null;
-      return l(context, '已初始化 Git 仓库 $workDir', 'Initialized git repository at $workDir');
+      return l(context, '已初始化 Git 仓库 $workDir',
+          'Initialized git repository at $workDir');
     }
     if (title == 'git clone') {
       final path = widget.metadata['path'] as String?;
@@ -570,19 +745,22 @@ class _ToolPartTileState extends State<_ToolPartTile> {
     if (title == 'git add') {
       final paths = widget.metadata['paths'];
       if (paths is List) {
-        return l(context, '已暂存 ${paths.length} 个路径', 'Staged ${paths.length} path(s)');
+        return l(context, '已暂存 ${paths.length} 个路径',
+            'Staged ${paths.length} path(s)');
       }
     }
     if (title == 'git restore') {
       final paths = widget.metadata['paths'];
       if (paths is List) {
-        return l(context, '已恢复 ${paths.length} 个路径', 'Restored ${paths.length} path(s)');
+        return l(context, '已恢复 ${paths.length} 个路径',
+            'Restored ${paths.length} path(s)');
       }
     }
     if (title == 'git reset') {
       final paths = widget.metadata['paths'];
       if (paths is List && paths.isNotEmpty) {
-        return l(context, '已重置 ${paths.length} 个路径', 'Reset ${paths.length} path(s)');
+        return l(context, '已重置 ${paths.length} 个路径',
+            'Reset ${paths.length} path(s)');
       }
       final target = (widget.metadata['target'] as String?) ?? '';
       final mode = (widget.metadata['mode'] as String?) ?? '';
@@ -593,12 +771,15 @@ class _ToolPartTileState extends State<_ToolPartTile> {
       }
     }
     if (title == 'git branch') {
-      final action = ((widget.rawInput['action'] as String?) ?? 'list').trim().toLowerCase();
+      final action = ((widget.rawInput['action'] as String?) ?? 'list')
+          .trim()
+          .toLowerCase();
       final name = (widget.rawInput['name'] as String?) ?? '';
       if (action.isEmpty || action == 'list') {
         final branches = widget.metadata['branches'];
         if (branches is List) {
-          return l(context, '${branches.length} 个分支', '${branches.length} branch(es)');
+          return l(context, '${branches.length} 个分支',
+              '${branches.length} branch(es)');
         }
       }
       if (action == 'create' && name.isNotEmpty) {
@@ -647,7 +828,8 @@ class _ToolPartTileState extends State<_ToolPartTile> {
             mergeCommit.length > 8 ? mergeCommit.substring(0, 8) : mergeCommit;
         return branch.isEmpty
             ? l(context, '已完成合并 $shortHash', 'Merged $shortHash')
-            : l(context, '已合并 $branch · $shortHash', 'Merged $branch · $shortHash');
+            : l(context, '已合并 $branch · $shortHash',
+                'Merged $branch · $shortHash');
       }
       if (branch.isNotEmpty) {
         return l(context, '已合并 $branch', 'Merged $branch');
@@ -657,7 +839,8 @@ class _ToolPartTileState extends State<_ToolPartTile> {
       final updatedRefs = widget.metadata['updatedRefs'];
       final count = updatedRefs is List ? updatedRefs.length : 0;
       if (count == 0) {
-        return l(context, '抓取完成，引用无更新', 'Fetched successfully, no refs updated');
+        return l(
+            context, '抓取完成，引用无更新', 'Fetched successfully, no refs updated');
       }
       return l(context, '已抓取 $count 个引用', 'Fetched $count ref(s)');
     }
@@ -667,7 +850,8 @@ class _ToolPartTileState extends State<_ToolPartTile> {
       final newHead = widget.metadata['newHead'] as String?;
       if (useRebase) {
         if (newHead != null && newHead.isNotEmpty) {
-          final shortHash = newHead.length > 8 ? newHead.substring(0, 8) : newHead;
+          final shortHash =
+              newHead.length > 8 ? newHead.substring(0, 8) : newHead;
           return l(context, '拉取并变基完成 · $shortHash',
               'Pulled and rebased · $shortHash');
         }
@@ -676,8 +860,8 @@ class _ToolPartTileState extends State<_ToolPartTile> {
       if (mergeCommit != null && mergeCommit.isNotEmpty) {
         final shortHash =
             mergeCommit.length > 8 ? mergeCommit.substring(0, 8) : mergeCommit;
-        return l(context, '拉取并合并完成 · $shortHash',
-            'Pulled and merged · $shortHash');
+        return l(
+            context, '拉取并合并完成 · $shortHash', 'Pulled and merged · $shortHash');
       }
       return l(context, '拉取并合并完成', 'Pulled and merged successfully');
     }
@@ -706,10 +890,12 @@ class _ToolPartTileState extends State<_ToolPartTile> {
       final ref = (widget.rawInput['ref'] as String?) ?? '';
       final newHead = widget.metadata['newHead'] as String?;
       if (newHead != null && newHead.isNotEmpty) {
-        final shortHash = newHead.length > 8 ? newHead.substring(0, 8) : newHead;
+        final shortHash =
+            newHead.length > 8 ? newHead.substring(0, 8) : newHead;
         return ref.isEmpty
             ? l(context, '拣选完成 · $shortHash', 'Cherry-picked · $shortHash')
-            : l(context, '已拣选 $ref · $shortHash', 'Cherry-picked $ref · $shortHash');
+            : l(context, '已拣选 $ref · $shortHash',
+                'Cherry-picked $ref · $shortHash');
       }
       if (ref.isNotEmpty) {
         return l(context, '已拣选 $ref', 'Cherry-picked $ref');
@@ -735,10 +921,12 @@ class _ToolPartTileState extends State<_ToolPartTile> {
       final ref = (widget.rawInput['ref'] as String?) ?? '';
       final newHead = widget.metadata['newHead'] as String?;
       if (newHead != null && newHead.isNotEmpty) {
-        final shortHash = newHead.length > 8 ? newHead.substring(0, 8) : newHead;
+        final shortHash =
+            newHead.length > 8 ? newHead.substring(0, 8) : newHead;
         return ref.isEmpty
             ? l(context, '变基完成 · $shortHash', 'Rebased · $shortHash')
-            : l(context, '已变基到 $ref · $shortHash', 'Rebased onto $ref · $shortHash');
+            : l(context, '已变基到 $ref · $shortHash',
+                'Rebased onto $ref · $shortHash');
       }
       if (ref.isNotEmpty) {
         return l(context, '已变基到 $ref', 'Rebased onto $ref');
@@ -852,8 +1040,9 @@ class _ToolPartTileState extends State<_ToolPartTile> {
     final expanded = _expanded ?? _defaultExpanded();
     final localizedSummary = _localizedToolSummary(context);
     final collapsedOutput = localizedSummary ?? widget.output;
-    final expandedOutput =
-        widget.hasDisplayOutput ? (localizedSummary ?? widget.output) : widget.output;
+    final expandedOutput = widget.hasDisplayOutput
+        ? (localizedSummary ?? widget.output)
+        : widget.output;
     final collapsedSummary = collapsedOutput?.split('\n').first.trim();
     final diffSuffix = _diffStatSuffix();
     final oc = context.oc;
@@ -862,9 +1051,13 @@ class _ToolPartTileState extends State<_ToolPartTile> {
       padding: const EdgeInsets.fromLTRB(9, 8, 9, 8),
       decoration: BoxDecoration(
         color: isError
-            ? (context.isDarkMode ? const Color(0xFF1F0A0A) : const Color(0xFFFFFBFB))
+            ? (context.isDarkMode
+                ? const Color(0xFF1F0A0A)
+                : const Color(0xFFFFFBFB))
             : isRunning
-                ? (context.isDarkMode ? const Color(0xFF1C1A0E) : const Color(0xFFFFFCF2))
+                ? (context.isDarkMode
+                    ? const Color(0xFF1C1A0E)
+                    : const Color(0xFFFFFCF2))
                 : oc.mutedPanel,
         borderRadius: BorderRadius.circular(10),
         border: Border.all(color: oc.softBorderColor),
@@ -932,6 +1125,7 @@ class _ToolPartTileState extends State<_ToolPartTile> {
                     toolName: widget.toolName,
                     callId: widget.callId,
                     rawInput: widget.rawInput,
+                    rawInputText: widget.rawInputText,
                     rawOutput: widget.rawOutput,
                   ),
                 ),
@@ -1167,4 +1361,3 @@ Future<void> _openCompactionSummarySheet(
     ),
   );
 }
-

@@ -370,6 +370,13 @@ class ModelGateway {
     CancelToken? cancelToken,
     FutureOr<void> Function(String delta)? onTextDelta,
     FutureOr<void> Function(String delta)? onReasoningDelta,
+    FutureOr<void> Function({
+      required String toolCallId,
+      required String toolName,
+      required String argumentsText,
+      required String argumentsDelta,
+    })?
+        onToolCallDelta,
   }) async {
     cancelToken?.throwIfCancelled();
     final isMagProvider = config.isMagProvider;
@@ -516,6 +523,18 @@ class ModelGateway {
         if (args.isNotEmpty) {
           buffer.arguments.write(args);
         }
+        final readyId = (buffer.id ?? '').trim();
+        final readyName = (buffer.name ?? '').trim();
+        if (onToolCallDelta != null &&
+            readyId.isNotEmpty &&
+            readyName.isNotEmpty) {
+          await onToolCallDelta(
+            toolCallId: readyId,
+            toolName: readyName,
+            argumentsText: buffer.arguments.toString(),
+            argumentsDelta: args,
+          );
+        }
       }
       if (toolCalls.isNotEmpty || choice['finish_reason'] != null) {
         _debugLog('gateway-chunk', 'tool chunk / finish reason', {
@@ -607,6 +626,13 @@ class ModelGateway {
     CancelToken? cancelToken,
     FutureOr<void> Function(String delta)? onTextDelta,
     FutureOr<void> Function(String delta)? onReasoningDelta,
+    FutureOr<void> Function({
+      required String toolCallId,
+      required String toolName,
+      required String argumentsText,
+      required String argumentsDelta,
+    })?
+        onToolCallDelta,
   }) async {
     final maxOut = _resolvedMaxOutputTokens(config);
     if (_usesAnthropicApi(config)) {
@@ -628,6 +654,7 @@ class ModelGateway {
       cancelToken: cancelToken,
       onTextDelta: onTextDelta,
       onReasoningDelta: onReasoningDelta,
+      onToolCallDelta: onToolCallDelta,
     );
   }
 

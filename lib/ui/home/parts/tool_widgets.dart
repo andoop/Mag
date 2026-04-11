@@ -5,6 +5,7 @@ Future<void> _openRawToolCallSheet(
   required String toolName,
   String? callId,
   required JsonMap rawInput,
+  String? rawInputText,
   String? rawOutput,
 }) {
   return showModalBottomSheet<void>(
@@ -17,6 +18,7 @@ Future<void> _openRawToolCallSheet(
           toolName: toolName,
           callId: callId,
           rawInput: rawInput,
+          rawInputText: rawInputText,
           rawOutput: rawOutput,
         ),
       ),
@@ -28,6 +30,7 @@ class _RawToolCallSheet extends StatefulWidget {
   const _RawToolCallSheet({
     required this.toolName,
     required this.rawInput,
+    this.rawInputText,
     this.callId,
     this.rawOutput,
   });
@@ -35,6 +38,7 @@ class _RawToolCallSheet extends StatefulWidget {
   final String toolName;
   final String? callId;
   final JsonMap rawInput;
+  final String? rawInputText;
   final String? rawOutput;
 
   @override
@@ -63,6 +67,10 @@ class _RawToolCallSheetState extends State<_RawToolCallSheet> {
   String _rawText() {
     if (_view == 'output') {
       return widget.rawOutput ?? '';
+    }
+    final rawInputText = widget.rawInputText?.trim() ?? '';
+    if (widget.rawInput.isEmpty && rawInputText.isNotEmpty) {
+      return rawInputText;
     }
     return const JsonEncoder.withIndent('  ').convert(widget.rawInput);
   }
@@ -136,8 +144,8 @@ class _RawToolCallSheetState extends State<_RawToolCallSheet> {
                           if (context.mounted) {
                             ScaffoldMessenger.of(context).showSnackBar(
                               SnackBar(
-                                content:
-                                    Text(l(context, '已复制', 'Copied to clipboard')),
+                                content: Text(
+                                    l(context, '已复制', 'Copied to clipboard')),
                               ),
                             );
                           }
@@ -228,9 +236,13 @@ class _FileRefToolPart extends StatelessWidget {
       padding: const EdgeInsets.fromLTRB(9, 8, 9, 8),
       decoration: BoxDecoration(
         color: isError
-            ? (context.isDarkMode ? const Color(0xFF1F0A0A) : const Color(0xFFFFFBFB))
+            ? (context.isDarkMode
+                ? const Color(0xFF1F0A0A)
+                : const Color(0xFFFFFBFB))
             : isRunning
-                ? (context.isDarkMode ? const Color(0xFF1C1A0E) : const Color(0xFFFFFCF2))
+                ? (context.isDarkMode
+                    ? const Color(0xFF1C1A0E)
+                    : const Color(0xFFFFFCF2))
                 : oc.mutedPanel,
         borderRadius: BorderRadius.circular(10),
         border: Border.all(color: oc.softBorderColor),
@@ -323,9 +335,7 @@ class _FileRefToolPart extends StatelessWidget {
                       padding: const EdgeInsets.symmetric(
                           horizontal: 10, vertical: 6),
                       decoration: BoxDecoration(
-                        color: exists
-                            ? oc.selectedFill
-                            : Colors.orange.shade50,
+                        color: exists ? oc.selectedFill : Colors.orange.shade50,
                         borderRadius: BorderRadius.circular(8),
                         border: Border.all(
                           color: exists
@@ -397,9 +407,8 @@ class _TodoWriteToolPart extends StatelessWidget {
   Widget build(BuildContext context) {
     final isRunning = toolStatus == 'running' || toolStatus == 'pending';
     final isError = toolStatus == 'error';
-    final completed = todos
-        .where((t) => (t['status'] as String?) == 'completed')
-        .length;
+    final completed =
+        todos.where((t) => (t['status'] as String?) == 'completed').length;
     final total = todos.length;
     final ratioSubtitle = total > 0
         ? l(context, '已完成 $completed/$total', 'Completed $completed/$total')
@@ -411,9 +420,13 @@ class _TodoWriteToolPart extends StatelessWidget {
       padding: const EdgeInsets.fromLTRB(9, 8, 9, 8),
       decoration: BoxDecoration(
         color: isError
-            ? (context.isDarkMode ? const Color(0xFF1F0A0A) : const Color(0xFFFFFBFB))
+            ? (context.isDarkMode
+                ? const Color(0xFF1F0A0A)
+                : const Color(0xFFFFFBFB))
             : isRunning
-                ? (context.isDarkMode ? const Color(0xFF1C1A0E) : const Color(0xFFFFFCF2))
+                ? (context.isDarkMode
+                    ? const Color(0xFF1C1A0E)
+                    : const Color(0xFFFFFCF2))
                 : oc.mutedPanel,
         borderRadius: BorderRadius.circular(10),
         border: Border.all(color: oc.softBorderColor),
@@ -600,7 +613,9 @@ class _QuestionToolPartState extends State<_QuestionToolPart> {
       padding: const EdgeInsets.fromLTRB(9, 8, 9, 8),
       decoration: BoxDecoration(
         color: isRunning
-            ? (context.isDarkMode ? const Color(0xFF1C1A0E) : const Color(0xFFFFFCF2))
+            ? (context.isDarkMode
+                ? const Color(0xFF1C1A0E)
+                : const Color(0xFFFFFCF2))
             : oc.mutedPanel,
         borderRadius: BorderRadius.circular(10),
         border: Border.all(color: oc.softBorderColor),
@@ -677,9 +692,8 @@ class _QuestionToolPartState extends State<_QuestionToolPart> {
               ...List.generate(widget.questions.length, (i) {
                 final q = widget.questions[i];
                 final text = q['question'] as String? ?? '';
-                final ans = i < widget.answers.length
-                    ? widget.answers[i]
-                    : <String>[];
+                final ans =
+                    i < widget.answers.length ? widget.answers[i] : <String>[];
                 final line = ans.isEmpty ? noneLabel : ans.join(', ');
                 return Padding(
                   padding: const EdgeInsets.only(bottom: 10),
@@ -724,4 +738,3 @@ class _QuestionToolPartState extends State<_QuestionToolPart> {
     );
   }
 }
-

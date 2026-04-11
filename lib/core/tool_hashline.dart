@@ -77,11 +77,9 @@ String _computeLegacyHashlineHash(int lineNumber, String content) {
   var s = content.replaceAll('\r', '');
   if (s.startsWith('\uFEFF')) s = s.substring(1);
   s = s.replaceAll(RegExp(r'\s+'), '');
-  final hasSignificant =
-      RegExp(r'[\p{L}\p{N}]', unicode: true).hasMatch(s);
+  final hasSignificant = RegExp(r'[\p{L}\p{N}]', unicode: true).hasMatch(s);
   final seed = hasSignificant ? '0' : lineNumber.toString();
-  final digest =
-      sha1.convert(utf8.encode('$seed:$s')).bytes.first & 0xff;
+  final digest = sha1.convert(utf8.encode('$seed:$s')).bytes.first & 0xff;
   final first = _kHashlineAlphabet[(digest >> 4) & 0x0f];
   final second = _kHashlineAlphabet[digest & 0x0f];
   return '$first$second';
@@ -278,7 +276,8 @@ List<String> _normalizeInsertedHashlineLines(List<String> lines) {
   }
   if (nonEmpty == 0) return lines;
   final stripHash = hashCount > 0 && hashCount >= nonEmpty * 0.5;
-  final stripPlus = !stripHash && diffPlusCount > 0 && diffPlusCount >= nonEmpty * 0.5;
+  final stripPlus =
+      !stripHash && diffPlusCount > 0 && diffPlusCount >= nonEmpty * 0.5;
   return lines.map((line) {
     if (stripHash) return line.replaceFirst(hashRe, '');
     if (stripPlus) return line.replaceFirst(diffPlusRe, '');
@@ -576,7 +575,8 @@ List<String> _applyHashlinePrepend(
   // Strip echo: model often echoes the anchor line as last line of insertion
   insertion = _stripInsertBeforeEcho(lines[line - 1], insertion);
   if (insertion.isEmpty) {
-    throw Exception('prepend produced empty lines after stripping anchor echo.');
+    throw Exception(
+        'prepend produced empty lines after stripping anchor echo.');
   }
   final next = List<String>.of(lines);
   next.insertAll(line - 1, insertion);
@@ -763,6 +763,26 @@ Future<ToolExecutionResult> _executeHashlineEditTool(
   final targetPath = rename != null && rename.isNotEmpty
       ? _normalizeWorkspaceRelativePath(rename)
       : filePath;
+  final preview = _buildDiffAttachment(
+    kind: targetPath == filePath ? 'edit' : 'move',
+    path: targetPath,
+    before: existingRaw,
+    after: restored,
+    sourcePath: targetPath == filePath ? null : filePath,
+  );
+  await ctx.updateToolProgress(
+    title: targetPath,
+    displayOutput: targetPath == filePath
+        ? 'Preparing edit for $targetPath'
+        : 'Preparing move $filePath → $targetPath',
+    metadata: {
+      'phase': 'preparing',
+      'path': filePath,
+      'filePath': filePath,
+      if (targetPath != filePath) 'newPath': targetPath,
+    },
+    attachments: [preview],
+  );
   await ctx.askPermission(
     PermissionRequest(
       id: newId('perm'),
@@ -774,13 +794,7 @@ Future<ToolExecutionResult> _executeHashlineEditTool(
         'path': filePath,
         'filePath': filePath,
         'newPath': targetPath == filePath ? null : targetPath,
-        'preview': _buildDiffAttachment(
-          kind: targetPath == filePath ? 'edit' : 'move',
-          path: targetPath,
-          before: existingRaw,
-          after: restored,
-          sourcePath: targetPath == filePath ? null : filePath,
-        ),
+        'preview': preview,
       },
       always: [targetPath],
       messageId: ctx.message.id,
@@ -810,7 +824,8 @@ Future<ToolExecutionResult> _executeHashlineEditTool(
   }
   final bracketWarning = _checkBracketBalance(restored, targetPath);
   if (bracketWarning.isNotEmpty) {
-    output += '\n\n<diagnostics file="$targetPath">\n$bracketWarning\nPlease review and fix the bracket issue.\n</diagnostics>';
+    output +=
+        '\n\n<diagnostics file="$targetPath">\n$bracketWarning\nPlease review and fix the bracket issue.\n</diagnostics>';
   }
   return ToolExecutionResult(
     title: targetPath,
@@ -829,13 +844,7 @@ Future<ToolExecutionResult> _executeHashlineEditTool(
         ),
     },
     attachments: [
-      _buildDiffAttachment(
-        kind: targetPath == filePath ? 'edit' : 'move',
-        path: targetPath,
-        before: existingRaw,
-        after: restored,
-        sourcePath: targetPath == filePath ? null : filePath,
-      ),
+      preview,
     ],
   );
 }

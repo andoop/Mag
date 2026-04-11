@@ -71,17 +71,68 @@ extension SessionEngineTools on SessionEngine {
       bridge: workspaceBridge,
       database: database,
       callId: call.id,
-      askPermission: (request) => permissionCenter.ask(
-        workspace: workspace,
-        request: request,
-        rules: agentDefinition(agent).permissionRules,
-        cancelToken: cancelToken,
-      ),
-      askQuestion: (request) => questionCenter.ask(
-        workspace: workspace,
-        request: request,
-        cancelToken: cancelToken,
-      ),
+      askPermission: (request) async {
+        await _updateToolState(
+          workspace: workspace,
+          sessionId: session.id,
+          callId: call.id,
+          status: ToolStatus.running,
+          metadata: {
+            'phase': 'awaiting_approval',
+            'permission': request.permission,
+            'patterns': request.patterns,
+          },
+          toolPartCache: toolPartCache,
+          onPartSaved: onPartSaved,
+        );
+        await permissionCenter.ask(
+          workspace: workspace,
+          request: request,
+          rules: agentDefinition(agent).permissionRules,
+          cancelToken: cancelToken,
+        );
+        await _updateToolState(
+          workspace: workspace,
+          sessionId: session.id,
+          callId: call.id,
+          status: ToolStatus.running,
+          metadata: {
+            'phase': 'applying',
+          },
+          toolPartCache: toolPartCache,
+          onPartSaved: onPartSaved,
+        );
+      },
+      askQuestion: (request) async {
+        await _updateToolState(
+          workspace: workspace,
+          sessionId: session.id,
+          callId: call.id,
+          status: ToolStatus.running,
+          metadata: {
+            'phase': 'awaiting_input',
+          },
+          toolPartCache: toolPartCache,
+          onPartSaved: onPartSaved,
+        );
+        final answers = await questionCenter.ask(
+          workspace: workspace,
+          request: request,
+          cancelToken: cancelToken,
+        );
+        await _updateToolState(
+          workspace: workspace,
+          sessionId: session.id,
+          callId: call.id,
+          status: ToolStatus.running,
+          metadata: {
+            'phase': 'processing',
+          },
+          toolPartCache: toolPartCache,
+          onPartSaved: onPartSaved,
+        );
+        return answers;
+      },
       resolveInstructionReminder: (relativePath) =>
           promptAssembler.directoryInstructionReminder(
         workspace: workspace,
@@ -149,6 +200,25 @@ extension SessionEngineTools on SessionEngine {
           },
           directory: workspace.treeUri,
         ));
+      },
+      updateToolProgress: ({
+        String? title,
+        String? displayOutput,
+        JsonMap? metadata,
+        List<JsonMap>? attachments,
+      }) async {
+        await _updateToolState(
+          workspace: workspace,
+          sessionId: session.id,
+          callId: call.id,
+          status: ToolStatus.running,
+          title: title,
+          displayOutput: displayOutput,
+          metadata: metadata,
+          attachments: attachments,
+          toolPartCache: toolPartCache,
+          onPartSaved: onPartSaved,
+        );
       },
     );
     try {
@@ -218,6 +288,7 @@ extension SessionEngineTools on SessionEngine {
         sessionId: session.id,
         callId: call.id,
         status: ToolStatus.error,
+        error: errText,
         output: toolOutput,
         displayOutput: '${call.name} failed: $errText',
         toolPartCache: toolPartCache,
@@ -292,6 +363,7 @@ extension SessionEngineTools on SessionEngine {
     required String sessionId,
     required String callId,
     required ToolStatus status,
+    String? error,
     String? output,
     String? displayOutput,
     String? title,
@@ -306,6 +378,7 @@ extension SessionEngineTools on SessionEngine {
         );
     final state =
         Map<String, dynamic>.from(part.data['state'] as Map? ?? const {});
+    final time = Map<String, dynamic>.from(state['time'] as Map? ?? const {});
     state['status'] = status.name;
     if (output != null) {
       state['output'] = output;
@@ -317,10 +390,42 @@ extension SessionEngineTools on SessionEngine {
       state['title'] = title;
     }
     if (metadata != null) {
-      state['metadata'] = metadata;
+      final existingMetadata =
+          Map<String, dynamic>.from(state['metadata'] as Map? ?? const {});
+      final mergedMetadata = <String, dynamic>{
+        ...existingMetadata,
+        ...metadata,
+      };
+      if ((status == ToolStatus.completed || status == ToolStatus.error) &&
+          !metadata.containsKey('phase')) {
+        mergedMetadata.remove('phase');
+      }
+      state['metadata'] = mergedMetadata;
     }
     if (attachments != null) {
       state['attachments'] = attachments;
+    }
+    if ((status == ToolStatus.completed || status == ToolStatus.error) &&
+        state['metadata'] is Map) {
+      final clearedMetadata =
+          Map<String, dynamic>.from(state['metadata'] as Map);
+      clearedMetadata.remove('phase');
+      state['metadata'] = clearedMetadata;
+    }
+    if (error != null) {
+      state['error'] = error;
+    } else if (status != ToolStatus.error) {
+      state.remove('error');
+    }
+    if (status == ToolStatus.running) {
+      time['start'] ??= DateTime.now().millisecondsSinceEpoch;
+    }
+    if (status == ToolStatus.completed || status == ToolStatus.error) {
+      time['start'] ??= DateTime.now().millisecondsSinceEpoch;
+      time['end'] = DateTime.now().millisecondsSinceEpoch;
+    }
+    if (time.isNotEmpty) {
+      state['time'] = time;
     }
     final updated = MessagePart(
       id: part.id,

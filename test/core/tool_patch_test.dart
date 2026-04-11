@@ -52,6 +52,11 @@ void main() {
               'runSubtask should not be used in patch tests');
         },
         saveTodos: (_) async {},
+        updateToolProgress: (
+            {String? title,
+            String? displayOutput,
+            JsonMap? metadata,
+            List<JsonMap>? attachments}) async {},
       ),
     );
   }
@@ -250,6 +255,11 @@ EOF""");
               'runSubtask should not be used in patch tests');
         },
         saveTodos: (_) async {},
+        updateToolProgress: (
+            {String? title,
+            String? displayOutput,
+            JsonMap? metadata,
+            List<JsonMap>? attachments}) async {},
       ),
     );
     final anchor =
@@ -299,6 +309,11 @@ EOF""");
               'runSubtask should not be used in patch tests');
         },
         saveTodos: (_) async {},
+        updateToolProgress: (
+            {String? title,
+            String? displayOutput,
+            JsonMap? metadata,
+            List<JsonMap>? attachments}) async {},
       ),
     );
     final anchor =

@@ -2,13 +2,19 @@ part of 'tool_runtime.dart';
 
 Future<ToolExecutionResult> _listTool(
     JsonMap args, ToolRuntimeContext ctx) async {
-  final relativePath = _normalizeWorkspaceRelativePath(args['path'] as String? ?? '');
+  final relativePath =
+      _normalizeWorkspaceRelativePath(args['path'] as String? ?? '');
   final ignore = (args['ignore'] as List?)
           ?.map((item) => item.toString())
           .where((item) => item.trim().isNotEmpty)
           .toList() ??
       const <String>[];
   final searchPath = relativePath.isEmpty ? '.' : relativePath;
+  await ctx.updateToolProgress(
+    title: searchPath,
+    displayOutput: 'Listing $searchPath',
+    metadata: {'phase': 'scanning', 'path': searchPath},
+  );
   final files = await ctx.bridge.searchEntries(
     treeUri: ctx.workspace.treeUri,
     relativePath: relativePath,
@@ -39,7 +45,17 @@ Future<ToolExecutionResult> _listTool(
 Future<ToolExecutionResult> _globTool(
     JsonMap args, ToolRuntimeContext ctx) async {
   final pattern = args['pattern'] as String? ?? '*';
-  final pathPrefix = _normalizeWorkspaceRelativePath(args['path'] as String? ?? '');
+  final pathPrefix =
+      _normalizeWorkspaceRelativePath(args['path'] as String? ?? '');
+  await ctx.updateToolProgress(
+    title: pathPrefix.isEmpty ? pattern : pathPrefix,
+    displayOutput: 'Searching $pattern',
+    metadata: {
+      'phase': 'scanning',
+      'path': pathPrefix,
+      'pattern': pattern,
+    },
+  );
   final matches = await ctx.bridge.searchEntries(
     treeUri: ctx.workspace.treeUri,
     relativePath: pathPrefix,
@@ -96,12 +112,23 @@ Future<ToolExecutionResult> _globTool(
 Future<ToolExecutionResult> _grepTool(
     JsonMap args, ToolRuntimeContext ctx) async {
   final pattern = args['pattern'] as String? ?? '';
-  final pathPrefix = _normalizeWorkspaceRelativePath(args['path'] as String? ?? '');
+  final pathPrefix =
+      _normalizeWorkspaceRelativePath(args['path'] as String? ?? '');
   final includeArg = args['include'] as String?;
   final includeTrimmed = includeArg?.trim();
   final include = (includeTrimmed != null && includeTrimmed.isNotEmpty)
       ? includeTrimmed
       : (args['glob'] as String?)?.trim();
+  await ctx.updateToolProgress(
+    title: pattern,
+    displayOutput: 'Searching $pattern',
+    metadata: {
+      'phase': 'scanning',
+      'pattern': pattern,
+      'path': pathPrefix,
+      if (include != null && include.isNotEmpty) 'include': include,
+    },
+  );
   final matches = await ctx.bridge.grepText(
     treeUri: ctx.workspace.treeUri,
     pattern: pattern,
@@ -164,6 +191,15 @@ String _formatStatEntry(WorkspaceEntry entry) {
 Future<ToolExecutionResult> _statTool(
     JsonMap args, ToolRuntimeContext ctx) async {
   final filePath = _toolFilePathArg(args);
+  await ctx.updateToolProgress(
+    title: filePath.isEmpty ? ctx.workspace.name : filePath,
+    displayOutput: 'Inspecting ${filePath.isEmpty ? '.' : filePath}',
+    metadata: {
+      'phase': 'inspecting',
+      'path': filePath,
+      if (filePath.isNotEmpty) 'filePath': filePath,
+    },
+  );
   WorkspaceEntry? entry;
   if (filePath.isEmpty) {
     entry = await ctx.bridge.getEntry(
@@ -214,6 +250,11 @@ Future<ToolExecutionResult> _deleteTool(
   if (existing == null) {
     throw Exception('Not found: $filePath');
   }
+  await ctx.updateToolProgress(
+    title: filePath,
+    displayOutput: 'Preparing delete for $filePath',
+    metadata: {'phase': 'preparing', 'path': filePath, 'filePath': filePath},
+  );
   await ctx.askPermission(
     PermissionRequest(
       id: newId('perm'),
@@ -256,7 +297,8 @@ Future<ToolExecutionResult> _renameTool(
     throw Exception('Missing required `path` or `newName`.');
   }
   if (newName.contains('/') || newName.contains('\\')) {
-    throw Exception('`newName` must be a single segment (no slashes). Use `move` for paths.');
+    throw Exception(
+        '`newName` must be a single segment (no slashes). Use `move` for paths.');
   }
   final existing = await ctx.bridge.stat(
     treeUri: ctx.workspace.treeUri,
@@ -266,8 +308,24 @@ Future<ToolExecutionResult> _renameTool(
     throw Exception('Not found: $filePath');
   }
   final parent = _parentPath(filePath);
-  final newPath =
-      parent.isEmpty ? newName : '$parent/$newName';
+  final newPath = parent.isEmpty ? newName : '$parent/$newName';
+  final preview = _buildDiffAttachment(
+    kind: 'rename',
+    path: newPath,
+    before: filePath,
+    after: newPath,
+  );
+  await ctx.updateToolProgress(
+    title: newPath,
+    displayOutput: 'Preparing rename $filePath → $newPath',
+    metadata: {
+      'phase': 'preparing',
+      'path': filePath,
+      'filePath': filePath,
+      'newPath': newPath
+    },
+    attachments: [preview],
+  );
   await ctx.askPermission(
     PermissionRequest(
       id: newId('perm'),
@@ -279,12 +337,7 @@ Future<ToolExecutionResult> _renameTool(
         'path': filePath,
         'filePath': filePath,
         'newPath': newPath,
-        'preview': _buildDiffAttachment(
-          kind: 'rename',
-          path: newPath,
-          before: filePath,
-          after: newPath,
-        ),
+        'preview': preview,
       },
       always: [filePath],
       messageId: ctx.message.id,
@@ -299,16 +352,23 @@ Future<ToolExecutionResult> _renameTool(
   final targetKind = existing.isDirectory ? 'directory' : 'file';
   return ToolExecutionResult(
     title: newPath,
-    output: 'Renamed $targetKind `$filePath` to `$newPath`.\n\n${_formatStatEntry(entry)}',
+    output:
+        'Renamed $targetKind `$filePath` to `$newPath`.\n\n${_formatStatEntry(entry)}',
     displayOutput: 'Renamed $targetKind $filePath → $newPath',
-    metadata: {'path': entry.path, 'from': filePath, 'isDirectory': existing.isDirectory},
+    metadata: {
+      'path': entry.path,
+      'from': filePath,
+      'isDirectory': existing.isDirectory
+    },
   );
 }
 
 Future<ToolExecutionResult> _moveTool(
     JsonMap args, ToolRuntimeContext ctx) async {
-  final fromPath = _normalizeWorkspaceRelativePath(args['fromPath'] as String? ?? '');
-  final toPath = _normalizeWorkspaceRelativePath(args['toPath'] as String? ?? '');
+  final fromPath =
+      _normalizeWorkspaceRelativePath(args['fromPath'] as String? ?? '');
+  final toPath =
+      _normalizeWorkspaceRelativePath(args['toPath'] as String? ?? '');
   if (fromPath.isEmpty || toPath.isEmpty) {
     throw Exception('Missing required `fromPath` or `toPath`.');
   }
@@ -319,6 +379,23 @@ Future<ToolExecutionResult> _moveTool(
   if (existing == null) {
     throw Exception('Not found: $fromPath');
   }
+  final preview = _buildDiffAttachment(
+    kind: 'move',
+    path: toPath,
+    before: fromPath,
+    after: toPath,
+  );
+  await ctx.updateToolProgress(
+    title: toPath,
+    displayOutput: 'Preparing move $fromPath → $toPath',
+    metadata: {
+      'phase': 'preparing',
+      'path': fromPath,
+      'filePath': fromPath,
+      'newPath': toPath
+    },
+    attachments: [preview],
+  );
   await ctx.askPermission(
     PermissionRequest(
       id: newId('perm'),
@@ -330,12 +407,7 @@ Future<ToolExecutionResult> _moveTool(
         'path': fromPath,
         'filePath': fromPath,
         'newPath': toPath,
-        'preview': _buildDiffAttachment(
-          kind: 'move',
-          path: toPath,
-          before: fromPath,
-          after: toPath,
-        ),
+        'preview': preview,
       },
       always: [fromPath, toPath],
       messageId: ctx.message.id,
@@ -350,16 +422,23 @@ Future<ToolExecutionResult> _moveTool(
   final targetKind = existing.isDirectory ? 'directory' : 'file';
   return ToolExecutionResult(
     title: toPath,
-    output: 'Moved $targetKind `$fromPath` to `$toPath`.\n\n${_formatStatEntry(entry)}',
+    output:
+        'Moved $targetKind `$fromPath` to `$toPath`.\n\n${_formatStatEntry(entry)}',
     displayOutput: 'Moved $targetKind $fromPath → $toPath',
-    metadata: {'path': entry.path, 'from': fromPath, 'isDirectory': existing.isDirectory},
+    metadata: {
+      'path': entry.path,
+      'from': fromPath,
+      'isDirectory': existing.isDirectory
+    },
   );
 }
 
 Future<ToolExecutionResult> _copyTool(
     JsonMap args, ToolRuntimeContext ctx) async {
-  final fromPath = _normalizeWorkspaceRelativePath(args['fromPath'] as String? ?? '');
-  final toPath = _normalizeWorkspaceRelativePath(args['toPath'] as String? ?? '');
+  final fromPath =
+      _normalizeWorkspaceRelativePath(args['fromPath'] as String? ?? '');
+  final toPath =
+      _normalizeWorkspaceRelativePath(args['toPath'] as String? ?? '');
   if (fromPath.isEmpty || toPath.isEmpty) {
     throw Exception('Missing required `fromPath` or `toPath`.');
   }
@@ -370,6 +449,23 @@ Future<ToolExecutionResult> _copyTool(
   if (existing == null) {
     throw Exception('Not found: $fromPath');
   }
+  final preview = _buildDiffAttachment(
+    kind: 'copy',
+    path: toPath,
+    before: fromPath,
+    after: toPath,
+  );
+  await ctx.updateToolProgress(
+    title: toPath,
+    displayOutput: 'Preparing copy $fromPath → $toPath',
+    metadata: {
+      'phase': 'preparing',
+      'path': fromPath,
+      'filePath': fromPath,
+      'newPath': toPath
+    },
+    attachments: [preview],
+  );
   await ctx.askPermission(
     PermissionRequest(
       id: newId('perm'),
@@ -381,12 +477,7 @@ Future<ToolExecutionResult> _copyTool(
         'path': fromPath,
         'filePath': fromPath,
         'newPath': toPath,
-        'preview': _buildDiffAttachment(
-          kind: 'copy',
-          path: toPath,
-          before: fromPath,
-          after: toPath,
-        ),
+        'preview': preview,
       },
       always: [toPath],
       messageId: ctx.message.id,
@@ -401,9 +492,13 @@ Future<ToolExecutionResult> _copyTool(
   final targetKind = existing.isDirectory ? 'directory' : 'file';
   return ToolExecutionResult(
     title: toPath,
-    output: 'Copied $targetKind `$fromPath` to `$toPath`.\n\n${_formatStatEntry(entry)}',
+    output:
+        'Copied $targetKind `$fromPath` to `$toPath`.\n\n${_formatStatEntry(entry)}',
     displayOutput: 'Copied $targetKind $fromPath → $toPath',
-    metadata: {'path': entry.path, 'from': fromPath, 'isDirectory': existing.isDirectory},
+    metadata: {
+      'path': entry.path,
+      'from': fromPath,
+      'isDirectory': existing.isDirectory
+    },
   );
 }
-

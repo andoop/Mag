@@ -146,6 +146,17 @@ Future<ToolExecutionResult> _applyPatchTool(
           ))
       .toList();
   final targetPaths = planned.map((item) => item.targetPath).toSet().toList();
+  await ctx.updateToolProgress(
+    title: targetPaths.length == 1 ? targetPaths.first : 'Apply Patch',
+    displayOutput: targetPaths.isEmpty
+        ? 'Preparing patch'
+        : 'Preparing patch for ${targetPaths.length} file(s)',
+    metadata: {
+      'phase': 'preparing',
+      'files': targetPaths,
+    },
+    attachments: attachments,
+  );
   await ctx.askPermission(
     PermissionRequest(
       id: newId('perm'),

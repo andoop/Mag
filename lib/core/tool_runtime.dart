@@ -39,6 +39,12 @@ typedef RunSubtask = Future<ToolExecutionResult> Function({
   String? taskId,
 });
 typedef SaveTodos = Future<void> Function(List<TodoItem> items);
+typedef UpdateToolProgress = Future<void> Function({
+  String? title,
+  String? displayOutput,
+  JsonMap? metadata,
+  List<JsonMap>? attachments,
+});
 
 const int _kDefaultReadLimit = 2000;
 const int _kMaxReadBytes = 50 * 1024;
@@ -81,6 +87,7 @@ class ToolRuntimeContext {
     required this.resolveInstructionReminder,
     required this.runSubtask,
     required this.saveTodos,
+    required this.updateToolProgress,
     this.callId,
   });
 
@@ -96,6 +103,7 @@ class ToolRuntimeContext {
   final ResolveInstructionReminder resolveInstructionReminder;
   final RunSubtask runSubtask;
   final SaveTodos saveTodos;
+  final UpdateToolProgress updateToolProgress;
 
   /// 当前工具调用的 `call.id`，与 OpenCode `ctx.callID` 一致（如 `question` 关联 UI）。
   final String? callId;
@@ -516,7 +524,8 @@ class ToolRegistry {
             'paths': {
               'type': 'array',
               'items': {'type': 'string'},
-              'description': 'File paths (for add, diff, restore, reset path mode)',
+              'description':
+                  'File paths (for add, diff, restore, reset path mode)',
             },
             'all': {
               'type': 'boolean',
@@ -524,7 +533,8 @@ class ToolRegistry {
             },
             'message': {
               'type': 'string',
-              'description': 'Commit message (for commit, merge continue, cherry-pick continue)',
+              'description':
+                  'Commit message (for commit, merge continue, cherry-pick continue)',
             },
             'amend': {
               'type': 'boolean',
@@ -551,7 +561,8 @@ class ToolRegistry {
             },
             'action': {
               'type': 'string',
-              'description': 'Sub-action: list | create | delete (for branch), get | set (for config), list | get-url | add | set-url | remove | rename (for remote), start | continue | abort (for merge), start | continue | abort (for cherry-pick), start | continue | skip | abort (for rebase)',
+              'description':
+                  'Sub-action: list | create | delete (for branch), get | set (for config), list | get-url | add | set-url | remove | rename (for remote), start | continue | abort (for merge), start | continue | abort (for cherry-pick), start | continue | skip | abort (for rebase)',
             },
             'name': {
               'type': 'string',
@@ -568,7 +579,8 @@ class ToolRegistry {
             },
             'target': {
               'type': 'string',
-              'description': 'Branch or commit to switch to (for checkout) or reset to (for reset)',
+              'description':
+                  'Branch or commit to switch to (for checkout) or reset to (for reset)',
             },
             'newBranch': {
               'type': 'boolean',
@@ -576,7 +588,8 @@ class ToolRegistry {
             },
             'mode': {
               'type': 'string',
-              'description': 'Reset mode: soft | mixed | hard (for reset, default mixed)',
+              'description':
+                  'Reset mode: soft | mixed | hard (for reset, default mixed)',
             },
             'branch': {
               'type': 'string',
@@ -598,7 +611,8 @@ class ToolRegistry {
             },
             'url': {
               'type': 'string',
-              'description': 'Remote URL or local repo path (for clone, remote add/set-url)',
+              'description':
+                  'Remote URL or local repo path (for clone, remote add/set-url)',
             },
             'path': {
               'type': 'string',

@@ -22,6 +22,13 @@ class _FakeModelGateway extends ModelGateway {
     CancelToken? cancelToken,
     FutureOr<void> Function(String delta)? onTextDelta,
     FutureOr<void> Function(String delta)? onReasoningDelta,
+    FutureOr<void> Function({
+      required String argumentsDelta,
+      required String argumentsText,
+      required String toolCallId,
+      required String toolName,
+    })?
+        onToolCallDelta,
   }) async {
     return ModelResponse(
       text: 'summary',
@@ -86,6 +93,11 @@ void main() {
             throw UnimplementedError('runSubtask should not be used here');
           },
       saveTodos: (_) async {},
+      updateToolProgress: (
+          {String? title,
+          String? displayOutput,
+          JsonMap? metadata,
+          List<JsonMap>? attachments}) async {},
     );
   }
 
@@ -188,9 +200,9 @@ void main() {
       throwsA(
         predicate(
           (error) =>
-              error
-                  .toString()
-                  .contains('Use `edit` or `apply_patch` instead of `write`'),
+              error.toString().contains('ONLY for creating new files') &&
+              error.toString().contains(
+                  'call `read` on "note.txt", then use `edit` or `apply_patch`'),
         ),
       ),
     );
@@ -233,7 +245,8 @@ void main() {
       visibilityRules: const [],
     );
 
-    final response = buildProviderListResponse(catalog: catalog, config: config);
+    final response =
+        buildProviderListResponse(catalog: catalog, config: config);
     final provider = response.all.singleWhere((item) => item.id == 'openai');
 
     expect(provider.connected, isTrue);
@@ -272,8 +285,10 @@ void main() {
       visibilityRules: const [],
     );
 
-    final response = buildProviderListResponse(catalog: catalog, config: config);
-    final provider = response.all.singleWhere((item) => item.id == 'alibaba-cn');
+    final response =
+        buildProviderListResponse(catalog: catalog, config: config);
+    final provider =
+        response.all.singleWhere((item) => item.id == 'alibaba-cn');
     final match = resolveCatalogModelMatch(
       catalog: catalog,
       providerId: 'alibaba-cn',
@@ -331,7 +346,7 @@ void main() {
     await expectLater(
       editTool.execute(
         {
-          'path': 'edit_hint.txt',
+          'filePath': 'edit_hint.txt',
           'oldString': 'missing',
           'newString': 'gamma',
         },
@@ -340,12 +355,10 @@ void main() {
       throwsA(
         predicate(
           (error) =>
+              error.toString().contains('Call `read` on "edit_hint.txt"') &&
               error
                   .toString()
-                  .contains('call `read` on the file again first') &&
-              error
-                  .toString()
-                  .contains('without the `read` line-number prefixes'),
+                  .contains('do NOT include the line-number/hash prefixes'),
         ),
       ),
     );
@@ -364,10 +377,18 @@ void main() {
     final anchor =
         RegExp(r'1#[A-Z]{2}').firstMatch(readResult.output)?.group(0);
     expect(anchor, isNotNull);
+    final entry = await bridge.stat(
+      treeUri: workspace.treeUri,
+      relativePath: 'hashline_edit.txt',
+    );
+    await seedReadLedger(
+      filePath: 'hashline_edit.txt',
+      lastModified: entry!.lastModified,
+    );
 
     final result = await editTool.execute(
       {
-        'path': 'hashline_edit.txt',
+        'filePath': 'hashline_edit.txt',
         'edits': [
           {
             'op': 'replace',
@@ -397,13 +418,21 @@ void main() {
     final anchor =
         RegExp(r'1#[A-Z]{2}').firstMatch(readResult.output)?.group(0);
     expect(anchor, isNotNull);
+    final entry = await bridge.stat(
+      treeUri: workspace.treeUri,
+      relativePath: 'hashline_stale.txt',
+    );
+    await seedReadLedger(
+      filePath: 'hashline_stale.txt',
+      lastModified: entry!.lastModified,
+    );
 
     await target.writeAsString('changed\nbeta\n');
 
     await expectLater(
       editTool.execute(
         {
-          'path': 'hashline_stale.txt',
+          'filePath': 'hashline_stale.txt',
           'edits': [
             {
               'op': 'replace',

@@ -105,6 +105,20 @@ extension SessionEnginePrompt on SessionEngine {
         upsertCachedPart(part);
       }
 
+      JsonMap? tryDecodeToolInput(String raw) {
+        final trimmed = raw.trim();
+        if (trimmed.isEmpty) return <String, dynamic>{};
+        try {
+          final decoded = jsonDecode(trimmed);
+          if (decoded is Map) {
+            return Map<String, dynamic>.from(decoded);
+          }
+        } catch (_) {
+          // Tool arguments are often incomplete while streaming; keep raw text.
+        }
+        return null;
+      }
+
       final userAgent = agent ?? session.agent;
       final definition = agentDefinition(userAgent);
       var activeSession = session.copyWith(
@@ -158,6 +172,49 @@ extension SessionEnginePrompt on SessionEngine {
       var lastFinishReason = 'stop';
       var lastUsage = const ModelUsage();
       var loggedFirstDelta = false;
+
+      Future<void> upsertStreamingToolPart({
+        required String callId,
+        required String toolName,
+        required String argumentsText,
+      }) async {
+        final existing = toolPartByCallId[callId];
+        final decodedInput = tryDecodeToolInput(argumentsText);
+        final existingState = Map<String, dynamic>.from(
+            (existing?.data['state'] as Map?) ?? const {});
+        final existingInput = Map<String, dynamic>.from(
+            existingState['input'] as Map? ?? const {});
+        final shouldCreate = existing == null;
+        final shouldUpgradeInput = decodedInput != null &&
+            jsonEncode(existingInput) != jsonEncode(decodedInput);
+        if (!shouldCreate && !shouldUpgradeInput) {
+          return;
+        }
+        final nextState = <String, dynamic>{
+          'status': ToolStatus.pending.name,
+          'input': decodedInput ?? existingInput,
+          'raw': shouldCreate
+              ? argumentsText
+              : (existingState['raw'] ?? argumentsText),
+        };
+        final nextPart = MessagePart(
+          id: existing?.id ?? newId('part'),
+          sessionId: session.id,
+          messageId: assistant.id,
+          type: PartType.tool,
+          createdAt:
+              existing?.createdAt ?? DateTime.now().millisecondsSinceEpoch,
+          data: {
+            'tool': toolName,
+            'callID': callId,
+            'state': {
+              ...existingState,
+              ...nextState,
+            },
+          },
+        );
+        await saveTrackedPart(nextPart);
+      }
 
       Future<void> reloadPromptCaches() async {
         final msgs = await database.listMessages(session.id);
@@ -245,69 +302,10 @@ extension SessionEnginePrompt on SessionEngine {
       final maxSteps = definition.steps;
       const hardMaxSteps = 256;
       const maxElapsedMs = 10 * 60 * 1000; // 10 min safety net
-      final recentToolSignatures = <String>[];
-      const repetitionWindow = 6;
-      const repetitionThreshold = 3;
       final consecutiveToolErrors = <String, int>{};
       var totalConsecutiveErrors = 0;
       var emptyResponseRetries = 0;
       const maxEmptyResponseRetries = 2;
-
-      dynamic canonicalToolArgValue(dynamic value) {
-        if (value is Map) {
-          final normalized = <String, dynamic>{};
-          final entries = value.entries.toList()
-            ..sort((a, b) => a.key.compareTo(b.key));
-          for (final entry in entries) {
-            normalized[entry.key] = canonicalToolArgValue(entry.value);
-          }
-          return normalized;
-        }
-        if (value is List) {
-          return value.map(canonicalToolArgValue).toList();
-        }
-        if (value is String) {
-          if (value.length <= 80) return value;
-          return '${value.substring(0, 80)}...(${value.length} chars)';
-        }
-        return value;
-      }
-
-      String toolSignature(ToolCall call) {
-        final normalizedArgs = Map<String, dynamic>.from(call.arguments);
-        final path = normalizedArgs['filePath'] ?? normalizedArgs['path'];
-        if (path != null) {
-          normalizedArgs['filePath'] = path;
-          normalizedArgs.remove('path');
-        }
-        final canonicalArgs = canonicalToolArgValue(normalizedArgs);
-        return '${call.name}:${jsonEncode(canonicalArgs)}';
-      }
-
-      bool isRepetitiveToolPattern(List<ToolCall> calls) {
-        if (calls.isEmpty) return false;
-        final sig = calls.map(toolSignature).join('|');
-        recentToolSignatures.add(sig);
-        if (recentToolSignatures.length < repetitionThreshold) return false;
-        final window = recentToolSignatures.length > repetitionWindow
-            ? recentToolSignatures
-                .sublist(recentToolSignatures.length - repetitionWindow)
-            : recentToolSignatures;
-        final counts = <String, int>{};
-        for (final s in window) {
-          counts[s] = (counts[s] ?? 0) + 1;
-        }
-        final matched = counts.values.any((c) => c >= repetitionThreshold);
-        if (matched) {
-          _debugLog('prompt-stop', 'repetitive tool pattern matched', {
-            'signature': sig,
-            'window': window,
-            'counts': counts,
-            'threshold': repetitionThreshold,
-          });
-        }
-        return matched;
-      }
 
       var ranOutOfSteps = true;
       for (var step = 1;
@@ -586,6 +584,18 @@ extension SessionEnginePrompt on SessionEngine {
                 );
                 await flushStreamingReasoning();
               },
+              onToolCallDelta: ({
+                required toolCallId,
+                required toolName,
+                required argumentsText,
+                required argumentsDelta,
+              }) async {
+                await upsertStreamingToolPart(
+                  callId: toolCallId,
+                  toolName: toolName,
+                  argumentsText: argumentsText,
+                );
+              },
             );
             break; // Success – exit retry loop
           } on CancelledException {
@@ -729,16 +739,21 @@ extension SessionEnginePrompt on SessionEngine {
             });
             break;
           }
+          final existingToolPart = toolPartByCallId[call.id];
           final toolPart = MessagePart(
-            id: newId('part'),
+            id: existingToolPart?.id ?? newId('part'),
             sessionId: session.id,
             messageId: assistant.id,
             type: PartType.tool,
-            createdAt: DateTime.now().millisecondsSinceEpoch,
+            createdAt: existingToolPart?.createdAt ??
+                DateTime.now().millisecondsSinceEpoch,
             data: {
               'tool': call.name,
               'callID': call.id,
               'state': {
+                ...Map<String, dynamic>.from(
+                  (existingToolPart?.data['state'] as Map?) ?? const {},
+                ),
                 'status': ToolStatus.pending.name,
                 'input': call.arguments,
               }
@@ -787,103 +802,6 @@ extension SessionEnginePrompt on SessionEngine {
         if (shouldBreak) {
           ranOutOfSteps = false;
           break;
-        }
-        if (isRepetitiveToolPattern(response.toolCalls)) {
-          _debugLog('prompt',
-              'repetitive tool call pattern detected at step $step — breaking');
-          ranOutOfSteps = false;
-          break;
-        }
-      }
-      if (ranOutOfSteps && maxSteps != null) {
-        _debugLog('prompt',
-            'max steps reached ($maxSteps), session=${session.id} — running wrap-up call');
-        cancelToken.throwIfCancelled();
-        final wrapUpConversation = await _buildConversation(
-          workspace: workspace,
-          messages: cachedMessages,
-          parts: cachedParts,
-          currentStep: maxSteps + 1,
-          maxSteps: maxSteps,
-          currentAgent: currentAgent,
-          model: modelConfig.model,
-          summaryMessageId: activeSession.summaryMessageId,
-        );
-        MessagePart? wrapUpTextPart;
-        var wrapUpText = '';
-        var lastWrapUpSaveText = '';
-        var lastWrapUpEmitAt = 0;
-        Future<void> flushWrapUpText({bool force = false}) async {
-          if (wrapUpText.isEmpty) return;
-          if (!force && wrapUpText == lastWrapUpSaveText) return;
-          final now = DateTime.now().millisecondsSinceEpoch;
-          if (!force && now - lastWrapUpEmitAt < 80) return;
-          lastWrapUpEmitAt = now;
-          lastWrapUpSaveText = wrapUpText;
-          wrapUpTextPart = MessagePart(
-            id: wrapUpTextPart?.id ?? newId('part'),
-            sessionId: session.id,
-            messageId: assistant.id,
-            type: PartType.text,
-            createdAt: wrapUpTextPart?.createdAt ??
-                DateTime.now().millisecondsSinceEpoch,
-            data: _assistantTextPartData(wrapUpText),
-          );
-          await saveTrackedPart(wrapUpTextPart!);
-        }
-
-        try {
-          final wrapUpResponse = await modelGateway.complete(
-            config: modelConfig,
-            messages: wrapUpConversation,
-            tools: const [],
-            format: null,
-            cancelToken: cancelToken,
-            onTextDelta: (delta) async {
-              wrapUpTextPart ??= MessagePart(
-                id: newId('part'),
-                sessionId: session.id,
-                messageId: assistant.id,
-                type: PartType.text,
-                createdAt: DateTime.now().millisecondsSinceEpoch,
-                data: const {'text': ''},
-              );
-              wrapUpText += delta;
-              _emitPartDelta(
-                workspace: workspace,
-                sessionId: session.id,
-                messageId: assistant.id,
-                partId: wrapUpTextPart!.id,
-                partType: PartType.text,
-                createdAt: wrapUpTextPart!.createdAt,
-                delta: {'text': delta},
-              );
-              await flushWrapUpText();
-            },
-          );
-          await flushWrapUpText(force: true);
-          if (wrapUpResponse.text.trim().isNotEmpty && wrapUpTextPart == null) {
-            await saveTrackedPart(
-              MessagePart(
-                id: newId('part'),
-                sessionId: session.id,
-                messageId: assistant.id,
-                type: PartType.text,
-                createdAt: DateTime.now().millisecondsSinceEpoch,
-                data: _assistantTextPartData(wrapUpResponse.text),
-              ),
-            );
-          }
-          lastFinishReason = wrapUpResponse.finishReason;
-          lastUsage = wrapUpResponse.usage;
-          activeSession = await _trackUsage(
-            workspace: workspace,
-            session: activeSession,
-            usage: wrapUpResponse.usage,
-          );
-          _debugLog('prompt', 'wrap-up call completed');
-        } catch (e) {
-          _debugLog('prompt', 'wrap-up call failed: $e');
         }
       }
       await saveTrackedPart(
