@@ -504,7 +504,7 @@ extension SessionEnginePrompt on SessionEngine {
                       '- If `write` failed because file exists → use `edit` instead\n'
                       '- If `edit` failed because no read → call `read` first\n'
                       '- If `edit` failed because oldString not found → call `read` to get current contents, then use exact text from the output\n'
-                      '- If anchors are stale → call `read` to get fresh LINE#ID anchors\n'
+                      '- If anchors are stale → copy updated LINE#ID anchors from the `>>>` error output; only call `read` if needed anchors are missing\n'
                       'Read the error messages above carefully and take a DIFFERENT action.\n'
                       '</system-warning>',
                 },

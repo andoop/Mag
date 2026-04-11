@@ -203,14 +203,7 @@ class ToolRegistry {
     register(
       ToolDefinition(
         id: 'edit',
-        description:
-            'Edit files using hash-anchored LINE#ID references for precise, safe modifications. '
-            'Every call MUST include `filePath` as the target path; do not use `path`. '
-            'Workflow: call `read`, copy exact LINE#ID anchors, submit one `edit` call per file with the smallest possible operations, and if the same file needs another call, `read` it again first. '
-            'Use anchors like `42#VK` only; do not include trailing `|content`. '
-            'All operations in one call must reference the original file state. '
-            'Supported operations: `replace`, `append`, `prepend`; `replace` with `lines: null` deletes the target line or range. '
-            'Anchored edits reject stale LINE#ID references before writing any file changes.$kMobileWorkspacePathSuffix',
+        description: '${kEditToolDescription.trim()}$kMobileWorkspacePathSuffix',
         parameters: {
           'type': 'object',
           'properties': {
@@ -258,7 +251,7 @@ class ToolRegistry {
       ToolDefinition(
         id: 'apply_patch',
         description:
-            '${kApplyPatchToolDescription.trim()}$kMobileWorkspacePathSuffix',
+            '${kApplyPatchToolDescription.trim()}$kMobileApplyPatchHashlineSuffix$kMobileWorkspacePathSuffix',
         parameters: {
           'type': 'object',
           'properties': {

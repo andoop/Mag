@@ -736,11 +736,12 @@ extension SessionEngineTools on SessionEngine {
           'Step 2: Copy the exact LINE#ID anchors from the `read` output.\n'
           'Step 3: Retry `edit` with `edits` operations only.';
     }
-    if (toolName == 'edit' && lower.contains('changed since last read')) {
+    if ((toolName == 'edit' || toolName == 'apply_patch') &&
+        lower.contains('changed since last read')) {
       return 'Your LINE#ID anchors are stale — the file content has changed.\n'
-          'Step 1: Call `read` on the file to get updated LINE#ID anchors.\n'
-          'Step 2: Use the new anchors from the fresh `read` output.\n'
-          'Do NOT reuse anchors from a previous `read`.';
+          'Step 1: Copy the updated LINE#ID anchors shown in the `>>>` error output directly.\n'
+          'Step 2: Retry your `$toolName` call using those updated anchors.\n'
+          'Only call `read` again if the anchors you need are missing from the error output.';
     }
     if (lower.contains('missing required')) {
       return 'You omitted required parameters. Re-read the error message carefully, '

@@ -285,6 +285,15 @@ List<String> _normalizeInsertedHashlineLines(List<String> lines) {
   }).toList();
 }
 
+String _stripTrailingContinuationTokens(String text) => text.replaceFirst(
+    RegExp(r'(?:&&|\|\||\?\?|\?|:|=|,|\+|-|\*|\/|\.|\()\s*$'), '');
+
+String _stripMergeOperatorChars(String text) =>
+    text.replaceAll(RegExp(r'[|&?]'), '');
+
+String _leadingWhitespace(String text) =>
+    RegExp(r'^\s*').firstMatch(text)?.group(0) ?? '';
+
 // ---------------------------------------------------------------------------
 // Echo stripping (ported from oh-my-openagent edit-text-normalization.ts)
 // Models often accidentally echo anchor lines in their replacement text,
@@ -364,16 +373,40 @@ List<String> _maybeExpandSingleLineMerge(
   var offset = 0;
   var orderedMatch = true;
   for (final part in parts) {
-    final idx = merged.indexOf(part, offset);
+    var idx = merged.indexOf(part, offset);
+    var matchedLen = part.length;
+    if (idx == -1) {
+      final stripped = _stripTrailingContinuationTokens(part);
+      if (stripped != part) {
+        idx = merged.indexOf(stripped, offset);
+        if (idx != -1) matchedLen = stripped.length;
+      }
+    }
+    if (idx == -1) {
+      final segment = merged.substring(offset);
+      final segmentStripped = _stripMergeOperatorChars(segment);
+      final partStripped = _stripMergeOperatorChars(part);
+      final fuzzyIdx = segmentStripped.indexOf(partStripped);
+      if (fuzzyIdx != -1) {
+        var strippedPos = 0;
+        var originalPos = 0;
+        while (strippedPos < fuzzyIdx && originalPos < segment.length) {
+          if (!RegExp(r'[|&?]').hasMatch(segment[originalPos])) strippedPos += 1;
+          originalPos += 1;
+        }
+        idx = offset + originalPos;
+        matchedLen = part.length;
+      }
+    }
     if (idx == -1) {
       orderedMatch = false;
       break;
     }
     indices.add(idx);
-    offset = idx + part.length;
+    offset = idx + matchedLen;
   }
+  final expanded = <String>[];
   if (orderedMatch && indices.length == parts.length) {
-    final expanded = <String>[];
     for (var i = 0; i < indices.length; i++) {
       final start = indices[i];
       final end = i + 1 < indices.length ? indices[i + 1] : merged.length;
@@ -388,7 +421,94 @@ List<String> _maybeExpandSingleLineMerge(
       return expanded;
     }
   }
+
+  final semicolonSplit = merged
+      .split(RegExp(r';\s+'))
+      .asMap()
+      .entries
+      .map((entry) {
+        final idx = entry.key;
+        final line = entry.value;
+        final isLast = idx == merged.split(RegExp(r';\s+')).length - 1;
+        if (!isLast && !line.endsWith(';')) return '$line;';
+        return line;
+      })
+      .map((line) => line.trim())
+      .where((line) => line.isNotEmpty)
+      .toList();
+  if (semicolonSplit.length == originalLines.length) {
+    return semicolonSplit;
+  }
   return replacementLines;
+}
+
+List<String> _restoreOldWrappedLines(
+  List<String> originalLines,
+  List<String> replacementLines,
+) {
+  if (originalLines.isEmpty || replacementLines.length < 2) {
+    return replacementLines;
+  }
+
+  final canonicalToOriginal = <String, Map<String, dynamic>>{};
+  for (final line in originalLines) {
+    final canonical = line.replaceAll(RegExp(r'\s+'), '');
+    final existing = canonicalToOriginal[canonical];
+    if (existing != null) {
+      existing['count'] = (existing['count'] as int) + 1;
+    } else {
+      canonicalToOriginal[canonical] = {
+        'line': line,
+        'count': 1,
+      };
+    }
+  }
+
+  final candidates = <Map<String, dynamic>>[];
+  for (var start = 0; start < replacementLines.length; start++) {
+    for (var len = 2;
+        len <= 10 && start + len <= replacementLines.length;
+        len++) {
+      final span = replacementLines.sublist(start, start + len);
+      if (span.any((line) => line.trim().isEmpty)) continue;
+      final canonicalSpan = span.join('').replaceAll(RegExp(r'\s+'), '');
+      final original = canonicalToOriginal[canonicalSpan];
+      if (original != null &&
+          (original['count'] as int) == 1 &&
+          canonicalSpan.length >= 6) {
+        candidates.add({
+          'start': start,
+          'len': len,
+          'replacement': original['line'] as String,
+          'canonical': canonicalSpan,
+        });
+      }
+    }
+  }
+  if (candidates.isEmpty) return replacementLines;
+
+  final canonicalCounts = <String, int>{};
+  for (final candidate in candidates) {
+    final canonical = candidate['canonical'] as String;
+    canonicalCounts[canonical] = (canonicalCounts[canonical] ?? 0) + 1;
+  }
+
+  final uniqueCandidates = candidates
+      .where((candidate) =>
+          (canonicalCounts[candidate['canonical'] as String] ?? 0) == 1)
+      .toList()
+    ..sort((a, b) => (b['start'] as int).compareTo(a['start'] as int));
+  if (uniqueCandidates.isEmpty) return replacementLines;
+
+  final corrected = List<String>.of(replacementLines);
+  for (final candidate in uniqueCandidates) {
+    corrected.replaceRange(
+      candidate['start'] as int,
+      (candidate['start'] as int) + (candidate['len'] as int),
+      [candidate['replacement'] as String],
+    );
+  }
+  return corrected;
 }
 
 /// When replacement has same number of lines, restore indentation from original.
@@ -404,8 +524,7 @@ List<String> _restoreIndentForPairedReplacement(
     final line = entry.value;
     if (line.isEmpty) return line;
     if (RegExp(r'^\s').hasMatch(line)) return line;
-    final indent =
-        RegExp(r'^\s*').firstMatch(originalLines[idx])?.group(0) ?? '';
+    final indent = _leadingWhitespace(originalLines[idx]);
     if (indent.isEmpty) return line;
     if (originalLines[idx].trim() == line.trim()) return line;
     return '$indent$line';
@@ -419,6 +538,7 @@ List<String> _autocorrectReplacementLines(
 ) {
   var next = replacementLines;
   next = _maybeExpandSingleLineMerge(originalLines, next);
+  next = _restoreOldWrappedLines(originalLines, next);
   next = _restoreIndentForPairedReplacement(originalLines, next);
   return next;
 }
@@ -437,8 +557,7 @@ List<String> _restoreLeadingIndentForHashline(
     final line = entry.value;
     if (idx >= originalLines.length) return line;
     if (line.isEmpty || RegExp(r'^\s').hasMatch(line)) return line;
-    final indent =
-        RegExp(r'^\s*').firstMatch(originalLines[idx])?.group(0) ?? '';
+    final indent = _leadingWhitespace(originalLines[idx]);
     if (indent.isEmpty) return line;
     return '$indent$line';
   }).toList();
@@ -485,6 +604,69 @@ int _hashlineEditSortKey(_HashlineEditOp edit) {
       return edit.pos == null ? -1 : _parseHashlineRef(edit.pos!).line;
   }
   return -1;
+}
+
+String _canonicalHashlineAnchor(String? anchor) =>
+    anchor == null ? '' : _normalizeHashlineRef(anchor);
+
+String _normalizeHashlineEditPayload(List<String>? lines) =>
+    (lines ?? const <String>[]).join('\n');
+
+String _hashlineDedupeKey(_HashlineEditOp edit) {
+  switch (edit.op) {
+    case 'replace':
+      return 'replace|${_canonicalHashlineAnchor(edit.pos)}|'
+          '${_canonicalHashlineAnchor(edit.end)}|'
+          '${_normalizeHashlineEditPayload(edit.lines)}';
+    case 'append':
+      return 'append|${_canonicalHashlineAnchor(edit.pos)}|'
+          '${_normalizeHashlineEditPayload(edit.lines)}';
+    case 'prepend':
+      return 'prepend|${_canonicalHashlineAnchor(edit.pos)}|'
+          '${_normalizeHashlineEditPayload(edit.lines)}';
+  }
+  return jsonEncode({
+    'op': edit.op,
+    'pos': edit.pos,
+    'end': edit.end,
+    'lines': edit.lines,
+  });
+}
+
+class _HashlineDedupeResult {
+  _HashlineDedupeResult({
+    required this.edits,
+    required this.deduplicatedEdits,
+  });
+
+  final List<_HashlineEditOp> edits;
+  final int deduplicatedEdits;
+}
+
+_HashlineDedupeResult _dedupeHashlineEdits(List<_HashlineEditOp> edits) {
+  final seen = <String>{};
+  final deduped = <_HashlineEditOp>[];
+  var deduplicatedEdits = 0;
+  for (final edit in edits) {
+    final key = _hashlineDedupeKey(edit);
+    if (!seen.add(key)) {
+      deduplicatedEdits += 1;
+      continue;
+    }
+    deduped.add(edit);
+  }
+  return _HashlineDedupeResult(
+    edits: deduped,
+    deduplicatedEdits: deduplicatedEdits,
+  );
+}
+
+bool _hashlineLinesEqual(List<String> a, List<String> b) {
+  if (a.length != b.length) return false;
+  for (var i = 0; i < a.length; i++) {
+    if (a[i] != b[i]) return false;
+  }
+  return true;
 }
 
 void _detectHashlineOverlaps(List<_HashlineEditOp> edits) {
@@ -584,16 +766,22 @@ List<String> _applyHashlinePrepend(
 }
 
 class _HashlineEditResult {
-  _HashlineEditResult(this.lines, this.hashWarning);
+  _HashlineEditResult(
+    this.lines,
+    this.hashWarning, {
+    this.noopEdits = 0,
+    this.deduplicatedEdits = 0,
+  });
   final List<String> lines;
   final String hashWarning;
+  final int noopEdits;
+  final int deduplicatedEdits;
 }
 
 _HashlineEditResult _applyHashlineEditsToLines(
   List<String> originalLines,
-  List<_HashlineEditOp> edits, {
-  bool lenient = false,
-}) {
+  List<_HashlineEditOp> edits,
+) {
   final refs = <String>[];
   for (final edit in edits) {
     if (edit.pos != null) refs.add(edit.pos!);
@@ -601,10 +789,12 @@ _HashlineEditResult _applyHashlineEditsToLines(
   }
   var hashWarning = '';
   if (refs.isNotEmpty) {
-    hashWarning = _validateHashlineRefs(originalLines, refs, lenient: lenient);
+    hashWarning = _validateHashlineRefs(originalLines, refs);
   }
-  _detectHashlineOverlaps(edits);
-  final sorted = List<_HashlineEditOp>.of(edits)
+  final dedupeResult = _dedupeHashlineEdits(edits);
+  final dedupedEdits = dedupeResult.edits;
+  _detectHashlineOverlaps(dedupedEdits);
+  final sorted = List<_HashlineEditOp>.of(dedupedEdits)
     ..sort((a, b) {
       final lineCompare =
           _hashlineEditSortKey(b).compareTo(_hashlineEditSortKey(a));
@@ -613,20 +803,32 @@ _HashlineEditResult _applyHashlineEditsToLines(
       return (precedence[a.op] ?? 3).compareTo(precedence[b.op] ?? 3);
     });
   var lines = List<String>.of(originalLines);
+  var noopEdits = 0;
   for (final edit in sorted) {
+    late final List<String> next;
     switch (edit.op) {
       case 'replace':
-        lines = _applyHashlineReplace(lines, edit);
+        next = _applyHashlineReplace(lines, edit);
         break;
       case 'append':
-        lines = _applyHashlineAppend(lines, edit);
+        next = _applyHashlineAppend(lines, edit);
         break;
       case 'prepend':
-        lines = _applyHashlinePrepend(lines, edit);
+        next = _applyHashlinePrepend(lines, edit);
         break;
     }
+    if (_hashlineLinesEqual(next, lines)) {
+      noopEdits += 1;
+      continue;
+    }
+    lines = next;
   }
-  return _HashlineEditResult(lines, hashWarning);
+  return _HashlineEditResult(
+    lines,
+    hashWarning,
+    noopEdits: noopEdits,
+    deduplicatedEdits: dedupeResult.deduplicatedEdits,
+  );
 }
 
 Future<ToolExecutionResult> _executeHashlineEditTool(
@@ -709,24 +911,13 @@ Future<ToolExecutionResult> _executeHashlineEditTool(
     }
   }
 
-  // Read ledger check: determine if file is unchanged since last read.
-  // If unchanged, use lenient hash validation (model may corrupt hashes).
-  var fileUnchangedSinceRead = false;
   if (exists) {
-    final existingEntry2 = await ctx.bridge.stat(
-      treeUri: ctx.workspace.treeUri,
-      relativePath: filePath,
-    );
     final ledger = await _latestToolReadLedgerForPath(ctx, filePath);
     if (ledger == null) {
       throw Exception(
         'BLOCKED: You must `read` the file "$filePath" before using `edit`.\n'
         'Required action: call `read` with path "$filePath" first, then retry.',
       );
-    }
-    if (existingEntry2 != null &&
-        existingEntry2.lastModified <= ledger.lastModified) {
-      fileUnchangedSinceRead = true;
     }
   }
 
@@ -748,7 +939,6 @@ Future<ToolExecutionResult> _executeHashlineEditTool(
   final editResult = _applyHashlineEditsToLines(
     lines,
     edits,
-    lenient: fileUnchangedSinceRead,
   );
   lines = editResult.lines;
   final hashWarning = editResult.hashWarning;
@@ -756,8 +946,13 @@ Future<ToolExecutionResult> _executeHashlineEditTool(
   if (hadTrailingNewline) updatedCanonical += '\n';
   if (updatedCanonical == originalContent &&
       (rename == null || rename == filePath)) {
-    throw Exception(
-        'No changes made to $filePath. The edits produced identical content.');
+    var diagnostic =
+        'No changes made to $filePath. The edits produced identical content.';
+    if (editResult.noopEdits > 0) {
+      diagnostic +=
+          ' No-op edits: ${editResult.noopEdits}. Re-read the file and provide content that differs from current lines.';
+    }
+    throw Exception(diagnostic);
   }
   final restored = _restoreHashlineFileText(updatedCanonical, envelope);
   final targetPath = rename != null && rename.isNotEmpty

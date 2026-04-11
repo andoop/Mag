@@ -357,16 +357,16 @@ Future<ToolExecutionResult> _writeTool(
   );
   final exists = entry != null && !entry.isDirectory;
   if (exists) {
-    existing = await ctx.bridge.readText(
-      treeUri: ctx.workspace.treeUri,
-      relativePath: filePath,
+    await _assertFreshReadForExistingFile(
+      ctx,
+      filePath,
+      toolName: 'write',
     );
   }
   if (exists) {
-    throw Exception(
-      'BLOCKED: File already exists: $filePath.\n'
-      '`write` is ONLY for creating new files. This file already exists.\n'
-      'Required action: call `read` on "$filePath", then use `edit` or `apply_patch` to modify it.',
+    existing = await ctx.bridge.readText(
+      treeUri: ctx.workspace.treeUri,
+      relativePath: filePath,
     );
   }
   final preview = _buildDiffAttachment(

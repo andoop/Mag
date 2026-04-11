@@ -49,3 +49,4 @@ logs
 .env.*
 *.pem
 opencode/
+oh-my-openagent/

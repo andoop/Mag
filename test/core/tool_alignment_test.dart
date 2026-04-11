@@ -229,7 +229,7 @@ void main() {
     }
   });
 
-  test('write rejects existing files and asks for edit tool', () async {
+  test('write rejects existing files until the file is read first', () async {
     final target = File('${tempDir.path}/note.txt');
     await target.writeAsString('old\n');
 
@@ -244,9 +244,87 @@ void main() {
       throwsA(
         predicate(
           (error) =>
-              error.toString().contains('ONLY for creating new files') &&
               error.toString().contains(
-                  'call `read` on "note.txt", then use `edit` or `apply_patch`'),
+                  'You must `read` the file "note.txt" before using `write`') &&
+              error
+                  .toString()
+                  .contains('call `read` with path "note.txt" first'),
+        ),
+      ),
+    );
+    expect(permissionRequests, isEmpty);
+  });
+
+  test('write can overwrite existing files after a fresh read', () async {
+    final target = File('${tempDir.path}/note_overwrite.txt');
+    await target.writeAsString('old\n');
+
+    final readResult = await readTool.execute(
+      {
+        'path': 'note_overwrite.txt',
+      },
+      makeContext(),
+    );
+    expect(readResult.displayOutput, contains('Read note_overwrite.txt'));
+
+    final entry = await bridge.stat(
+      treeUri: workspace.treeUri,
+      relativePath: 'note_overwrite.txt',
+    );
+    await seedReadLedger(
+      filePath: 'note_overwrite.txt',
+      lastModified: entry!.lastModified,
+    );
+
+    final result = await writeTool.execute(
+      {
+        'filePath': 'note_overwrite.txt',
+        'content': 'new\n',
+      },
+      makeContext(),
+    );
+
+    expect(await target.readAsString(), 'new\n');
+    expect(result.displayOutput, 'Wrote note_overwrite.txt');
+    expect(permissionRequests, hasLength(1));
+  });
+
+  test('write rejects existing files changed after last read', () async {
+    final target = File('${tempDir.path}/note_stale.txt');
+    await target.writeAsString('old\n');
+
+    final readResult = await readTool.execute(
+      {
+        'path': 'note_stale.txt',
+      },
+      makeContext(),
+    );
+    expect(readResult.displayOutput, contains('Read note_stale.txt'));
+
+    final entry = await bridge.stat(
+      treeUri: workspace.treeUri,
+      relativePath: 'note_stale.txt',
+    );
+    await seedReadLedger(
+      filePath: 'note_stale.txt',
+      lastModified: entry!.lastModified,
+    );
+
+    await target.writeAsString('changed\n');
+
+    await expectLater(
+      writeTool.execute(
+        {
+          'filePath': 'note_stale.txt',
+          'content': 'new\n',
+        },
+        makeContext(),
+      ),
+      throwsA(
+        predicate(
+          (error) => error
+              .toString()
+              .contains('File "note_stale.txt" has been modified since your last `read`'),
         ),
       ),
     );
@@ -473,6 +551,56 @@ void main() {
     expect(await target.readAsString(), 'gamma\nbeta\n');
     expect(result.displayOutput, 'Updated hashline_edit.txt');
     expect(permissionRequests, hasLength(1));
+  });
+
+  test('hashline edit reports noop edits when replacement is identical', () async {
+    final target = File('${tempDir.path}/hashline_noop.txt');
+    await target.writeAsString('alpha\nbeta\n');
+
+    final readResult = await readTool.execute(
+      {
+        'path': 'hashline_noop.txt',
+      },
+      makeContext(),
+    );
+    final anchor =
+        RegExp(r'1#[A-Z]{2}').firstMatch(readResult.output)?.group(0);
+    expect(anchor, isNotNull);
+    final entry = await bridge.stat(
+      treeUri: workspace.treeUri,
+      relativePath: 'hashline_noop.txt',
+    );
+    await seedReadLedger(
+      filePath: 'hashline_noop.txt',
+      lastModified: entry!.lastModified,
+    );
+
+    await expectLater(
+      editTool.execute(
+        {
+          'filePath': 'hashline_noop.txt',
+          'edits': [
+            {
+              'op': 'replace',
+              'pos': anchor,
+              'lines': ['alpha'],
+            }
+          ],
+        },
+        makeContext(),
+      ),
+      throwsA(
+        predicate(
+          (error) =>
+              error
+                  .toString()
+                  .contains('No changes made to hashline_noop.txt') &&
+              error.toString().contains('No-op edits: 1'),
+        ),
+      ),
+    );
+    expect(await target.readAsString(), 'alpha\nbeta\n');
+    expect(permissionRequests, isEmpty);
   });
 
   test('hashline edit rejects stale anchors with updated references', () async {
