@@ -188,64 +188,6 @@ Future<ToolExecutionResult> _browserTool(
   );
 }
 
-Future<ToolExecutionResult> _filerefTool(
-    JsonMap args, ToolRuntimeContext ctx) async {
-  final raw = (args['refs'] as List?) ?? const [];
-  final out = <JsonMap>[];
-  final warnings = <String>[];
-  for (final e in raw.whereType<Map>()) {
-    final m = Map<String, dynamic>.from(e);
-    String path;
-    try {
-      path = _normalizeWorkspaceRelativePath(jsonStringCoerce(m['path'], ''));
-    } catch (e) {
-      warnings.add('Invalid path ${m['path']}: $e');
-      continue;
-    }
-    var kind = jsonStringCoerce(m['kind'], 'modified').trim().toLowerCase();
-    if (path.isEmpty) {
-      warnings.add('Skipped empty path');
-      continue;
-    }
-    if (kind != 'created' && kind != 'modified') {
-      kind = 'modified';
-    }
-    final entry = await ctx.bridge.stat(
-      treeUri: ctx.workspace.treeUri,
-      relativePath: path,
-    );
-    if (entry == null) {
-      warnings.add('Not found in workspace: $path');
-    }
-    out.add({
-      'path': path,
-      'kind': kind,
-      'exists': entry != null,
-    });
-  }
-  if (out.isEmpty) {
-    return ToolExecutionResult(
-      title: 'fileref',
-      output:
-          'No valid refs. Provide refs: [{path, kind}] with workspace-relative paths (. and ./ allowed; .. cannot escape root).',
-      metadata: {'refs': <JsonMap>[]},
-    );
-  }
-  await ctx.updateToolProgress(
-    title: '${out.length} file ref${out.length == 1 ? '' : 's'}',
-    metadata: {'phase': 'processing', 'refs': out},
-  );
-  final pretty = const JsonEncoder.withIndent('  ').convert(out);
-  final warnBlock =
-      warnings.isEmpty ? '' : '\n\nWarnings:\n${warnings.join('\n')}';
-  return ToolExecutionResult(
-    title: '${out.length} file ref${out.length == 1 ? '' : 's'}',
-    output:
-        'Registered file references for the conversation UI.$warnBlock\n\n$pretty',
-    metadata: {'refs': out},
-  );
-}
-
 Future<ToolExecutionResult> _skillTool(
     JsonMap args, ToolRuntimeContext ctx) async {
   final name = (args['name'] as String? ?? '').trim();

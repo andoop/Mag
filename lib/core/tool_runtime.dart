@@ -13,7 +13,6 @@ import 'git/git_settings_store.dart';
 import 'json_coerce.dart';
 import 'models.dart';
 import 'tools/builtin_tool_descriptions.dart';
-import 'tools/fileref_tool_spec.dart';
 import 'tools/question_tool_spec.dart';
 import 'tools/todo_tool_spec.dart';
 import 'workspace_bridge.dart';
@@ -494,14 +493,6 @@ class ToolRegistry {
           'additionalProperties': false,
         },
         execute: _skillTool,
-      ),
-    );
-    register(
-      ToolDefinition(
-        id: 'fileref',
-        description: kFilerefToolDescription.trim(),
-        parameters: filerefToolParametersSchema(),
-        execute: _filerefTool,
       ),
     );
     register(

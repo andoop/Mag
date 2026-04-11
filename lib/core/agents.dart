@@ -133,7 +133,6 @@ class AgentRegistry {
           'webfetch',
           'browser',
           'skill',
-          'fileref',
           'question',
           'invalid',
         ],
@@ -190,7 +189,6 @@ class AgentRegistry {
     'webfetch',
     'browser',
     'skill',
-    'fileref',
     'invalid',
     'plan_exit',
   ];

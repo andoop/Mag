@@ -128,7 +128,7 @@ class _ReasoningPartTileState extends State<_ReasoningPartTile> {
   }
 
   Widget _buildReasoningStreaming(BuildContext context) {
-    final text = _injectFileRefWikiLinks(_displayed);
+    final text = _displayed;
     final splitAt = _reasoningSplitPoint(text);
     final stableText = splitAt > 0 ? text.substring(0, splitAt) : '';
     final activeText = text.substring(splitAt);
@@ -147,8 +147,7 @@ class _ReasoningPartTileState extends State<_ReasoningPartTile> {
       children: [
         _stableReasonWidget ?? const SizedBox.shrink(),
         if (activeText.isNotEmpty)
-          _reasoningMarkdown(
-              context, _normalizeStreamingMarkdown(activeText)),
+          _reasoningMarkdown(context, _normalizeStreamingMarkdown(activeText)),
       ],
     );
   }
@@ -237,23 +236,6 @@ class _ReasoningPartTileState extends State<_ReasoningPartTile> {
       ),
       onTapLink: (_, href, __) {
         if (href == null || href.isEmpty) return;
-        if (href.startsWith('fileref:')) {
-          final enc = href.substring('fileref:'.length);
-          final path = Uri.decodeComponent(enc);
-          final ws = widget.workspace;
-          final ctrl = widget.controller;
-          if (ws != null && ctrl != null && path.isNotEmpty) {
-            _openFilePreview(
-              context,
-              controller: ctrl,
-              workspace: ws,
-              path: path,
-              onInsertPromptReference: widget.onInsertPromptReference,
-              onSendPromptReference: widget.onSendPromptReference,
-            );
-          }
-          return;
-        }
         _showInfo(
           context,
           l(context, '链接暂未接入外部打开: $href',
@@ -321,7 +303,7 @@ class _ReasoningPartTileState extends State<_ReasoningPartTile> {
             if (_detailsOpen)
               Padding(
                 padding: const EdgeInsets.only(top: 16),
-                child: _reasoningMarkdown(context, _injectFileRefWikiLinks(_displayed)),
+                child: _reasoningMarkdown(context, _displayed),
               ),
           ],
         ],

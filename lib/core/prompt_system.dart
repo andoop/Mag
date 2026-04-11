@@ -213,10 +213,6 @@ class PromptAssembler {
               '`edit` 优先使用基于内容哈希的 `LINE#ID` 锚点；请直接复用 `read` 输出中的精确锚点，不要猜测，也不要带上后面的 `|内容`。',
               '`apply_patch` 也支持 hashline 头部，例如 `@@ replace 12#VK`、`@@ replace 12#VK 15#MB`。',
               '修改已有文件时优先使用 `edit` 或 `apply_patch`。',
-              '',
-              '# 文件引用（必须）',
-              '每当你成功创建或修改工作区文件时，必须在同一轮调用 `fileref` 工具报告每个受影响的路径。',
-              '你也可以在文字中用 `[[file:path/relative/to/workspace]]` 写可点击链接。',
             ]
           : [
               '',
@@ -243,10 +239,6 @@ class PromptAssembler {
               '`apply_patch` also supports hashline headers such as `@@ replace 12#VK`, `@@ replace 12#VK 15#MB`.',
               'Prefer `edit` or `apply_patch` for modifying existing files.',
               'For workspace file operations: `delete` removes files/dirs; `rename` changes name in same folder; `move` for cross-folder; `copy` duplicates.',
-              '',
-              '# File references (mandatory)',
-              'Whenever you successfully create or modify workspace files, you MUST call the `fileref` tool in the same turn with every affected path.',
-              'You may also write clickable links as `[[file:path/relative/to/workspace]]`.',
             ]);
     }
 

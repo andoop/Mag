@@ -55,10 +55,7 @@ class _StreamingMarkdownTextState extends State<_StreamingMarkdownText> {
           inFence = !inFence;
         }
       }
-      if (!inFence &&
-          text[i] == '\n' &&
-          i + 1 < len &&
-          text[i + 1] == '\n') {
+      if (!inFence && text[i] == '\n' && i + 1 < len && text[i + 1] == '\n') {
         lastSafe = i + 2;
         i += 2;
         continue;
@@ -69,7 +66,7 @@ class _StreamingMarkdownTextState extends State<_StreamingMarkdownText> {
   }
 
   String _normalize(String raw) {
-    return _normalizeStreamingMarkdown(_injectFileRefWikiLinks(raw));
+    return _normalizeStreamingMarkdown(raw);
   }
 
   MarkdownBody _md(BuildContext context, String data) {
@@ -86,23 +83,6 @@ class _StreamingMarkdownTextState extends State<_StreamingMarkdownText> {
 
   void _onMdLinkTap(BuildContext context, String? href) {
     if (href == null || href.isEmpty) return;
-    if (href.startsWith('fileref:')) {
-      final enc = href.substring('fileref:'.length);
-      final path = Uri.decodeComponent(enc);
-      final ws = widget.workspace;
-      final ctrl = widget.controller;
-      if (ws != null && ctrl != null && path.isNotEmpty) {
-        _openFilePreview(
-          context,
-          controller: ctrl,
-          workspace: ws,
-          path: path,
-          onInsertPromptReference: widget.onInsertPromptReference,
-          onSendPromptReference: widget.onSendPromptReference,
-        );
-      }
-      return;
-    }
     _showInfo(
       context,
       l(context, '链接暂未接入外部打开: $href',
@@ -203,8 +183,7 @@ MarkdownStyleSheet _kMarkdownStyle(BuildContext context) {
     codeblockDecoration: BoxDecoration(
       color: blockBackground,
       borderRadius: BorderRadius.circular(10),
-      border:
-          Border.fromBorderSide(BorderSide(color: oc.borderColor)),
+      border: Border.fromBorderSide(BorderSide(color: oc.borderColor)),
     ),
     codeblockPadding: const EdgeInsets.all(12),
     blockquoteDecoration: BoxDecoration(
@@ -214,8 +193,7 @@ MarkdownStyleSheet _kMarkdownStyle(BuildContext context) {
         left: BorderSide(color: oc.border, width: 3),
       ),
     ),
-    blockquotePadding:
-        const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+    blockquotePadding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
     listIndent: 22,
     listBullet: TextStyle(fontSize: 14, height: 1.45, color: oc.foreground),
     h1: TextStyle(
@@ -306,8 +284,9 @@ class _MarkdownCodeBlock extends StatelessWidget {
     return LayoutBuilder(
       builder: (context, constraints) {
         final fallbackWidth = MediaQuery.of(context).size.width;
-        final frameWidth =
-            constraints.maxWidth.isFinite ? constraints.maxWidth : fallbackWidth;
+        final frameWidth = constraints.maxWidth.isFinite
+            ? constraints.maxWidth
+            : fallbackWidth;
         final inner = SizedBox(
           width: frameWidth,
           child: Column(
@@ -325,8 +304,8 @@ class _MarkdownCodeBlock extends StatelessWidget {
                 child: Row(
                   children: [
                     Container(
-                      padding:
-                          const EdgeInsets.symmetric(horizontal: 7, vertical: 3),
+                      padding: const EdgeInsets.symmetric(
+                          horizontal: 7, vertical: 3),
                       decoration: BoxDecoration(
                         color: context.isDarkMode
                             ? const Color(0xFF2D3748)
@@ -389,8 +368,8 @@ class _MarkdownCodeBlock extends StatelessWidget {
           decoration: BoxDecoration(
             color: codeBackground,
             borderRadius: BorderRadius.circular(10),
-            border:
-                Border.fromBorderSide(BorderSide(color: context.oc.borderColor)),
+            border: Border.fromBorderSide(
+                BorderSide(color: context.oc.borderColor)),
           ),
           child: inner,
         );
@@ -422,18 +401,6 @@ String _normalizeMarkdownLanguage(String language) {
     default:
       return language.trim().toLowerCase();
   }
-}
-
-/// `[[file:lib/foo.dart]]` → markdown link，点击打开工作区文件（与系统提示中的约定一致）。
-String _injectFileRefWikiLinks(String input) {
-  return input.replaceAllMapped(
-    RegExp(r'\[\[file:([^\]]+)\]\]'),
-    (m) {
-      final p = m.group(1)!.trim();
-      if (p.isEmpty) return m.group(0)!;
-      return '[$p](fileref:${Uri.encodeComponent(p)})';
-    },
-  );
 }
 
 bool _pathLooksMarkdownFile(String path) {

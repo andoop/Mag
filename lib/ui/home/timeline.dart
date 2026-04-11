@@ -171,9 +171,7 @@ class _MessageBubbleState extends State<_MessageBubble> {
     final footer = <MessagePart>[];
     final hasCompaction = parts.any((p) => p.type == PartType.compaction);
     for (final p in parts) {
-      if (p.type == PartType.tool && (p.data['tool'] as String?) == 'fileref') {
-        footer.add(p);
-      } else if (hasCompaction && p.type == PartType.text) {
+      if (hasCompaction && p.type == PartType.text) {
         continue;
       } else {
         primary.add(p);

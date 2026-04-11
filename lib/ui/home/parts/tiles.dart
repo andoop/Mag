@@ -154,37 +154,6 @@ class _PartTile extends StatelessWidget {
             callId: callId,
           );
         }
-        if (toolName == 'fileref') {
-          final metadata = Map<String, dynamic>.from(
-              toolState['metadata'] as Map? ?? const {});
-          List<Map<String, dynamic>> refs;
-          final metaRefs = metadata['refs'];
-          if (metaRefs is List) {
-            refs = metaRefs
-                .whereType<Map>()
-                .map((e) => Map<String, dynamic>.from(e))
-                .toList();
-          } else {
-            final ir = rawInput['refs'];
-            refs = ir is List
-                ? ir
-                    .whereType<Map>()
-                    .map((e) => Map<String, dynamic>.from(e))
-                    .toList()
-                : <Map<String, dynamic>>[];
-          }
-          return _FileRefToolPart(
-            toolStatus: toolStatus,
-            refs: refs,
-            rawInput: rawInput,
-            rawOutput: rawOutput,
-            callId: callId,
-            controller: controller,
-            workspace: workspace,
-            onInsertPromptReference: onInsertPromptReference,
-            onSendPromptReference: onSendPromptReference,
-          );
-        }
         if (toolName == 'question' && toolStatus != 'error') {
           final questions = _resolveQuestionToolQuestions(toolState);
           if (questions.isEmpty) {
