@@ -1,5 +1,25 @@
 part of '../../home_page.dart';
 
+const int _kStreamingTextRenderPaceMs = 24;
+final RegExp _kStreamingTextSnap = RegExp(r'[\s\.,!\?;:\)\]]');
+
+int _streamingTextStep(int remaining) {
+  if (remaining <= 12) return 2;
+  if (remaining <= 48) return 4;
+  if (remaining <= 96) return 8;
+  final stepped = (remaining / 8).ceil();
+  return stepped > 24 ? 24 : stepped;
+}
+
+int _nextStreamingTextIndex(String text, int start) {
+  final end = (start + _streamingTextStep(text.length - start)).clamp(0, text.length);
+  final max = (end + 8).clamp(0, text.length);
+  for (var i = end; i < max; i++) {
+    if (_kStreamingTextSnap.hasMatch(text[i])) return i + 1;
+  }
+  return end;
+}
+
 class _StreamingMarkdownText extends StatefulWidget {
   const _StreamingMarkdownText({
     required this.text,
@@ -26,8 +46,6 @@ class _StreamingMarkdownText extends StatefulWidget {
 }
 
 class _StreamingMarkdownTextState extends State<_StreamingMarkdownText> {
-  static const int _throttleMs = 100;
-
   String _stableText = '';
   Widget? _stableWidget;
 
@@ -57,16 +75,38 @@ class _StreamingMarkdownTextState extends State<_StreamingMarkdownText> {
     super.dispose();
   }
 
-  void _flushThrottled() {
+  void _syncDisplayedText(String text) {
+    if (_displayedText == text) return;
+    setState(() => _displayedText = text);
+  }
+
+  void _flushPaced() {
     final next = widget.text;
     final now = DateTime.now().millisecondsSinceEpoch;
-    final remaining = _throttleMs - (now - _lastFlush);
+    final remaining = _kStreamingTextRenderPaceMs - (now - _lastFlush);
     if (remaining <= 0) {
       _pending?.cancel();
       _pending = null;
       _lastFlush = now;
-      if (_displayedText != next) {
-        setState(() => _displayedText = next);
+      if (!widget.streaming) {
+        _syncDisplayedText(next);
+        return;
+      }
+      if (!next.startsWith(_displayedText) || next.length <= _displayedText.length) {
+        _syncDisplayedText(next);
+        return;
+      }
+      final end = _nextStreamingTextIndex(next, _displayedText.length);
+      _syncDisplayedText(next.substring(0, end));
+      if (end < next.length) {
+        _pending = Timer(
+          const Duration(milliseconds: _kStreamingTextRenderPaceMs),
+          () {
+            if (!mounted) return;
+            _pending = null;
+            _flushPaced();
+          },
+        );
       }
       return;
     }
@@ -74,11 +114,7 @@ class _StreamingMarkdownTextState extends State<_StreamingMarkdownText> {
     _pending = Timer(Duration(milliseconds: remaining), () {
       if (!mounted) return;
       _pending = null;
-      _lastFlush = DateTime.now().millisecondsSinceEpoch;
-      final text = widget.text;
-      if (_displayedText != text) {
-        setState(() => _displayedText = text);
-      }
+      _flushPaced();
     });
   }
 
@@ -96,7 +132,7 @@ class _StreamingMarkdownTextState extends State<_StreamingMarkdownText> {
     }
     if (oldWidget.text != widget.text) {
       if (widget.streaming) {
-        _flushThrottled();
+        _flushPaced();
       } else {
         _pending?.cancel();
         _pending = null;

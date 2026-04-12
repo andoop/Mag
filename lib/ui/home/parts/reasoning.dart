@@ -28,8 +28,6 @@ class _ReasoningPartTile extends StatefulWidget {
 }
 
 class _ReasoningPartTileState extends State<_ReasoningPartTile> {
-  static const int _throttleMs = 100;
-
   String _displayed = '';
   Timer? _pending;
   int _lastFlush = 0;
@@ -56,24 +54,47 @@ class _ReasoningPartTileState extends State<_ReasoningPartTile> {
     super.dispose();
   }
 
-  void _flushThrottled() {
+  void _syncDisplayedReasoning(String text) {
+    if (_displayed == text) return;
+    setState(() => _displayed = text);
+  }
+
+  void _flushPaced() {
     final sanitized = _sanitizeReasoningText(widget.text);
     final now = DateTime.now().millisecondsSinceEpoch;
-    final remaining = _throttleMs - (now - _lastFlush);
+    final remaining = _kStreamingTextRenderPaceMs - (now - _lastFlush);
     if (remaining <= 0) {
       _pending?.cancel();
       _pending = null;
       _lastFlush = now;
-      if (_displayed != sanitized) setState(() => _displayed = sanitized);
+      if (!widget.streaming) {
+        _syncDisplayedReasoning(sanitized);
+        return;
+      }
+      if (!sanitized.startsWith(_displayed) ||
+          sanitized.length <= _displayed.length) {
+        _syncDisplayedReasoning(sanitized);
+        return;
+      }
+      final end = _nextStreamingTextIndex(sanitized, _displayed.length);
+      _syncDisplayedReasoning(sanitized.substring(0, end));
+      if (end < sanitized.length) {
+        _pending = Timer(
+          const Duration(milliseconds: _kStreamingTextRenderPaceMs),
+          () {
+            if (!mounted) return;
+            _pending = null;
+            _flushPaced();
+          },
+        );
+      }
       return;
     }
     _pending?.cancel();
     _pending = Timer(Duration(milliseconds: remaining), () {
       if (!mounted) return;
       _pending = null;
-      _lastFlush = DateTime.now().millisecondsSinceEpoch;
-      final s = _sanitizeReasoningText(widget.text);
-      if (_displayed != s) setState(() => _displayed = s);
+      _flushPaced();
     });
   }
 
@@ -92,7 +113,7 @@ class _ReasoningPartTileState extends State<_ReasoningPartTile> {
       if (_displayed != s) setState(() => _displayed = s);
     } else if (oldWidget.text != widget.text) {
       if (widget.streaming) {
-        _flushThrottled();
+        _flushPaced();
       } else {
         _pending?.cancel();
         _pending = null;

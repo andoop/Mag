@@ -94,16 +94,19 @@ class _HomePageState extends State<HomePage> {
   String _selectedSchemaTemplate = 'answer';
   final ValueNotifier<bool> _stickToBottom = ValueNotifier<bool>(true);
   final ValueNotifier<int> _messageVersion = ValueNotifier<int>(0);
+  bool _messageVersionScheduled = false;
   bool _isAutoScrolling = false;
   bool _pendingTimelineSync = false;
-  Timer? _timelineSyncDebounce;
+  bool _timelineSyncScheduled = false;
+  bool _timelineUserInteracting = false;
+  double? _lastProgrammaticScrollTarget;
+  int _lastProgrammaticScrollAt = 0;
   String _lastTimelineAnchor = '';
   String _historySessionId = '';
   int _historyStartIndex = 0;
   int _stagedMessageCount = 0;
   String _stagingKey = '';
   int _lastBackfillAt = 0;
-  int _lastTimelineSyncAt = 0;
   String _lastStateRenderKey = '';
   String _lastStructuralKey = '';
   // ignore: prefer_final_fields
@@ -138,7 +141,6 @@ class _HomePageState extends State<HomePage> {
       ..removeListener(_handleTimelineScroll)
       ..dispose();
     _promptMentionDebounce?.cancel();
-    _timelineSyncDebounce?.cancel();
     _promptController.removeListener(_handlePromptComposerChanged);
     _promptFocusNode.removeListener(_handlePromptComposerChanged);
     _promptController.dispose();
@@ -193,8 +195,18 @@ class _HomePageState extends State<HomePage> {
       _lastStructuralKey = structuralKey;
       setState(() {});
     } else {
-      _messageVersion.value++;
+      _scheduleMessageVersionTick();
     }
+  }
+
+  void _scheduleMessageVersionTick() {
+    if (_messageVersionScheduled) return;
+    _messageVersionScheduled = true;
+    scheduleMicrotask(() {
+      _messageVersionScheduled = false;
+      if (!mounted) return;
+      _messageVersion.value++;
+    });
   }
 
   int _initialHistoryStart(List<SessionMessageBundle> messages) {
@@ -728,8 +740,7 @@ class _HomePageState extends State<HomePage> {
                           side: BorderSide(color: context.oc.borderColor),
                         ),
                         onPressed: () {
-                          _stickToBottom.value = true;
-                          _scrollTimelineToBottom();
+                          _resumeTimelineAutoScroll();
                         },
                         icon: const Icon(Icons.arrow_downward, size: 16),
                         label: Text(l(context, '回到底部', 'Bottom')),
@@ -745,30 +756,46 @@ class _HomePageState extends State<HomePage> {
   }
 
   void _handleTimelineScroll() {
-    if (!_timelineController.hasClients || _isAutoScrolling) return;
-    final distance = _timelineController.position.maxScrollExtent -
-        _timelineController.offset;
-    final nextStick = distance < 24;
-    if (nextStick != _stickToBottom.value) {
-      _stickToBottom.value = nextStick;
+    if (!_timelineController.hasClients) return;
+    if (_isRecentProgrammaticTimelineScroll()) return;
+    final distance = _timelineDistanceFromBottom();
+    final nextStick =
+        _computeStickToBottom(distance, current: _stickToBottom.value);
+    if (_timelineUserInteracting) {
+      if (nextStick != _stickToBottom.value) {
+        _stickToBottom.value = nextStick;
+      }
+      return;
+    }
+    if (!_stickToBottom.value && nextStick) {
+      _stickToBottom.value = true;
     }
   }
 
   bool _handleTimelineNotification(ScrollNotification notification) {
-    if (_isAutoScrolling) return false;
     if (notification is ScrollStartNotification &&
-        notification.dragDetails != null &&
-        _stickToBottom.value) {
-      _stickToBottom.value = false;
+        notification.dragDetails != null) {
+      _timelineUserInteracting = true;
+      if (_stickToBottom.value) {
+        _stickToBottom.value = false;
+      }
       return false;
     }
+    if (_isRecentProgrammaticTimelineScroll(notification.metrics)) return false;
     if (notification is ScrollUpdateNotification ||
         notification is ScrollEndNotification) {
-      final distance =
-          notification.metrics.maxScrollExtent - notification.metrics.pixels;
-      final nextStick = distance < 24;
-      if (nextStick != _stickToBottom.value) {
-        _stickToBottom.value = nextStick;
+      final distance = notification.metrics.maxScrollExtent -
+          notification.metrics.pixels;
+      final nextStick =
+          _computeStickToBottom(distance, current: _stickToBottom.value);
+      if (_timelineUserInteracting ||
+          (notification is ScrollUpdateNotification &&
+              notification.dragDetails != null)) {
+        if (nextStick != _stickToBottom.value) {
+          _stickToBottom.value = nextStick;
+        }
+      } else if (!_stickToBottom.value && nextStick) {
+        _stickToBottom.value = true;
       }
       if (notification.metrics.pixels < 180 &&
           _hasEarlierHistory(widget.controller.state)) {
@@ -778,6 +805,9 @@ class _HomePageState extends State<HomePage> {
           _revealEarlierMessages();
         }
       }
+      if (notification is ScrollEndNotification) {
+        _timelineUserInteracting = false;
+      }
     }
     return false;
   }
@@ -786,41 +816,25 @@ class _HomePageState extends State<HomePage> {
     final anchor = _timelineAnchor(state);
     if (anchor == _lastTimelineAnchor) return;
     _lastTimelineAnchor = anchor;
+    _pendingTimelineSync = true;
     if (_isAutoScrolling) {
-      _pendingTimelineSync = true;
       return;
     }
-    final now = DateTime.now().millisecondsSinceEpoch;
-    final canAnimate = !state.isBusy;
-    if (!canAnimate) {
-      _pendingTimelineSync = true;
-      _timelineSyncDebounce?.cancel();
-      final elapsed = now - _lastTimelineSyncAt;
-      final waitMs = elapsed >= 140 ? 0 : 140 - elapsed;
-      _timelineSyncDebounce = Timer(Duration(milliseconds: waitMs), () {
-        if (!mounted || !_stickToBottom.value || _isAutoScrolling) return;
-        _pendingTimelineSync = false;
-        _lastTimelineSyncAt = DateTime.now().millisecondsSinceEpoch;
-        WidgetsBinding.instance.addPostFrameCallback((_) {
-          if (!mounted ||
-              !_stickToBottom.value ||
-              !_timelineController.hasClients) {
-            return;
-          }
-          _scrollTimelineToBottom(animate: false);
-        });
-      });
+    if (_timelineSyncScheduled) {
       return;
     }
-    _lastTimelineSyncAt = now;
+    _timelineSyncScheduled = true;
     WidgetsBinding.instance.addPostFrameCallback((_) {
-      if (!mounted || !_stickToBottom.value) return;
+      _timelineSyncScheduled = false;
+      if (!mounted || !_pendingTimelineSync || !_stickToBottom.value) return;
       if (_isAutoScrolling) {
-        _pendingTimelineSync = true;
         return;
       }
       _pendingTimelineSync = false;
-      _scrollTimelineToBottom(animate: canAnimate);
+      _scrollTimelineToBottom(animate: !widget.controller.state.isBusy);
+      if (_pendingTimelineSync) {
+        _scheduleTimelineSync(widget.controller.state);
+      }
     });
   }
 
@@ -829,17 +843,18 @@ class _HomePageState extends State<HomePage> {
     final offset = _timelineController.position.maxScrollExtent;
     final current = _timelineController.offset;
     final delta = (offset - current).abs();
-    if (delta < 6) {
-      if (_timelineController.hasClients) {
-        final dist = _timelineController.position.maxScrollExtent -
-            _timelineController.offset;
-        _stickToBottom.value = dist < 24;
-      }
+    if (delta < 2) {
+      _markProgrammaticTimelineScroll(offset);
+      if (_stickToBottom.value) return;
+      final dist = _timelineDistanceFromBottom();
+      _stickToBottom.value =
+          _computeStickToBottom(dist, current: _stickToBottom.value);
       return;
     }
     if (animate) {
       _isAutoScrolling = true;
       _pendingTimelineSync = false;
+      _markProgrammaticTimelineScroll(offset);
       _timelineController
           .animateTo(
         offset,
@@ -849,8 +864,7 @@ class _HomePageState extends State<HomePage> {
           .whenComplete(() {
         _isAutoScrolling = false;
         if (_timelineController.hasClients) {
-          final dist = _timelineController.position.maxScrollExtent -
-              _timelineController.offset;
+          final dist = _timelineDistanceFromBottom();
           final shouldPin = _stickToBottom.value;
           if ((shouldPin && dist > 1) || _pendingTimelineSync) {
             _pendingTimelineSync = false;
@@ -864,17 +878,58 @@ class _HomePageState extends State<HomePage> {
             });
             return;
           }
-          _stickToBottom.value = dist < 24;
+          _stickToBottom.value =
+              _computeStickToBottom(dist, current: _stickToBottom.value);
         }
       });
       return;
     }
+    _markProgrammaticTimelineScroll(offset);
     _timelineController.jumpTo(offset);
-    if (_timelineController.hasClients) {
-      final dist = _timelineController.position.maxScrollExtent -
-          _timelineController.offset;
-      _stickToBottom.value = dist < 24;
+    _stickToBottom.value = true;
+  }
+
+  double _timelineDistanceFromBottom([ScrollMetrics? metrics]) {
+    if (metrics != null) {
+      return metrics.maxScrollExtent - metrics.pixels;
     }
+    if (!_timelineController.hasClients) return 0;
+    return _timelineController.position.maxScrollExtent -
+        _timelineController.offset;
+  }
+
+  void _markProgrammaticTimelineScroll(double targetOffset) {
+    _lastProgrammaticScrollAt = DateTime.now().millisecondsSinceEpoch;
+    _lastProgrammaticScrollTarget = targetOffset;
+  }
+
+  bool _isRecentProgrammaticTimelineScroll([ScrollMetrics? metrics]) {
+    final target = _lastProgrammaticScrollTarget;
+    if (target == null) return false;
+    final now = DateTime.now().millisecondsSinceEpoch;
+    if (now - _lastProgrammaticScrollAt > 1500) return false;
+    final pixels = metrics?.pixels ??
+        (_timelineController.hasClients ? _timelineController.offset : null);
+    if (pixels == null) return false;
+    return (pixels - target).abs() < 2;
+  }
+
+  bool _computeStickToBottom(double distance, {required bool current}) {
+    if (current) {
+      return distance < 32;
+    }
+    return distance < 10;
+  }
+
+  void _resumeTimelineAutoScroll() {
+    _timelineUserInteracting = false;
+    _pendingTimelineSync = false;
+    _stickToBottom.value = true;
+    _scrollTimelineToBottom(animate: false);
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted || !_stickToBottom.value) return;
+      _scrollTimelineToBottom(animate: false);
+    });
   }
 
   String _timelineAnchor(AppState state) {
