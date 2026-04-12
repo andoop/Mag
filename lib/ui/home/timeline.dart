@@ -1,10 +1,159 @@
 part of '../home_page.dart';
 
+class _TimelineTurnEntry {
+  const _TimelineTurnEntry({
+    required this.userIndex,
+    required this.assistantIndices,
+    required this.stableId,
+  });
+
+  final int? userIndex;
+  final List<int> assistantIndices;
+  final String stableId;
+}
+
+List<_TimelineTurnEntry> _buildTimelineEntries(
+  List<SessionMessageBundle> renderedMessages,
+) {
+  final entries = <_TimelineTurnEntry>[];
+  int? pendingUserIndex;
+  final pendingAssistantIndices = <int>[];
+
+  void flushPendingTurn() {
+    if (pendingUserIndex == null && pendingAssistantIndices.isEmpty) return;
+    final ids = <String>[
+      if (pendingUserIndex != null)
+        renderedMessages[pendingUserIndex!].message.id,
+      for (final idx in pendingAssistantIndices)
+        renderedMessages[idx].message.id,
+    ];
+    entries.add(
+      _TimelineTurnEntry(
+        userIndex: pendingUserIndex,
+        assistantIndices: List<int>.unmodifiable(pendingAssistantIndices),
+        stableId: ids.join('|'),
+      ),
+    );
+    pendingUserIndex = null;
+    pendingAssistantIndices.clear();
+  }
+
+  for (var i = 0; i < renderedMessages.length; i++) {
+    final bundle = renderedMessages[i];
+    if (bundle.message.role == SessionRole.user) {
+      flushPendingTurn();
+      pendingUserIndex = i;
+      continue;
+    }
+    if (pendingUserIndex == null) {
+      entries.add(
+        _TimelineTurnEntry(
+          userIndex: null,
+          assistantIndices: List<int>.unmodifiable([i]),
+          stableId: bundle.message.id,
+        ),
+      );
+      continue;
+    }
+    pendingAssistantIndices.add(i);
+  }
+
+  flushPendingTurn();
+  return List<_TimelineTurnEntry>.unmodifiable(entries);
+}
+
+String? _streamingAssistantMessageId(
+  List<_TimelineTurnEntry> entries,
+  List<SessionMessageBundle> renderedMessages,
+) {
+  for (var i = entries.length - 1; i >= 0; i--) {
+    final assistantIndices = entries[i].assistantIndices;
+    if (assistantIndices.isNotEmpty) {
+      return renderedMessages[assistantIndices.last].message.id;
+    }
+  }
+  return null;
+}
+
+List<MessagePart> _visibleTimelineParts(SessionMessageBundle bundle) {
+  final parts = bundle.parts;
+  final primary = <MessagePart>[];
+  final hasCompaction = parts.any((p) => p.type == PartType.compaction);
+  for (final p in parts) {
+    if (bundle.message.role == SessionRole.user && p.type == PartType.text) {
+      continue;
+    }
+    if (hasCompaction && p.type == PartType.text) {
+      continue;
+    }
+    primary.add(p);
+  }
+  return List<MessagePart>.unmodifiable(primary);
+}
+
+String _formatTimelineTimestamp(int ms) {
+  final dt = DateTime.fromMillisecondsSinceEpoch(ms);
+  final hh = dt.hour.toString().padLeft(2, '0');
+  final mm = dt.minute.toString().padLeft(2, '0');
+  return '$hh:$mm';
+}
+
+bool _isContextToolPart(MessagePart part) {
+  if (part.type != PartType.tool) return false;
+  const names = {'read', 'glob', 'grep', 'list'};
+  return names.contains(part.data['tool'] as String? ?? '');
+}
+
+String _toolNameFromPart(MessagePart part) {
+  if (part.type != PartType.tool) return '';
+  return part.data['tool'] as String? ?? '';
+}
+
+String _toolStatusFromPart(MessagePart part) {
+  if (part.type != PartType.tool) return 'completed';
+  final toolState =
+      Map<String, dynamic>.from(part.data['state'] as Map? ?? const {});
+  return toolState['status'] as String? ?? 'pending';
+}
+
+int? _assistantTurnDurationMs(
+  AppState state,
+  SessionMessageBundle assistantBundle,
+) {
+  final bundleIdx = state.messages
+      .indexWhere((item) => item.message.id == assistantBundle.message.id);
+  if (bundleIdx < 0) return null;
+  return _turnDurationMsForAssistantBundle(state, bundleIdx);
+}
+
+int _messageBundleVisualSignature(SessionMessageBundle bundle) {
+  return Object.hash(
+    bundle.message.id,
+    bundle.revision,
+    bundle.parts.length,
+  );
+}
+
+int _timelineTurnVisualSignature(
+  _TimelineTurnEntry entry,
+  List<SessionMessageBundle> renderedMessages,
+) {
+  var hash = entry.userIndex == null
+      ? 17
+      : _messageBundleVisualSignature(renderedMessages[entry.userIndex!]);
+  for (final index in entry.assistantIndices) {
+    hash = Object.hash(
+        hash, _messageBundleVisualSignature(renderedMessages[index]));
+  }
+  return hash;
+}
+
 extension _HomePageTimeline on _HomePageState {
   int _timelineItemCount(
     AppState state,
-    List<SessionMessageBundle> renderedMessages,
+    List<_TimelineTurnEntry> renderedEntries,
   ) {
+    final showGlobalRunningIndicator = state.isBusy && renderedEntries.isEmpty;
     var count = 2;
     if (state.todos.isNotEmpty) {
       count += 2;
@@ -15,9 +164,9 @@ extension _HomePageTimeline on _HomePageState {
       if (_hasEarlierHistory(state)) {
         count += 1;
       }
-      count += renderedMessages.length;
+      count += renderedEntries.length;
     }
-    if (state.isBusy) {
+    if (showGlobalRunningIndicator) {
       count += 2;
     }
     count += 1;
@@ -33,6 +182,8 @@ extension _HomePageTimeline on _HomePageState {
     required bool showModelLatestTag,
     required bool isKeyboardOpen,
     required List<SessionMessageBundle> renderedMessages,
+    required List<_TimelineTurnEntry> renderedEntries,
+    required String? streamingAssistantMessageId,
     required int index,
   }) {
     var cursor = 0;
@@ -84,18 +235,18 @@ extension _HomePageTimeline on _HomePageState {
           );
         }
       }
-      final messageEnd = cursor + renderedMessages.length;
+      final messageEnd = cursor + renderedEntries.length;
       if (index < messageEnd) {
-        final msgIndex = index - cursor;
-        final bundle = renderedMessages[msgIndex];
-        final isLast = msgIndex == renderedMessages.length - 1;
-        return _MessageBubble(
-          key: ValueKey<String>(bundle.message.id),
-          bundle: bundle,
+        final entryIndex = index - cursor;
+        final entry = renderedEntries[entryIndex];
+        return _TimelineTurnGroup(
+          key: ValueKey<String>(entry.stableId),
+          entry: entry,
+          renderedMessages: renderedMessages,
           state: state,
-          isStreamingAssistantMessage: state.isBusy &&
-              isLast &&
-              bundle.message.role == SessionRole.assistant,
+          streamingAssistantMessageId: streamingAssistantMessageId,
+          showRunningIndicator:
+              state.isBusy && entryIndex == renderedEntries.length - 1,
           controller: widget.controller,
           onInsertPromptReference: _appendPromptReference,
           onSendPromptReference: _sendPromptReference,
@@ -103,7 +254,7 @@ extension _HomePageTimeline on _HomePageState {
       }
       cursor = messageEnd;
     }
-    if (state.isBusy) {
+    if (state.isBusy && renderedEntries.isEmpty) {
       if (index == cursor++) {
         return const SizedBox(height: 8);
       }
@@ -118,6 +269,484 @@ extension _HomePageTimeline on _HomePageState {
   }
 }
 
+class _TurnPartEntry {
+  const _TurnPartEntry({
+    required this.bundle,
+    required this.part,
+    required this.streamAssistantContent,
+  });
+
+  final SessionMessageBundle bundle;
+  final MessagePart part;
+  final bool streamAssistantContent;
+}
+
+class _TurnDisplayItem {
+  const _TurnDisplayItem.part(this.entry) : entries = const [];
+  const _TurnDisplayItem.contextGroup(this.entries) : entry = null;
+
+  final _TurnPartEntry? entry;
+  final List<_TurnPartEntry> entries;
+
+  bool get isContextGroup => entry == null;
+}
+
+class _TimelineTurnGroup extends StatefulWidget {
+  const _TimelineTurnGroup({
+    super.key,
+    required this.entry,
+    required this.renderedMessages,
+    required this.state,
+    required this.streamingAssistantMessageId,
+    required this.showRunningIndicator,
+    required this.controller,
+    required this.onInsertPromptReference,
+    required this.onSendPromptReference,
+  });
+
+  final _TimelineTurnEntry entry;
+  final List<SessionMessageBundle> renderedMessages;
+  final AppState state;
+  final String? streamingAssistantMessageId;
+  final bool showRunningIndicator;
+  final AppController controller;
+  final ValueChanged<String> onInsertPromptReference;
+  final PromptReferenceAction onSendPromptReference;
+
+  @override
+  State<_TimelineTurnGroup> createState() => _TimelineTurnGroupState();
+}
+
+class _TimelineTurnGroupState extends State<_TimelineTurnGroup> {
+  Widget? _cached;
+  int? _lastThemeKey;
+  int? _lastEntrySignature;
+  String? _lastStreamingAssistantMessageId;
+  bool? _lastShowRunningIndicator;
+
+  @override
+  Widget build(BuildContext context) {
+    final themeKey = context.themeCacheKey;
+    final entrySignature =
+        _timelineTurnVisualSignature(widget.entry, widget.renderedMessages);
+    if (_cached != null &&
+        _lastThemeKey == themeKey &&
+        _lastEntrySignature == entrySignature &&
+        _lastStreamingAssistantMessageId ==
+            widget.streamingAssistantMessageId &&
+        _lastShowRunningIndicator == widget.showRunningIndicator) {
+      return _cached!;
+    }
+    _lastThemeKey = themeKey;
+    _lastEntrySignature = entrySignature;
+    _lastStreamingAssistantMessageId = widget.streamingAssistantMessageId;
+    _lastShowRunningIndicator = widget.showRunningIndicator;
+    _cached = _buildContent(context);
+    return _cached!;
+  }
+
+  Widget _buildContent(BuildContext context) {
+    final userBundle = widget.entry.userIndex == null
+        ? null
+        : widget.renderedMessages[widget.entry.userIndex!];
+    final assistantBundles = [
+      for (final idx in widget.entry.assistantIndices)
+        widget.renderedMessages[idx],
+    ];
+    final hasAssistant = assistantBundles.isNotEmpty;
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 10),
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          if (userBundle != null)
+            _MessageBubble(
+              key: ValueKey<String>(userBundle.message.id),
+              bundle: userBundle,
+              state: widget.state,
+              isStreamingAssistantMessage: false,
+              controller: widget.controller,
+              onInsertPromptReference: widget.onInsertPromptReference,
+              onSendPromptReference: widget.onSendPromptReference,
+              bottomPadding: hasAssistant ? 6 : 0,
+            ),
+          if (hasAssistant)
+            _AssistantTurnBubble(
+              bundles: assistantBundles,
+              state: widget.state,
+              streamingAssistantMessageId: widget.streamingAssistantMessageId,
+              controller: widget.controller,
+              onInsertPromptReference: widget.onInsertPromptReference,
+              onSendPromptReference: widget.onSendPromptReference,
+            ),
+          if (widget.showRunningIndicator) ...[
+            const SizedBox(height: 6),
+            const _RunningIndicator(),
+          ],
+        ],
+      ),
+    );
+  }
+}
+
+class _AssistantTurnBubble extends StatelessWidget {
+  const _AssistantTurnBubble({
+    required this.bundles,
+    required this.state,
+    required this.streamingAssistantMessageId,
+    required this.controller,
+    required this.onInsertPromptReference,
+    required this.onSendPromptReference,
+  });
+
+  final List<SessionMessageBundle> bundles;
+  final AppState state;
+  final String? streamingAssistantMessageId;
+  final AppController controller;
+  final ValueChanged<String> onInsertPromptReference;
+  final PromptReferenceAction onSendPromptReference;
+
+  List<_TurnDisplayItem> _buildDisplayItems(List<_TurnPartEntry> entries) {
+    final items = <_TurnDisplayItem>[];
+    final contextGroup = <_TurnPartEntry>[];
+
+    void flushContextGroup() {
+      if (contextGroup.isEmpty) return;
+      if (contextGroup.length == 1) {
+        items.add(_TurnDisplayItem.part(contextGroup.single));
+      } else {
+        items.add(
+          _TurnDisplayItem.contextGroup(
+            List<_TurnPartEntry>.unmodifiable(contextGroup),
+          ),
+        );
+      }
+      contextGroup.clear();
+    }
+
+    for (final entry in entries) {
+      if (_isContextToolPart(entry.part)) {
+        contextGroup.add(entry);
+        continue;
+      }
+      flushContextGroup();
+      items.add(_TurnDisplayItem.part(entry));
+    }
+    flushContextGroup();
+    return List<_TurnDisplayItem>.unmodifiable(items);
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final oc = context.oc;
+    final visibleEntries = <_TurnPartEntry>[];
+    for (final bundle in bundles) {
+      final streamAssistantContent =
+          streamingAssistantMessageId == bundle.message.id;
+      for (final part in _visibleTimelineParts(bundle)) {
+        visibleEntries.add(
+          _TurnPartEntry(
+            bundle: bundle,
+            part: part,
+            streamAssistantContent: streamAssistantContent,
+          ),
+        );
+      }
+    }
+    if (visibleEntries.isEmpty) {
+      return const SizedBox.shrink();
+    }
+
+    _TurnPartEntry? lastPlainTextEntry;
+    for (var i = visibleEntries.length - 1; i >= 0; i--) {
+      final part = visibleEntries[i].part;
+      if (part.type == PartType.text &&
+          !((part.data['structured'] as bool?) ?? false)) {
+        lastPlainTextEntry = visibleEntries[i];
+        break;
+      }
+    }
+
+    final displayItems = _buildDisplayItems(visibleEntries);
+    final firstBundle = bundles.first;
+    final turnDurationMs = _assistantTurnDurationMs(state, bundles.last);
+    final compactionOnly = visibleEntries.length == 1 &&
+        visibleEntries.first.part.type == PartType.compaction &&
+        firstBundle.message.text.isEmpty;
+
+    if (compactionOnly) {
+      final entry = visibleEntries.first;
+      return Center(
+        child: ConstrainedBox(
+          constraints: const BoxConstraints(maxWidth: 560),
+          child: _PartTile(
+            key: ValueKey<String>('assistant-compaction-${entry.part.id}'),
+            part: entry.part,
+            message: entry.bundle.message,
+            controller: controller,
+            workspace: controller.state.workspace,
+            serverUri: controller.state.serverUri,
+            streamAssistantContent: false,
+            turnDurationMs: null,
+            showAssistantTextMeta: false,
+            onInsertPromptReference: onInsertPromptReference,
+            onSendPromptReference: onSendPromptReference,
+          ),
+        ),
+      );
+    }
+
+    return RepaintBoundary(
+      child: Align(
+        alignment: Alignment.centerLeft,
+        child: ConstrainedBox(
+          constraints: const BoxConstraints(maxWidth: 720),
+          child: Container(
+            padding: const EdgeInsets.fromLTRB(13, 11, 13, 12),
+            decoration: BoxDecoration(
+              color: oc.agentBubble,
+              borderRadius: BorderRadius.circular(20),
+              border: Border.all(color: oc.softBorderColor),
+            ),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Text(
+                      firstBundle.message.agent,
+                      style: Theme.of(context).textTheme.labelSmall?.copyWith(
+                            fontWeight: FontWeight.w600,
+                            color: oc.foregroundMuted,
+                            letterSpacing: 0.1,
+                          ),
+                    ),
+                    const SizedBox(width: 6),
+                    Text(
+                      _formatTimelineTimestamp(firstBundle.message.createdAt),
+                      style: Theme.of(context)
+                          .textTheme
+                          .labelSmall
+                          ?.copyWith(color: oc.foregroundFaint),
+                    ),
+                  ],
+                ),
+                for (final item in displayItems) ...[
+                  const SizedBox(height: 10),
+                  if (item.isContextGroup)
+                    _ContextToolGroupTile(
+                      key: ValueKey<String>(
+                        'context-${item.entries.first.part.id}-${item.entries.last.part.id}',
+                      ),
+                      entries: item.entries,
+                      controller: controller,
+                      workspace: controller.state.workspace,
+                      serverUri: controller.state.serverUri,
+                      onInsertPromptReference: onInsertPromptReference,
+                      onSendPromptReference: onSendPromptReference,
+                    )
+                  else
+                    _PartTile(
+                      key: ValueKey<String>(
+                          'assistant-part-${item.entry!.part.id}'),
+                      part: item.entry!.part,
+                      message: item.entry!.bundle.message,
+                      controller: controller,
+                      workspace: controller.state.workspace,
+                      serverUri: controller.state.serverUri,
+                      streamAssistantContent:
+                          item.entry!.streamAssistantContent,
+                      turnDurationMs: turnDurationMs,
+                      showAssistantTextMeta:
+                          identical(item.entry, lastPlainTextEntry),
+                      onInsertPromptReference: onInsertPromptReference,
+                      onSendPromptReference: onSendPromptReference,
+                    ),
+                ],
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _ContextToolGroupTile extends StatefulWidget {
+  const _ContextToolGroupTile({
+    super.key,
+    required this.entries,
+    required this.controller,
+    required this.workspace,
+    required this.serverUri,
+    required this.onInsertPromptReference,
+    required this.onSendPromptReference,
+  });
+
+  final List<_TurnPartEntry> entries;
+  final AppController controller;
+  final WorkspaceInfo? workspace;
+  final Uri? serverUri;
+  final ValueChanged<String> onInsertPromptReference;
+  final PromptReferenceAction onSendPromptReference;
+
+  @override
+  State<_ContextToolGroupTile> createState() => _ContextToolGroupTileState();
+}
+
+class _ContextToolGroupTileState extends State<_ContextToolGroupTile> {
+  late bool _expanded;
+  bool _userToggled = false;
+
+  @override
+  void initState() {
+    super.initState();
+    _expanded = _shouldExpand(widget.entries);
+  }
+
+  @override
+  void didUpdateWidget(covariant _ContextToolGroupTile oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (_userToggled) return;
+    if (_shouldExpand(widget.entries)) {
+      _expanded = true;
+    }
+  }
+
+  bool _shouldExpand(List<_TurnPartEntry> entries) {
+    for (final entry in entries) {
+      final status = _toolStatusFromPart(entry.part);
+      if (status == 'running' || status == 'pending' || status == 'error') {
+        return true;
+      }
+    }
+    return false;
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final oc = context.oc;
+    final toolNames = widget.entries
+        .map((entry) => _toolNameFromPart(entry.part))
+        .where((name) => name.isNotEmpty)
+        .toSet()
+        .join(' · ');
+    return Container(
+      width: double.infinity,
+      decoration: _panelDecoration(context,
+          background: oc.composerOptionBg, radius: 14, elevated: false),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          InkWell(
+            borderRadius: BorderRadius.circular(14),
+            onTap: () {
+              setState(() {
+                _userToggled = true;
+                _expanded = !_expanded;
+              });
+            },
+            child: Padding(
+              padding: const EdgeInsets.fromLTRB(12, 10, 12, 10),
+              child: Row(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Icon(
+                    Icons.travel_explore_outlined,
+                    size: 18,
+                    color: oc.foregroundMuted,
+                  ),
+                  const SizedBox(width: 10),
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(
+                          l(context, '上下文', 'Context'),
+                          style:
+                              Theme.of(context).textTheme.labelMedium?.copyWith(
+                                    fontWeight: FontWeight.w700,
+                                    color: oc.foregroundMuted,
+                                  ),
+                        ),
+                        if (toolNames.isNotEmpty) ...[
+                          const SizedBox(height: 2),
+                          Text(
+                            toolNames,
+                            style: Theme.of(context)
+                                .textTheme
+                                .bodySmall
+                                ?.copyWith(color: oc.foregroundHint),
+                          ),
+                        ],
+                      ],
+                    ),
+                  ),
+                  const SizedBox(width: 8),
+                  Container(
+                    padding:
+                        const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+                    decoration: BoxDecoration(
+                      color: oc.shadow,
+                      borderRadius: BorderRadius.circular(999),
+                      border: Border.all(color: oc.softBorderColor),
+                    ),
+                    child: Text(
+                      '${widget.entries.length}',
+                      style: Theme.of(context).textTheme.labelSmall?.copyWith(
+                            color: oc.foregroundMuted,
+                            fontWeight: FontWeight.w600,
+                          ),
+                    ),
+                  ),
+                  const SizedBox(width: 6),
+                  Icon(
+                    _expanded ? Icons.expand_less : Icons.expand_more,
+                    color: oc.foregroundMuted,
+                    size: 20,
+                  ),
+                ],
+              ),
+            ),
+          ),
+          if (_expanded) ...[
+            Divider(height: 1, thickness: 1, color: oc.softBorderColor),
+            Padding(
+              padding: const EdgeInsets.fromLTRB(12, 10, 12, 12),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: [
+                  for (var i = 0; i < widget.entries.length; i++) ...[
+                    if (i > 0) const SizedBox(height: 8),
+                    _PartTile(
+                      key: ValueKey<String>(
+                        'context-part-${widget.entries[i].part.id}',
+                      ),
+                      part: widget.entries[i].part,
+                      message: widget.entries[i].bundle.message,
+                      controller: widget.controller,
+                      workspace: widget.workspace,
+                      serverUri: widget.serverUri,
+                      streamAssistantContent:
+                          widget.entries[i].streamAssistantContent,
+                      turnDurationMs: null,
+                      showAssistantTextMeta: false,
+                      onInsertPromptReference: widget.onInsertPromptReference,
+                      onSendPromptReference: widget.onSendPromptReference,
+                    ),
+                  ],
+                ],
+              ),
+            ),
+          ],
+        ],
+      ),
+    );
+  }
+}
+
 class _MessageBubble extends StatefulWidget {
   const _MessageBubble({
     super.key,
@@ -127,6 +756,7 @@ class _MessageBubble extends StatefulWidget {
     required this.controller,
     required this.onInsertPromptReference,
     required this.onSendPromptReference,
+    this.bottomPadding = 10,
   });
 
   final SessionMessageBundle bundle;
@@ -135,6 +765,7 @@ class _MessageBubble extends StatefulWidget {
   final AppController controller;
   final ValueChanged<String> onInsertPromptReference;
   final PromptReferenceAction onSendPromptReference;
+  final double bottomPadding;
 
   @override
   State<_MessageBubble> createState() => _MessageBubbleState();
@@ -142,35 +773,43 @@ class _MessageBubble extends StatefulWidget {
 
 class _MessageBubbleState extends State<_MessageBubble> {
   Widget? _cached;
-  SessionMessageBundle? _lastBundle;
+  int? _lastBundleSignature;
   bool? _lastStreaming;
   int? _lastThemeKey;
+  double? _lastBottomPadding;
 
   List<MessagePart>? _cachedPrimaryParts;
   List<MessagePart>? _cachedFooterParts;
-  List<MessagePart>? _lastPartsList;
+  int? _lastPartsRevision;
   int? _cachedTurnDurationMs;
   bool _turnDurationComputed = false;
 
   @override
   Widget build(BuildContext context) {
     final themeKey = context.themeCacheKey;
-    if (identical(widget.bundle, _lastBundle) &&
+    final bundleSignature = _messageBundleVisualSignature(widget.bundle);
+    if (_lastBundleSignature == bundleSignature &&
         widget.isStreamingAssistantMessage == _lastStreaming &&
         themeKey == _lastThemeKey &&
+        widget.bottomPadding == _lastBottomPadding &&
         _cached != null) {
       return _cached!;
     }
-    _lastBundle = widget.bundle;
+    if (_lastBundleSignature != bundleSignature) {
+      _turnDurationComputed = false;
+    }
+    _lastBundleSignature = bundleSignature;
     _lastStreaming = widget.isStreamingAssistantMessage;
     _lastThemeKey = themeKey;
+    _lastBottomPadding = widget.bottomPadding;
     _cached = _buildContent(context);
     return _cached!;
   }
 
   void _refreshPartsSplit(List<MessagePart> parts) {
-    if (identical(parts, _lastPartsList)) return;
-    _lastPartsList = parts;
+    final partsRevision = widget.bundle.revision;
+    if (_lastPartsRevision == partsRevision) return;
+    _lastPartsRevision = partsRevision;
     final primary = <MessagePart>[];
     final footer = <MessagePart>[];
     final hasCompaction = parts.any((p) => p.type == PartType.compaction);
@@ -255,6 +894,8 @@ class _MessageBubbleState extends State<_MessageBubble> {
             child: ConstrainedBox(
               constraints: const BoxConstraints(maxWidth: 560),
               child: _PartTile(
+                key: ValueKey<String>(
+                    'message-compaction-${primaryParts.first.id}'),
                 part: primaryParts.first,
                 message: bundle.message,
                 controller: widget.controller,
@@ -273,7 +914,7 @@ class _MessageBubbleState extends State<_MessageBubble> {
     }
     return RepaintBoundary(
       child: Padding(
-        padding: const EdgeInsets.only(bottom: 10),
+        padding: EdgeInsets.only(bottom: widget.bottomPadding),
         child: Align(
           alignment: isUser ? Alignment.centerRight : Alignment.centerLeft,
           child: ConstrainedBox(
@@ -301,7 +942,7 @@ class _MessageBubbleState extends State<_MessageBubble> {
                       ),
                       const SizedBox(width: 6),
                       Text(
-                        _formatTimestamp(bundle.message.createdAt),
+                        _formatTimelineTimestamp(bundle.message.createdAt),
                         style: Theme.of(context)
                             .textTheme
                             .labelSmall
@@ -319,6 +960,7 @@ class _MessageBubbleState extends State<_MessageBubble> {
                   for (final part in primaryParts) ...[
                     const SizedBox(height: 10),
                     _PartTile(
+                      key: ValueKey<String>('message-part-${part.id}'),
                       part: part,
                       message: bundle.message,
                       controller: widget.controller,
@@ -348,6 +990,7 @@ class _MessageBubbleState extends State<_MessageBubble> {
                     for (final part in footerParts) ...[
                       const SizedBox(height: 10),
                       _PartTile(
+                        key: ValueKey<String>('message-footer-${part.id}'),
                         part: part,
                         message: bundle.message,
                         controller: widget.controller,
@@ -369,13 +1012,6 @@ class _MessageBubbleState extends State<_MessageBubble> {
         ),
       ),
     );
-  }
-
-  String _formatTimestamp(int ms) {
-    final dt = DateTime.fromMillisecondsSinceEpoch(ms);
-    final hh = dt.hour.toString().padLeft(2, '0');
-    final mm = dt.minute.toString().padLeft(2, '0');
-    return '$hh:$mm';
   }
 
   String _userMessageText(MessageInfo message, List<MessagePart> parts) {

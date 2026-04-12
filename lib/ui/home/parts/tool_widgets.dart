@@ -162,6 +162,8 @@ class _RawToolCallSheetState extends State<_RawToolCallSheet> {
                       thumbVisibility: true,
                       child: SingleChildScrollView(
                         controller: _verticalScrollController,
+                        primary: false,
+                        physics: const ClampingScrollPhysics(),
                         child: Scrollbar(
                           controller: _horizontalScrollController,
                           thumbVisibility: true,
@@ -169,6 +171,8 @@ class _RawToolCallSheetState extends State<_RawToolCallSheet> {
                               notification.metrics.axis == Axis.horizontal,
                           child: SingleChildScrollView(
                             controller: _horizontalScrollController,
+                            primary: false,
+                            physics: const ClampingScrollPhysics(),
                             scrollDirection: Axis.horizontal,
                             child: SelectionArea(
                               child: Text(

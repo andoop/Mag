@@ -918,8 +918,6 @@ extension _HomePageComposer on _HomePageState {
                                         setState(() {
                                           _promptAttachments = const [];
                                         });
-                                        FocusManager.instance.primaryFocus
-                                            ?.unfocus();
                                         await widget.controller.sendPrompt(
                                           text,
                                           agent: _selectedAgent ??

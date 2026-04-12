@@ -45,6 +45,94 @@ String _browserParentPath(String relativePath) {
   return parts.join('/');
 }
 
+void _showWorkspaceHtmlOpenChoice(
+  BuildContext context, {
+  required AppController controller,
+  required WorkspaceInfo workspace,
+  required WorkspaceEntry entry,
+}) {
+  final path = entry.path;
+  final filename = entry.name;
+  final serverUri = controller.state.serverUri;
+  showModalBottomSheet<void>(
+    context: context,
+    builder: (ctx) {
+      return SafeArea(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            Padding(
+              padding: const EdgeInsets.fromLTRB(20, 4, 20, 8),
+              child: Text(
+                filename,
+                style: Theme.of(ctx).textTheme.titleMedium?.copyWith(
+                      fontWeight: FontWeight.w600,
+                    ),
+                maxLines: 2,
+                overflow: TextOverflow.ellipsis,
+              ),
+            ),
+            ListTile(
+              leading: Icon(Icons.article_outlined, color: ctx.oc.accent),
+              title: Text(l(ctx, '应用内预览', 'In-app preview')),
+              subtitle: Text(
+                l(
+                  ctx,
+                  '直接加载 HTML（部分相对路径资源可能无法加载）',
+                  'Load HTML directly (some relative assets may not load)',
+                ),
+                style: Theme.of(ctx).textTheme.bodySmall,
+              ),
+              onTap: () {
+                Navigator.of(ctx).pop();
+                _openFilePreview(
+                  context,
+                  controller: controller,
+                  workspace: workspace,
+                  path: path,
+                );
+              },
+            ),
+            ListTile(
+              leading: Icon(Icons.dns_outlined, color: ctx.oc.accent),
+              title: Text(l(ctx, '本地服务打开', 'Open via local server')),
+              subtitle: Text(
+                serverUri == null
+                    ? l(ctx, '本地服务未就绪', 'Local server not ready')
+                    : l(
+                        ctx,
+                        '与 Browser 工具相同，通过 HTTP 挂载工作区文件',
+                        'Same as the Browser tool — workspace files served over HTTP',
+                      ),
+                style: Theme.of(ctx).textTheme.bodySmall,
+              ),
+              enabled: serverUri != null,
+              onTap: serverUri == null
+                  ? null
+                  : () {
+                      Navigator.of(ctx).pop();
+                      final previewUrl = _workspacePreviewUrl(
+                        serverUri: serverUri,
+                        workspace: workspace,
+                        path: path,
+                      );
+                      _openWebPreview(
+                        context,
+                        title: filename,
+                        subtitle: path,
+                        url: previewUrl.toString(),
+                      );
+                    },
+            ),
+            const SizedBox(height: 8),
+          ],
+        ),
+      );
+    },
+  );
+}
+
 void _openBrowserFile(
   BuildContext context, {
   required AppController controller,
@@ -53,6 +141,15 @@ void _openBrowserFile(
 }) {
   if (entry.isDirectory) return;
   final path = entry.path;
+  if (_pathLooksHtmlFile(path)) {
+    _showWorkspaceHtmlOpenChoice(
+      context,
+      controller: controller,
+      workspace: workspace,
+      entry: entry,
+    );
+    return;
+  }
   if (_browserPathLooksPdf(path)) {
     Navigator.of(context).push<void>(
       MaterialPageRoute<void>(

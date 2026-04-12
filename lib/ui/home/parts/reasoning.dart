@@ -32,6 +32,8 @@ class _ReasoningPartTileState extends State<_ReasoningPartTile> {
   Timer? _pending;
   int _lastFlush = 0;
   bool _detailsOpen = false;
+  int? _cachedThemeKey;
+  MarkdownStyleSheet? _cachedReasoningStyle;
 
   // Stable-split caching for streaming markdown
   String _stableReasonText = '';
@@ -105,7 +107,6 @@ class _ReasoningPartTileState extends State<_ReasoningPartTile> {
       _detailsOpen = true;
     }
     if (oldWidget.streaming && !widget.streaming) {
-      _detailsOpen = false;
       _pending?.cancel();
       _pending = null;
       _lastFlush = DateTime.now().millisecondsSinceEpoch;
@@ -168,7 +169,11 @@ class _ReasoningPartTileState extends State<_ReasoningPartTile> {
       children: [
         _stableReasonWidget ?? const SizedBox.shrink(),
         if (activeText.isNotEmpty)
-          _reasoningMarkdown(context, _normalizeStreamingMarkdown(activeText)),
+          _streamingTextTail(
+            context,
+            _normalizeStreamingMarkdown(activeText),
+            color: context.oc.muted,
+          ),
       ],
     );
   }
@@ -176,6 +181,78 @@ class _ReasoningPartTileState extends State<_ReasoningPartTile> {
   Widget _reasoningMarkdown(BuildContext context, String normalized) {
     final oc = context.oc;
     final weak = oc.muted;
+    final styleSheet = _cachedReasoningStyle ??=
+        MarkdownStyleSheet.fromTheme(Theme.of(context)).copyWith(
+      blockSpacing: 10,
+      p: TextStyle(
+        fontSize: 15,
+        height: 1.5,
+        color: weak,
+        fontStyle: FontStyle.normal,
+      ),
+      a: TextStyle(
+        fontSize: 15,
+        height: 1.5,
+        color: oc.accent.withOpacity(0.85),
+        decoration: TextDecoration.none,
+        fontWeight: FontWeight.w500,
+      ),
+      strong: TextStyle(
+        fontWeight: FontWeight.w700,
+        color: weak,
+      ),
+      em: TextStyle(
+        fontStyle: FontStyle.italic,
+        color: weak,
+      ),
+      code: TextStyle(
+        fontFamily: 'monospace',
+        fontSize: 13,
+        height: 1.45,
+        color: weak.withOpacity(0.92),
+        backgroundColor: oc.bgDeep,
+      ),
+      codeblockDecoration: BoxDecoration(
+        color: oc.bgDeep,
+        borderRadius: BorderRadius.circular(10),
+        border: Border.fromBorderSide(BorderSide(color: oc.borderColor)),
+      ),
+      codeblockPadding: const EdgeInsets.all(12),
+      blockquoteDecoration: BoxDecoration(
+        color: oc.bgDeep,
+        borderRadius: BorderRadius.circular(10),
+        border: Border(
+          left: BorderSide(color: oc.border, width: 3),
+        ),
+      ),
+      blockquotePadding:
+          const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+      listIndent: 22,
+      listBullet: TextStyle(fontSize: 14, height: 1.45, color: weak),
+      h1: TextStyle(
+        fontSize: 21,
+        height: 1.28,
+        fontWeight: FontWeight.w700,
+        color: weak,
+      ),
+      h2: TextStyle(
+        fontSize: 18,
+        height: 1.3,
+        fontWeight: FontWeight.w700,
+        color: weak,
+      ),
+      h3: TextStyle(
+        fontSize: 16,
+        height: 1.32,
+        fontWeight: FontWeight.w700,
+        color: weak,
+      ),
+      horizontalRuleDecoration: BoxDecoration(
+        border: Border(
+          top: BorderSide(color: oc.progressBg),
+        ),
+      ),
+    );
     return MarkdownBody(
       data: normalized,
       selectable: false,
@@ -184,90 +261,18 @@ class _ReasoningPartTileState extends State<_ReasoningPartTile> {
       builders: {
         'pre': _MarkdownCodeBlockBuilder(),
       },
-      styleSheet: MarkdownStyleSheet.fromTheme(Theme.of(context)).copyWith(
-        blockSpacing: 10,
-        p: TextStyle(
-          fontSize: 15,
-          height: 1.5,
-          color: weak,
-          fontStyle: FontStyle.normal,
-        ),
-        a: TextStyle(
-          fontSize: 15,
-          height: 1.5,
-          color: oc.accent.withOpacity(0.85),
-          decoration: TextDecoration.none,
-          fontWeight: FontWeight.w500,
-        ),
-        strong: TextStyle(
-          fontWeight: FontWeight.w700,
-          color: weak,
-        ),
-        em: TextStyle(
-          fontStyle: FontStyle.italic,
-          color: weak,
-        ),
-        code: TextStyle(
-          fontFamily: 'monospace',
-          fontSize: 13,
-          height: 1.45,
-          color: weak.withOpacity(0.92),
-          backgroundColor: oc.bgDeep,
-        ),
-        codeblockDecoration: BoxDecoration(
-          color: oc.bgDeep,
-          borderRadius: BorderRadius.circular(10),
-          border: Border.fromBorderSide(BorderSide(color: oc.borderColor)),
-        ),
-        codeblockPadding: const EdgeInsets.all(12),
-        blockquoteDecoration: BoxDecoration(
-          color: oc.bgDeep,
-          borderRadius: BorderRadius.circular(10),
-          border: Border(
-            left: BorderSide(color: oc.border, width: 3),
-          ),
-        ),
-        blockquotePadding:
-            const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
-        listIndent: 22,
-        listBullet: TextStyle(fontSize: 14, height: 1.45, color: weak),
-        h1: TextStyle(
-          fontSize: 21,
-          height: 1.28,
-          fontWeight: FontWeight.w700,
-          color: weak,
-        ),
-        h2: TextStyle(
-          fontSize: 18,
-          height: 1.3,
-          fontWeight: FontWeight.w700,
-          color: weak,
-        ),
-        h3: TextStyle(
-          fontSize: 16,
-          height: 1.32,
-          fontWeight: FontWeight.w700,
-          color: weak,
-        ),
-        horizontalRuleDecoration: BoxDecoration(
-          border: Border(
-            top: BorderSide(color: oc.progressBg),
-          ),
-        ),
-      ),
-      onTapLink: (_, href, __) {
-        if (href == null || href.isEmpty) return;
-        _showInfo(
-          context,
-          l(context, '链接暂未接入外部打开: $href',
-              'External link opening is not wired yet: $href'),
-        );
-      },
+      styleSheet: styleSheet,
+      onTapLink: (_, href, __) => _handleMarkdownLinkTap(context, href),
     );
   }
 
   @override
   Widget build(BuildContext context) {
+    final themeKey = context.themeCacheKey;
+    if (_cachedThemeKey != themeKey || _cachedReasoningStyle == null) {
+      _cachedThemeKey = themeKey;
+      _cachedReasoningStyle = null;
+    }
     if (_displayed.isEmpty) {
       return const SizedBox.shrink();
     }

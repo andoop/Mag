@@ -8,10 +8,27 @@ class SessionMessageBundle {
   SessionMessageBundle({
     required this.message,
     required this.parts,
+    this.revision = 1,
   });
 
   final MessageInfo message;
   final List<MessagePart> parts;
+  final int revision;
+}
+
+int initialSessionMessageBundleRevision(
+  MessageInfo message,
+  List<MessagePart> parts,
+) {
+  final lastPart = parts.isEmpty ? null : parts.last;
+  return Object.hash(
+    message.id,
+    message.text.length,
+    message.error,
+    parts.length,
+    lastPart?.id,
+    lastPart?.type.index,
+  );
 }
 
 class LocalServerClient {
@@ -112,13 +129,17 @@ class LocalServerClient {
     final data = await _get('/session/$sessionId/message');
     return (data as List).map((item) {
       final map = Map<String, dynamic>.from(item as Map);
+      final message =
+          MessageInfo.fromJson(Map<String, dynamic>.from(map['info'] as Map));
+      final parts = (map['parts'] as List)
+          .map((part) =>
+              MessagePart.fromJson(Map<String, dynamic>.from(part as Map)))
+          .toList()
+        ..sort((a, b) => a.createdAt.compareTo(b.createdAt));
       return SessionMessageBundle(
-        message:
-            MessageInfo.fromJson(Map<String, dynamic>.from(map['info'] as Map)),
-        parts: (map['parts'] as List)
-            .map((part) =>
-                MessagePart.fromJson(Map<String, dynamic>.from(part as Map)))
-            .toList(),
+        message: message,
+        parts: parts,
+        revision: initialSessionMessageBundleRevision(message, parts),
       );
     }).toList();
   }

@@ -2,6 +2,11 @@
 part of 'app_controller.dart';
 
 extension AppControllerState on AppController {
+  int _nextBundleRevision([SessionMessageBundle? previous]) {
+    final base = previous?.revision ?? 0;
+    return base + 1;
+  }
+
   void _setError(Object error) {
     state = state.copyWith(error: error.toString());
     notifyListeners();
@@ -56,8 +61,11 @@ extension AppControllerState on AppController {
   ) {
     final index = bundles.indexWhere((item) => item.message.id == message.id);
     if (index >= 0) {
-      final updated =
-          SessionMessageBundle(message: message, parts: bundles[index].parts);
+      final updated = SessionMessageBundle(
+        message: message,
+        parts: bundles[index].parts,
+        revision: _nextBundleRevision(bundles[index]),
+      );
       if (index == bundles.length - 1) {
         final items = List<SessionMessageBundle>.of(bundles);
         items[index] = updated;
@@ -69,7 +77,11 @@ extension AppControllerState on AppController {
       return items;
     }
     final items = [...bundles];
-    items.add(SessionMessageBundle(message: message, parts: const []));
+    items.add(SessionMessageBundle(
+      message: message,
+      parts: const [],
+      revision: _nextBundleRevision(),
+    ));
     items.sort((a, b) => a.message.createdAt.compareTo(b.message.createdAt));
     return items;
   }
@@ -91,8 +103,11 @@ extension AppControllerState on AppController {
       parts = [...oldParts, part];
       parts.sort((a, b) => a.createdAt.compareTo(b.createdAt));
     }
-    final updatedBundle =
-        SessionMessageBundle(message: bundles[index].message, parts: parts);
+    final updatedBundle = SessionMessageBundle(
+      message: bundles[index].message,
+      parts: parts,
+      revision: _nextBundleRevision(bundles[index]),
+    );
     if (index == bundles.length - 1) {
       final items = List<SessionMessageBundle>.of(bundles);
       items[index] = updatedBundle;
@@ -151,8 +166,11 @@ extension AppControllerState on AppController {
         data: _mergeDelta(existing.data, delta),
       );
     }
-    final updatedBundle =
-        SessionMessageBundle(message: bundles[index].message, parts: parts);
+    final updatedBundle = SessionMessageBundle(
+      message: bundles[index].message,
+      parts: parts,
+      revision: _nextBundleRevision(bundles[index]),
+    );
     if (index == bundles.length - 1) {
       final items = List<SessionMessageBundle>.of(bundles);
       items[index] = updatedBundle;

@@ -12,12 +12,51 @@ int _streamingTextStep(int remaining) {
 }
 
 int _nextStreamingTextIndex(String text, int start) {
-  final end = (start + _streamingTextStep(text.length - start)).clamp(0, text.length);
+  final end =
+      (start + _streamingTextStep(text.length - start)).clamp(0, text.length);
   final max = (end + 8).clamp(0, text.length);
   for (var i = end; i < max; i++) {
     if (_kStreamingTextSnap.hasMatch(text[i])) return i + 1;
   }
   return end;
+}
+
+Future<void> _handleMarkdownLinkTap(BuildContext context, String? href) async {
+  final raw = href?.trim() ?? '';
+  if (raw.isEmpty) return;
+  final uri = Uri.tryParse(raw);
+  if (uri == null || !uri.hasScheme) {
+    _showInfo(
+      context,
+      l(context, '链接格式无效: $raw', 'Invalid link: $raw'),
+    );
+    return;
+  }
+  final scheme = uri.scheme.toLowerCase();
+  if (scheme == 'http' || scheme == 'https') {
+    await _openWebPreview(
+      context,
+      title: uri.host.isEmpty ? l(context, '链接', 'Link') : uri.host,
+      subtitle: raw,
+      url: raw,
+    );
+    return;
+  }
+  _showInfo(
+    context,
+    l(context, '暂不支持打开该链接: $raw', 'Unsupported link: $raw'),
+  );
+}
+
+Widget _streamingTextTail(
+  BuildContext context,
+  String text, {
+  required Color color,
+}) {
+  return Text(
+    text.replaceAll('\t', '  '),
+    style: TextStyle(fontSize: 15, height: 1.5, color: color),
+  );
 }
 
 class _StreamingMarkdownText extends StatefulWidget {
@@ -52,6 +91,7 @@ class _StreamingMarkdownTextState extends State<_StreamingMarkdownText> {
   String _completeText = '';
   Widget? _completeWidget;
   int? _cachedThemeKey;
+  MarkdownStyleSheet? _cachedMarkdownStyle;
   String _displayedText = '';
   Timer? _pending;
   int _lastFlush = 0;
@@ -92,7 +132,8 @@ class _StreamingMarkdownTextState extends State<_StreamingMarkdownText> {
         _syncDisplayedText(next);
         return;
       }
-      if (!next.startsWith(_displayedText) || next.length <= _displayedText.length) {
+      if (!next.startsWith(_displayedText) ||
+          next.length <= _displayedText.length) {
         _syncDisplayedText(next);
         return;
       }
@@ -178,17 +219,8 @@ class _StreamingMarkdownTextState extends State<_StreamingMarkdownText> {
       softLineBreak: true,
       shrinkWrap: true,
       builders: {'pre': _MarkdownCodeBlockBuilder()},
-      styleSheet: _kMarkdownStyle(context),
-      onTapLink: (_, href, __) => _onMdLinkTap(context, href),
-    );
-  }
-
-  void _onMdLinkTap(BuildContext context, String? href) {
-    if (href == null || href.isEmpty) return;
-    _showInfo(
-      context,
-      l(context, '链接暂未接入外部打开: $href',
-          'External link opening is not wired yet: $href'),
+      styleSheet: _cachedMarkdownStyle ?? _kMarkdownStyle(context),
+      onTapLink: (_, href, __) => _handleMarkdownLinkTap(context, href),
     );
   }
 
@@ -198,6 +230,7 @@ class _StreamingMarkdownTextState extends State<_StreamingMarkdownText> {
     if (_cachedThemeKey != themeKey) {
       _cachedThemeKey = themeKey;
       _invalidateCachedMarkdown();
+      _cachedMarkdownStyle = _kMarkdownStyle(context);
     }
     if (widget.streaming) {
       return _buildStreaming(context);
@@ -222,7 +255,12 @@ class _StreamingMarkdownTextState extends State<_StreamingMarkdownText> {
       mainAxisSize: MainAxisSize.min,
       children: [
         _stableWidget ?? const SizedBox.shrink(),
-        if (activeText.isNotEmpty) _md(context, _normalize(activeText)),
+        if (activeText.isNotEmpty)
+          _streamingTextTail(
+            context,
+            _normalize(activeText),
+            color: context.oc.foreground,
+          ),
       ],
     );
   }
@@ -437,6 +475,8 @@ class _MarkdownCodeBlock extends StatelessWidget {
                 ),
               ),
               SingleChildScrollView(
+                primary: false,
+                physics: const ClampingScrollPhysics(),
                 scrollDirection: Axis.horizontal,
                 child: ConstrainedBox(
                   constraints: BoxConstraints(minWidth: frameWidth),

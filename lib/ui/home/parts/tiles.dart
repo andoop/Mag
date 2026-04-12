@@ -2,6 +2,7 @@ part of '../../home_page.dart';
 
 class _PartTile extends StatelessWidget {
   const _PartTile({
+    super.key,
     required this.part,
     required this.message,
     required this.controller,

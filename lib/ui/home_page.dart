@@ -93,6 +93,8 @@ class _HomePageState extends State<HomePage> {
   // ignore: prefer_final_fields
   String _selectedSchemaTemplate = 'answer';
   final ValueNotifier<bool> _stickToBottom = ValueNotifier<bool>(true);
+  final ValueNotifier<bool> _showScrollToBottomButton =
+      ValueNotifier<bool>(false);
   final ValueNotifier<int> _messageVersion = ValueNotifier<int>(0);
   bool _messageVersionScheduled = false;
   bool _isAutoScrolling = false;
@@ -106,6 +108,9 @@ class _HomePageState extends State<HomePage> {
   int _historyStartIndex = 0;
   int _stagedMessageCount = 0;
   String _stagingKey = '';
+  String _timelineEntryCacheKey = '';
+  List<_TimelineTurnEntry> _cachedTimelineEntries = const [];
+  String? _cachedStreamingAssistantMessageId;
   int _lastBackfillAt = 0;
   String _lastStateRenderKey = '';
   String _lastStructuralKey = '';
@@ -117,9 +122,11 @@ class _HomePageState extends State<HomePage> {
   // ignore: prefer_final_fields
   bool _promptMentionSearching = false;
   Timer? _promptMentionDebounce;
+  Timer? _scrollToBottomButtonDebounce;
   // ignore: prefer_final_fields
   int _promptMentionRequestId = 0;
   List<WorkspaceEntry> _promptAttachments = const [];
+  bool _pendingScrollToBottomButtonVisible = false;
 
   /// 会话切换时必须重建时间线；不能仅依赖 [_stateRenderKey]，否则新建/切换会话后可能与旧 key 碰撞而不调用 setState，界面仍显示旧消息。
   String? _lastObservedSessionId;
@@ -131,22 +138,27 @@ class _HomePageState extends State<HomePage> {
     _timelineController.addListener(_handleTimelineScroll);
     _promptController.addListener(_handlePromptComposerChanged);
     _promptFocusNode.addListener(_handlePromptComposerChanged);
+    _stickToBottom.addListener(_handleStickToBottomChanged);
     widget.controller.addListener(_onStateChanged);
+    _scheduleScrollToBottomButtonVisibility(false, immediate: true);
   }
 
   @override
   void dispose() {
     widget.controller.removeListener(_onStateChanged);
+    _stickToBottom.removeListener(_handleStickToBottomChanged);
     _timelineController
       ..removeListener(_handleTimelineScroll)
       ..dispose();
     _promptMentionDebounce?.cancel();
+    _scrollToBottomButtonDebounce?.cancel();
     _promptController.removeListener(_handlePromptComposerChanged);
     _promptFocusNode.removeListener(_handlePromptComposerChanged);
     _promptController.dispose();
     _promptFocusNode.dispose();
     _schemaController.dispose();
     _stickToBottom.dispose();
+    _showScrollToBottomButton.dispose();
     _messageVersion.dispose();
     super.dispose();
   }
@@ -175,6 +187,7 @@ class _HomePageState extends State<HomePage> {
       _scheduleTimelineSync(state);
       setState(() {});
       _stickToBottom.value = true;
+      _scheduleScrollToBottomButtonVisibility(false, immediate: true);
       WidgetsBinding.instance.addPostFrameCallback((_) {
         if (!mounted || !_timelineController.hasClients) return;
         _scrollTimelineToBottom(animate: false);
@@ -232,6 +245,55 @@ class _HomePageState extends State<HomePage> {
       return visible;
     }
     return visible.sublist(visible.length - _stagedMessageCount);
+  }
+
+  bool _isTimelineStaging(AppState state) {
+    final visibleCount = _visibleTimelineMessages(state).length;
+    return visibleCount > 0 &&
+        _stagedMessageCount > 0 &&
+        _stagedMessageCount < visibleCount;
+  }
+
+  List<_TimelineTurnEntry> _renderedTimelineEntries(
+    AppState state,
+    List<SessionMessageBundle> renderedMessages,
+  ) {
+    final firstMessage =
+        renderedMessages.isEmpty ? null : renderedMessages.first.message;
+    final lastMessage =
+        renderedMessages.isEmpty ? null : renderedMessages.last.message;
+    final cacheKey = [
+      state.session?.id ?? '',
+      _historyStartIndex,
+      _stagedMessageCount,
+      state.messages.length,
+      renderedMessages.length,
+      firstMessage?.id ?? '',
+      firstMessage?.role.name ?? '',
+      lastMessage?.id ?? '',
+      lastMessage?.role.name ?? '',
+    ].join('|');
+    if (_timelineEntryCacheKey == cacheKey) {
+      return _cachedTimelineEntries;
+    }
+    final entries = _buildTimelineEntries(renderedMessages);
+    _timelineEntryCacheKey = cacheKey;
+    _cachedTimelineEntries = entries;
+    _cachedStreamingAssistantMessageId =
+        _streamingAssistantMessageId(entries, renderedMessages);
+    return entries;
+  }
+
+  String? _renderedStreamingAssistantMessageId(
+    AppState state,
+    List<SessionMessageBundle> renderedMessages,
+    List<_TimelineTurnEntry> renderedEntries,
+  ) {
+    if (_timelineEntryCacheKey.isEmpty ||
+        !identical(_cachedTimelineEntries, renderedEntries)) {
+      _renderedTimelineEntries(state, renderedMessages);
+    }
+    return _cachedStreamingAssistantMessageId;
   }
 
   bool _hasEarlierHistory(AppState state) => _historyStartIndex > 0;
@@ -690,6 +752,19 @@ class _HomePageState extends State<HomePage> {
                               final liveState = widget.controller.state;
                               final renderedMessages =
                                   _renderedTimelineMessages(liveState);
+                              final renderedTimelineEntries =
+                                  _renderedTimelineEntries(
+                                liveState,
+                                renderedMessages,
+                              );
+                              final streamingAssistantMessageId =
+                                  liveState.isBusy
+                                      ? _renderedStreamingAssistantMessageId(
+                                          liveState,
+                                          renderedMessages,
+                                          renderedTimelineEntries,
+                                        )
+                                      : null;
                               return NotificationListener<ScrollNotification>(
                                 onNotification: _handleTimelineNotification,
                                 child: ListView.builder(
@@ -703,7 +778,7 @@ class _HomePageState extends State<HomePage> {
                                   padding: EdgeInsets.fromLTRB(
                                       12, isKeyboardOpen ? 8 : 12, 12, 16),
                                   itemCount: _timelineItemCount(
-                                      liveState, renderedMessages),
+                                      liveState, renderedTimelineEntries),
                                   itemBuilder: (context, index) =>
                                       _buildTimelineItem(
                                     context,
@@ -714,6 +789,9 @@ class _HomePageState extends State<HomePage> {
                                     showModelLatestTag: showModelLatestTag,
                                     isKeyboardOpen: isKeyboardOpen,
                                     renderedMessages: renderedMessages,
+                                    renderedEntries: renderedTimelineEntries,
+                                    streamingAssistantMessageId:
+                                        streamingAssistantMessageId,
                                     index: index,
                                   ),
                                 ),
@@ -726,9 +804,12 @@ class _HomePageState extends State<HomePage> {
               ),
               if (state.session != null)
                 ValueListenableBuilder<bool>(
-                  valueListenable: _stickToBottom,
-                  builder: (context, stickToBottom, _) {
-                    if (stickToBottom) return const SizedBox.shrink();
+                  valueListenable: _showScrollToBottomButton,
+                  builder: (context, showScrollToBottomButton, _) {
+                    if (!showScrollToBottomButton ||
+                        _isTimelineStaging(state)) {
+                      return const SizedBox.shrink();
+                    }
                     return Positioned(
                       right: 16,
                       bottom: isKeyboardOpen ? 104 : 132,
@@ -784,8 +865,8 @@ class _HomePageState extends State<HomePage> {
     if (_isRecentProgrammaticTimelineScroll(notification.metrics)) return false;
     if (notification is ScrollUpdateNotification ||
         notification is ScrollEndNotification) {
-      final distance = notification.metrics.maxScrollExtent -
-          notification.metrics.pixels;
+      final distance =
+          notification.metrics.maxScrollExtent - notification.metrics.pixels;
       final nextStick =
           _computeStickToBottom(distance, current: _stickToBottom.value);
       if (_timelineUserInteracting ||
@@ -812,6 +893,35 @@ class _HomePageState extends State<HomePage> {
     return false;
   }
 
+  void _handleStickToBottomChanged() {
+    _scheduleScrollToBottomButtonVisibility(!_stickToBottom.value);
+  }
+
+  void _scheduleScrollToBottomButtonVisibility(
+    bool visible, {
+    bool immediate = false,
+  }) {
+    _pendingScrollToBottomButtonVisible = visible;
+    _scrollToBottomButtonDebounce?.cancel();
+    _scrollToBottomButtonDebounce = null;
+    if (immediate) {
+      if (_showScrollToBottomButton.value != visible) {
+        _showScrollToBottomButton.value = visible;
+      }
+      return;
+    }
+    if (_showScrollToBottomButton.value == visible) return;
+    final delay = Duration(milliseconds: visible ? 120 : 160);
+    _scrollToBottomButtonDebounce = Timer(delay, () {
+      _scrollToBottomButtonDebounce = null;
+      if (!mounted) return;
+      if (_pendingScrollToBottomButtonVisible != visible) return;
+      if (_showScrollToBottomButton.value != visible) {
+        _showScrollToBottomButton.value = visible;
+      }
+    });
+  }
+
   void _scheduleTimelineSync(AppState state) {
     final anchor = _timelineAnchor(state);
     if (anchor == _lastTimelineAnchor) return;
@@ -831,7 +941,7 @@ class _HomePageState extends State<HomePage> {
         return;
       }
       _pendingTimelineSync = false;
-      _scrollTimelineToBottom(animate: !widget.controller.state.isBusy);
+      _scrollTimelineToBottom(animate: false);
       if (_pendingTimelineSync) {
         _scheduleTimelineSync(widget.controller.state);
       }
@@ -925,6 +1035,7 @@ class _HomePageState extends State<HomePage> {
     _timelineUserInteracting = false;
     _pendingTimelineSync = false;
     _stickToBottom.value = true;
+    _scheduleScrollToBottomButtonVisibility(false, immediate: true);
     _scrollTimelineToBottom(animate: false);
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (!mounted || !_stickToBottom.value) return;
