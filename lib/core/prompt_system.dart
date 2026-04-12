@@ -2,6 +2,7 @@ import 'dart:ui' as ui;
 
 import 'debug_trace.dart';
 import 'models.dart';
+import 'skill_registry.dart';
 import 'tools/question_tool_spec.dart';
 import 'workspace_bridge.dart';
 
@@ -19,6 +20,7 @@ class PromptContext {
     this.effectiveTools,
     this.agentPrompt,
     required this.hasSkillTool,
+    this.availableSkills = const [],
     required this.currentStep,
     required this.maxSteps,
     required this.format,
@@ -34,6 +36,7 @@ class PromptContext {
   final List<String>? effectiveTools;
   final String? agentPrompt;
   final bool hasSkillTool;
+  final List<SkillInfo> availableSkills;
   final int currentStep;
   final int? maxSteps;
   final MessageFormat? format;
@@ -46,6 +49,7 @@ class PromptAssembler {
   PromptAssembler(this._bridge);
 
   final WorkspaceBridge _bridge;
+  final SkillRegistry _skills = SkillRegistry.instance;
   final Map<String, Future<String>> _projectContextCache = {};
   final Map<String, Future<String>> _contextFileCache = {};
   final Map<String, Future<List<String>>> _contextDirectoryCache = {};
@@ -180,6 +184,18 @@ class PromptAssembler {
       zh
           ? '优先使用可用工具，保持在工作区边界内。'
           : 'Prefer available tools and stay within the workspace boundary.',
+      if (tools.contains('download'))
+        (zh
+            ? '当任务涉及公开 URL 下载，且存在 `public-file-download` skill 时，先加载该 skill 再使用 `download`。'
+            : 'When a task involves downloading from a public URL and the `public-file-download` skill is available, load that skill before using `download`.'),
+      if (tools.contains('download'))
+        (zh
+            ? '`download` 用于把公开 URL 真正保存为工作区文件；必须显式提供目标 `filePath`。'
+            : '`download` turns a public URL into a real workspace file; you must provide an explicit destination `filePath`.'),
+      if (tools.contains('download') && tools.contains('webfetch'))
+        (zh
+            ? '如果你只需要先查看远程文本内容，不需要落盘，优先使用 `webfetch`。'
+            : 'If you only need to inspect remote text without saving it, prefer `webfetch`.'),
       kToolCallingRulesPrompt.trim(),
     ];
 
@@ -389,6 +405,7 @@ class PromptAssembler {
     final hasGrep = tools.contains('grep');
     final hasGlob = tools.contains('glob');
     final hasTask = tools.contains('task') && canDelegate;
+    final hasDownload = tools.contains('download');
     if (!hasRead && !hasEdit && !hasApplyPatch) return '';
 
     final lines = <String>[];
@@ -409,6 +426,9 @@ class PromptAssembler {
       if (hasWrite) {
         lines.add('- `write`：用于新文件，或你明确需要整文件重写时。');
       }
+      if (hasDownload) {
+        lines.add('- `download`：把公开 `http/https` URL 下载到工作区文件。必须提供明确的 `filePath`；如果文件已存在，只有显式设置 `overwrite: true` 才能覆盖。');
+      }
       lines.add('');
       lines.add('## 正确顺序（必须严格遵守）');
       if (hasRead) lines.add('- 解释代码：`read` -> 分析 -> 回答');
@@ -423,6 +443,9 @@ class PromptAssembler {
           if (hasGlob) '`glob`',
         ].join(' / ');
         lines.add('- 查找位置：$searchTools（独立搜索应并行） -> `read` 结果文件 -> 报告');
+      }
+      if (hasDownload) {
+        lines.add('- 下载远程文件：若只想先查看内容，用 `webfetch` -> 判断；若需要保存到工作区，用 `download` -> 继续 `read` / 预览 / 编辑。');
       }
       if (hasTask) {
         lines.add('- 非平凡实现：优先 `task` 委派 -> 验证结果 -> 报告');
@@ -453,6 +476,10 @@ class PromptAssembler {
       lines.add(
           '- `write`: use for new files, or when you intentionally need a full-file rewrite.');
     }
+    if (hasDownload) {
+      lines.add(
+          '- `download`: save a public `http/https` URL into a workspace file. You MUST provide a specific `filePath`; existing files require `overwrite: true`.');
+    }
     lines.add('');
     lines.add('## Correct Sequences (MANDATORY - follow these exactly)');
     if (hasRead) lines.add('- Answer about code: `read` -> analyze -> answer');
@@ -471,6 +498,10 @@ class PromptAssembler {
       lines.add(
           '- Find something: $searchTools (parallel if independent) -> `read` matching files -> report');
     }
+    if (hasDownload) {
+      lines.add(
+          '- Download a remote file: if you only need inspection, `webfetch` -> decide; if you need a workspace file, `download` -> continue with `read` / preview / edit.');
+    }
     if (hasTask) {
       lines.add(
           '- Non-trivial implementation: `task` delegation -> verify results -> report');
@@ -488,7 +519,11 @@ class PromptAssembler {
 
   String _skillsPrompt(PromptContext context) {
     if (!context.hasSkillTool) return '';
-    return 'The `skill` tool is available. Use it when a named skill would help before acting.';
+    return [
+      'Skills provide specialized instructions and workflows for specific tasks.',
+      'Use the `skill` tool to load a skill when a task matches its description.',
+      _skills.format(context.availableSkills, verbose: true),
+    ].join('\n');
   }
 
   Future<String> _projectContextPrompt(WorkspaceInfo workspace) async {
@@ -610,6 +645,7 @@ class PromptAssembler {
 
   Future<void> prewarmWorkspaceContext(WorkspaceInfo workspace) async {
     await _projectContextPrompt(workspace);
+    await _skills.all(workspace);
   }
 
   void invalidateWorkspaceContext(
@@ -621,6 +657,7 @@ class PromptAssembler {
       _contextFileCache.removeWhere((key, _) => key.startsWith('$treeUri::'));
       _contextDirectoryCache
           .removeWhere((key, _) => key.startsWith('$treeUri::'));
+      _skills.invalidateWorkspace(treeUri);
       return;
     }
     final normalized = paths
@@ -639,6 +676,15 @@ class PromptAssembler {
       return normalized
           .any((item) => path == item || path.startsWith('$item/'));
     });
+    if (normalized.any((item) =>
+        item == '.opencode' ||
+        item.startsWith('.opencode/') ||
+        item == '.claude' ||
+        item.startsWith('.claude/') ||
+        item == '.agents' ||
+        item.startsWith('.agents/'))) {
+      _skills.invalidateWorkspace(treeUri);
+    }
   }
 }
 

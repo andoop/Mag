@@ -50,6 +50,7 @@ dependencies:
   flutter_secure_storage: ^8.1.0
   cryptography: ^2.5.0
   openssh_ed25519: ^1.1.0
+  share_plus: ^6.2.1
 
 dev_dependencies:
   flutter_test:

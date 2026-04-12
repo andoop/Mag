@@ -10,6 +10,7 @@ import 'database.dart';
 import 'debug_trace.dart';
 import 'models.dart';
 import 'prompt_system.dart';
+import 'skill_registry.dart';
 import 'tool_runtime.dart';
 import 'workspace_bridge.dart';
 

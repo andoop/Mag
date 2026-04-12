@@ -70,6 +70,9 @@ private final class IOSWorkspaceBridge: NSObject, UIDocumentPickerDelegate {
       case "writeText":
         try writeText(arguments: Self.arguments(from: call))
         result(nil)
+      case "writeBytes":
+        try writeBytes(arguments: Self.arguments(from: call))
+        result(nil)
       case "deleteEntry":
         result(try deleteEntry(arguments: Self.arguments(from: call)))
       case "renameEntry":
@@ -409,6 +412,15 @@ private final class IOSWorkspaceBridge: NSObject, UIDocumentPickerDelegate {
     let url = try entryURL(treeUri: treeUri, relativePath: relativePath)
     try FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
     try content.write(to: url, atomically: true, encoding: .utf8)
+  }
+
+  private func writeBytes(arguments: [String: Any]) throws {
+    let treeUri = try Self.requiredString("treeUri", in: arguments)
+    let relativePath = try Self.requiredString("relativePath", in: arguments)
+    let bytes = (arguments["bytes"] as? FlutterStandardTypedData)?.data ?? Data()
+    let url = try entryURL(treeUri: treeUri, relativePath: relativePath)
+    try FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
+    try bytes.write(to: url, options: .atomic)
   }
 
   private func deleteEntry(arguments: [String: Any]) throws -> Bool {

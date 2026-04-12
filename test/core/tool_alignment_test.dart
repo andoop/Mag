@@ -1,5 +1,6 @@
 import 'dart:io';
 import 'dart:async';
+import 'dart:convert';
 
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -8,6 +9,7 @@ import 'package:mobile_agent/core/database.dart';
 import 'package:mobile_agent/core/models.dart';
 import 'package:mobile_agent/core/prompt_system.dart';
 import 'package:mobile_agent/core/session_engine.dart';
+import 'package:mobile_agent/core/skill_registry.dart';
 import 'package:mobile_agent/core/tool_runtime.dart';
 import 'package:mobile_agent/core/workspace_bridge.dart';
 import 'package:sqflite_common_ffi/sqflite_ffi.dart';
@@ -83,6 +85,95 @@ class _QueuedModelGateway extends ModelGateway {
   }
 }
 
+class _StubHttpResponseData {
+  const _StubHttpResponseData({
+    required this.statusCode,
+    required this.body,
+    required this.contentType,
+  });
+
+  final int statusCode;
+  final List<int> body;
+  final String contentType;
+}
+
+class _FakeHttpClient implements HttpClient {
+  _FakeHttpClient(this._resolver);
+
+  final _StubHttpResponseData Function(Uri uri) _resolver;
+
+  @override
+  String? userAgent;
+
+  @override
+  Future<HttpClientRequest> getUrl(Uri url) async {
+    return _FakeHttpClientRequest(_resolver(url));
+  }
+
+  @override
+  void close({bool force = false}) {}
+
+  @override
+  dynamic noSuchMethod(Invocation invocation) => super.noSuchMethod(invocation);
+}
+
+class _FakeHttpClientRequest implements HttpClientRequest {
+  _FakeHttpClientRequest(this._response);
+
+  final _StubHttpResponseData _response;
+
+  @override
+  Future<HttpClientResponse> close() async => _FakeHttpClientResponse(_response);
+
+  @override
+  dynamic noSuchMethod(Invocation invocation) => super.noSuchMethod(invocation);
+}
+
+class _FakeHttpClientResponse extends Stream<List<int>>
+    implements HttpClientResponse {
+  _FakeHttpClientResponse(this._response);
+
+  final _StubHttpResponseData _response;
+
+  @override
+  int get statusCode => _response.statusCode;
+
+  @override
+  int get contentLength => _response.body.length;
+
+  @override
+  HttpHeaders get headers => _FakeHttpHeaders(_response.contentType);
+
+  @override
+  StreamSubscription<List<int>> listen(
+    void Function(List<int> event)? onData, {
+    Function? onError,
+    void Function()? onDone,
+    bool? cancelOnError,
+  }) {
+    return Stream<List<int>>.fromIterable([_response.body]).listen(
+      onData,
+      onError: onError,
+      onDone: onDone,
+      cancelOnError: cancelOnError,
+    );
+  }
+
+  @override
+  dynamic noSuchMethod(Invocation invocation) => super.noSuchMethod(invocation);
+}
+
+class _FakeHttpHeaders implements HttpHeaders {
+  _FakeHttpHeaders(String mimeType)
+      : contentType = ContentType.parse(mimeType);
+
+  @override
+  final ContentType? contentType;
+
+  @override
+  dynamic noSuchMethod(Invocation invocation) => super.noSuchMethod(invocation);
+}
+
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
   const pathProviderChannel = MethodChannel('plugins.flutter.io/path_provider');
@@ -92,6 +183,8 @@ void main() {
   final readTool = registry['read']!;
   final writeTool = registry['write']!;
   final editTool = registry['edit']!;
+  final downloadTool = registry['download']!;
+  final skillTool = registry['skill']!;
   final taskTool = registry['task']!;
   final bridge = WorkspaceBridge.instance;
   final database = AppDatabase.instance;
@@ -230,6 +323,8 @@ void main() {
   });
 
   tearDown(() async {
+    debugResetToolHttpClientFactoryForTests();
+    SkillRegistry.instance.invalidateWorkspace(workspace.treeUri);
     if (await tempDir.exists()) {
       await tempDir.delete(recursive: true);
     }
@@ -338,18 +433,18 @@ void main() {
 
   test('provider list keeps catalog models for connected providers', () {
     final catalog = [
-      ProviderInfo(
+      const ProviderInfo(
         id: 'openai',
         name: 'OpenAI',
         api: 'https://api.openai.com/v1',
-        env: const [],
+        env: [],
         models: {
-          'gpt-4.1': const ProviderModelInfo(
+          'gpt-4.1': ProviderModelInfo(
             id: 'gpt-4.1',
             name: 'GPT-4.1',
             limit: ProviderModelLimit(context: 1047576, output: 32768),
           ),
-          'gpt-4.1-mini': const ProviderModelInfo(
+          'gpt-4.1-mini': ProviderModelInfo(
             id: 'gpt-4.1-mini',
             name: 'GPT-4.1 Mini',
             limit: ProviderModelLimit(context: 1047576, output: 32768),
@@ -383,13 +478,13 @@ void main() {
 
   test('provider list does not alias alibaba-cn to qwen catalog', () {
     final catalog = [
-      ProviderInfo(
+      const ProviderInfo(
         id: 'qwen',
         name: 'Qwen',
         api: 'https://dashscope.aliyuncs.com/compatible-mode/v1',
-        env: const [],
+        env: [],
         models: {
-          'qwen3-plus': const ProviderModelInfo(
+          'qwen3-plus': ProviderModelInfo(
             id: 'qwen3-plus',
             name: 'Qwen3 Plus',
             limit: ProviderModelLimit(context: 1000000, output: 65536),
@@ -729,6 +824,7 @@ void main() {
         .where((item) => item.isNotEmpty)
         .toSet();
     expect(advertisedTools.contains('apply_patch'), isTrue);
+    expect(advertisedTools.contains('download'), isTrue);
     expect(advertisedTools.contains('write'), isFalse);
     expect(advertisedTools.contains('edit'), isFalse);
     expect(
@@ -750,6 +846,299 @@ void main() {
       envPrompt.contains(
           'If `oldString` is not unique, include more surrounding context. If you intentionally want every occurrence, set `replaceAll: true`.'),
       isTrue,
+    );
+  });
+
+  test('skill discovers workspace-local skills and returns skill content', () async {
+    final skillDir = Directory('${tempDir.path}/.opencode/skill/refactor-dart');
+    await skillDir.create(recursive: true);
+    await File('${skillDir.path}/SKILL.md').writeAsString('''
+---
+name: refactor-dart
+description: Refactor Dart files safely.
+---
+
+# Refactor Dart
+
+Read the target file before editing.
+''');
+    await Directory('${skillDir.path}/notes').create(recursive: true);
+    await File('${skillDir.path}/notes/checklist.txt')
+        .writeAsString('Read, edit, verify.\n');
+
+    final result = await skillTool.execute(
+      {'name': 'refactor-dart'},
+      makeContext(),
+    );
+    final expectedSkillDir = Uri.file(
+      skillDir.path,
+      windows: Platform.isWindows,
+    ).toString();
+    final expectedSampleFile = '${skillDir.path}/notes/checklist.txt';
+
+    expect(permissionRequests, hasLength(1));
+    expect(permissionRequests.single.permission, 'skill');
+    expect(permissionRequests.single.patterns, ['refactor-dart']);
+    expect(result.displayOutput, 'Loaded skill refactor-dart');
+    expect(result.title, 'Loaded skill: refactor-dart');
+    expect(
+      result.output,
+      contains('<skill_content name="refactor-dart">'),
+    );
+    expect(
+      result.output,
+      contains('Base directory for this skill: $expectedSkillDir'),
+    );
+    expect(
+      result.output,
+      contains('<file>$expectedSampleFile</file>'),
+    );
+  });
+
+  test('download saves a public text file into the workspace', () async {
+    debugSetToolHttpClientFactoryForTests(
+      () => _FakeHttpClient(
+        (uri) => _StubHttpResponseData(
+          statusCode: 200,
+          body: utf8.encode('alpha\nbeta\n'),
+          contentType: 'text/plain',
+        ),
+      ),
+    );
+
+    final result = await downloadTool.execute(
+      {
+        'url': 'http://127.0.0.1:60459/note.txt',
+        'filePath': 'downloads/note.txt',
+      },
+      makeContext(),
+    );
+
+    expect(permissionRequests, hasLength(1));
+    expect(permissionRequests.single.permission, 'download');
+    expect(permissionRequests.single.patterns, ['127.0.0.1']);
+    expect(
+      await File('${tempDir.path}/downloads/note.txt').readAsString(),
+      'alpha\nbeta\n',
+    );
+    expect(result.displayOutput, 'Downloaded 127.0.0.1 -> downloads/note.txt');
+    expect(result.metadata['contentType'], 'text/plain');
+    expect(result.attachments.any((item) => item['type'] == 'text_preview'), isTrue);
+  });
+
+  test('download rejects overwrite unless explicitly enabled', () async {
+    final target = File('${tempDir.path}/downloads/existing.txt');
+    await target.parent.create(recursive: true);
+    await target.writeAsString('old\n');
+    debugSetToolHttpClientFactoryForTests(
+      () => _FakeHttpClient(
+        (uri) => _StubHttpResponseData(
+          statusCode: 200,
+          body: utf8.encode('new\n'),
+          contentType: 'text/plain',
+        ),
+      ),
+    );
+
+    await expectLater(
+      downloadTool.execute(
+        {
+          'url': 'http://127.0.0.1:60460/existing.txt',
+          'filePath': 'downloads/existing.txt',
+        },
+        makeContext(),
+      ),
+      throwsA(predicate((error) => error
+          .toString()
+          .contains('If you intentionally want to replace it'))),
+    );
+
+    final result = await downloadTool.execute(
+      {
+        'url': 'http://127.0.0.1:60460/existing.txt',
+        'filePath': 'downloads/existing.txt',
+        'overwrite': true,
+      },
+      makeContext(),
+    );
+
+    expect(await target.readAsString(), 'new\n');
+    expect(result.attachments.any((item) => item['type'] == 'diff_preview'), isTrue);
+  });
+
+  test('skill discovery follows workspace roots and opencode overrides duplicates',
+      () async {
+    final externalDir = Directory('${tempDir.path}/.claude/skills/shared-skill');
+    await externalDir.create(recursive: true);
+    await File('${externalDir.path}/SKILL.md').writeAsString('''
+---
+name: shared-skill
+description: External description.
+---
+
+# Shared Skill
+''');
+    final localOpenCodeDir =
+        Directory('${tempDir.path}/.opencode/skill/shared-skill');
+    await localOpenCodeDir.create(recursive: true);
+    await File('${localOpenCodeDir.path}/SKILL.md').writeAsString('''
+---
+name: shared-skill
+description: OpenCode description.
+---
+
+# Shared Skill
+''');
+    final invalidDir = Directory('${tempDir.path}/.agents/skills/no-frontmatter');
+    await invalidDir.create(recursive: true);
+    await File('${invalidDir.path}/SKILL.md')
+        .writeAsString('# Missing frontmatter\n');
+
+    final skills = await SkillRegistry.instance.available(
+      workspace,
+      agentDefinition: AgentRegistry.build,
+    );
+
+    final names = skills.map((item) => item.name).toList();
+    expect(names, containsAll(['public-file-download', 'shared-skill']));
+    final shared =
+        skills.firstWhere((item) => item.name == 'shared-skill');
+    expect(shared.description, 'OpenCode description.');
+    expect(
+      shared.location,
+      Uri.file(
+        '${localOpenCodeDir.path}/SKILL.md',
+        windows: Platform.isWindows,
+      ).toString(),
+    );
+  });
+
+  test('system prompt lists discovered available skills', () async {
+    final skillDir = Directory('${tempDir.path}/.agents/skills/explore-api');
+    await skillDir.create(recursive: true);
+    await File('${skillDir.path}/SKILL.md').writeAsString('''
+---
+name: explore-api
+description: Inspect backend API structure before changing it.
+---
+
+# Explore API
+''');
+
+    final availableSkills = await SkillRegistry.instance.available(
+      workspace,
+      agentDefinition: AgentRegistry.build,
+    );
+    final prompts = await promptAssembler.buildSystemPrompts(
+      PromptContext(
+        workspace: workspace,
+        agent: 'build',
+        agentDefinition: AgentRegistry.build,
+        model: 'gpt-5',
+        effectiveTools: registry
+            .availableForAgent(
+              AgentRegistry.build,
+              modelId: 'gpt-5',
+            )
+            .map((item) => item.id)
+            .toList(),
+        hasSkillTool: true,
+        availableSkills: availableSkills,
+        currentStep: 1,
+        maxSteps: 5,
+        format: null,
+      ),
+    );
+
+    final envPrompt = prompts
+        .map((item) => item['content'] ?? '')
+        .firstWhere((content) => content.contains('<available_skills>'));
+    expect(envPrompt, contains('<available_skills>'));
+    expect(envPrompt, contains('<name>explore-api</name>'));
+    expect(envPrompt, contains('<name>public-file-download</name>'));
+    expect(
+      envPrompt,
+      contains(
+          '<location>${Uri.file('${skillDir.path}/SKILL.md', windows: Platform.isWindows).toString()}</location>'),
+    );
+  });
+
+  test('preview skill tool schema advertises discovered skill names', () async {
+    final skillDir = Directory('${tempDir.path}/.opencode/skill/review-ui');
+    await skillDir.create(recursive: true);
+    await File('${skillDir.path}/SKILL.md').writeAsString('''
+---
+name: review-ui
+description: Review UI flows before implementation.
+---
+
+# Review UI
+''');
+    await database.putSetting(
+      'model_config',
+      ModelConfig(
+        currentProviderId: 'openai',
+        currentModelId: 'gpt-5',
+        connections: [
+          ProviderConnection(
+            id: 'openai',
+            name: 'OpenAI',
+            baseUrl: 'https://api.openai.com/v1',
+            apiKey: 'test-key',
+            models: const ['gpt-5'],
+          ),
+        ],
+        visibilityRules: const [],
+      ).toJson(),
+    );
+    await database.saveMessage(
+      MessageInfo(
+        id: newId('message'),
+        sessionId: session.id,
+        role: SessionRole.user,
+        agent: 'build',
+        createdAt: DateTime.now().millisecondsSinceEpoch,
+        text: 'Preview skill schema',
+      ),
+    );
+    final engine = SessionEngine(
+      database: database,
+      events: LocalEventBus(),
+      workspaceBridge: bridge,
+      promptAssembler: promptAssembler,
+      permissionCenter: PermissionCenter(database, LocalEventBus()),
+      questionCenter: QuestionCenter(database, LocalEventBus()),
+      toolRegistry: registry,
+      modelGateway: ModelGateway(),
+    );
+
+    final payload = await engine.previewModelRequest(
+      workspace: workspace,
+      session: session,
+    );
+    final tools = (payload['tools'] as List? ?? const []).cast<Map>();
+    final skillToolPayload = tools
+        .map((item) => Map<String, dynamic>.from(item)['function'])
+        .whereType<Map>()
+        .map((fn) => Map<String, dynamic>.from(fn))
+        .firstWhere((fn) => fn['name'] == 'skill');
+    final description = skillToolPayload['description'] as String? ?? '';
+    final parameters =
+        Map<String, dynamic>.from(skillToolPayload['parameters'] as Map);
+    final properties =
+        Map<String, dynamic>.from(parameters['properties'] as Map? ?? const {});
+    final nameProperty =
+        Map<String, dynamic>.from(properties['name'] as Map? ?? const {});
+
+    expect(description, contains('## Available Skills'));
+    expect(description, contains('**review-ui**: Review UI flows before implementation.'));
+    expect(
+      description,
+      contains('**public-file-download**: Download a public http/https file into the workspace at a chosen path.'),
+    );
+    expect(
+      nameProperty['description'] as String? ?? '',
+      contains("'review-ui'"),
     );
   });
 

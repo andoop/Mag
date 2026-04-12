@@ -11,7 +11,7 @@
 
 | Agent       | 模式    | 可用工具 ID                                                                                                                                                                                                         |
 | ----------- | ----- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| **build**   | 主会话默认 | `read`, `list`, `write`, `edit`, `apply_patch`, `glob`, `grep`, `stat`, `delete`, `rename`, `move`, `copy`, `task`, `todowrite`, `question`, `webfetch`, `browser`, `skill`, `invalid`, `plan_exit`             |
+| **build**   | 主会话默认 | `read`, `list`, `write`, `edit`, `apply_patch`, `glob`, `grep`, `stat`, `delete`, `rename`, `move`, `copy`, `task`, `todowrite`, `question`, `webfetch`, `download`, `browser`, `skill`, `invalid`, `plan_exit` |
 | **general** | 子代理   | 与 build 相同（`todowrite` 在权限规则中可能被 deny，见 `agents.dart`）                                                                                                                                                          |
 | **plan**    | 主会话规划 | `read`, `list`, `glob`, `grep`, `stat`, `question`, `webfetch`, `browser`, `skill`, `todowrite`, `task`, `plan_exit`, `invalid`（**无** `write` / `edit` / `apply_patch` 及 `delete` / `rename` / `move` / `copy`） |
 | **explore** | 子代理探索 | `read`, `list`, `glob`, `grep`, `stat`, `webfetch`, `browser`, `skill`, `question`, `invalid`（**无** 写类、`task`、`todowrite`、`plan_exit`）                                                                          |
@@ -22,6 +22,7 @@
 - `question`：默认 deny；**build** 通过 override 放行。
 - `plan_exit`：默认 deny；**plan** 放行。
 - `webfetch`：默认 ask（需用户确认）。
+- `download`：默认 ask（需用户确认）。
 - `*.env` / `*.env.*` 的 `read` / `edit`：默认 ask。
 
 写类工具的实际暴露还会按模型做一次路由：
@@ -481,7 +482,37 @@
 
 ---
 
-### 16. `browser`
+### 16. `download`
+
+**作用**：把公开 `http/https` URL 下载到工作区文件。需 `**download` 权限**。
+
+**参数**：
+
+| 参数        | 类型      | 说明 |
+| --------- | ------- | ---- |
+| `url`     | string  | **必填**；公开 `http/https` URL |
+| `filePath` | string  | **必填**；工作区相对目标路径 |
+| `overwrite` | boolean | 可选；若目标已存在，只有显式设为 `true` 才会覆盖 |
+
+**行为要点**：
+
+- 下载结果会真正写入当前工作区，后续可直接 `read`、预览、编辑
+- 如果你只是想先看远程文本内容，不需要保存到工作区，优先使用 `webfetch`
+- 目标路径必须明确；不会自动替你挑选保存位置
+- 首版只支持公开 URL，不处理登录态、Cookie、浏览器内下载
+
+**示例**：
+
+```json
+{
+  "url": "https://example.com/data.json",
+  "filePath": "downloads/data.json"
+}
+```
+
+---
+
+### 17. `browser`
 
 **作用**：在应用内打开工作区内的 **HTML** 页面（返回 `browser_page` 类附件）。
 
@@ -501,27 +532,42 @@
 
 ---
 
-### 17. `skill`
+### 18. `skill`
 
-**作用**：按名称读取内置短技能说明（注入模型上下文）。
+**作用**：按名称加载工作区内的 `SKILL.md` 技能说明，并把技能正文与同目录采样文件列表注入模型上下文。
 
 **参数**：
 
 
-| 参数     | 类型     | 说明                                             |
-| ------ | ------ | ---------------------------------------------- |
-| `name` | string | **必填**；当前实现：`android_workspace`、`mobile_agent` |
+| 参数     | 类型     | 说明 |
+| ------ | ------ | ---- |
+| `name` | string | **必填**；技能名，来自 system prompt 中列出的 available skills |
 
+
+**发现规则**：
+
+- 发现工作区内这些目录下的 `SKILL.md`：`.claude/skills/`、`.agents/skills/`、`.opencode/skill/`、`.opencode/skills/`
+- `SKILL.md` 必须带 YAML frontmatter，至少包含 `name` 与 `description`
+- `name` 只接受稳定的技能标识格式：字母/数字开头，后续可包含字母、数字、`.`、`_`、`-`
+- 内置 skills 也会一起暴露；当前包含用于公开文件下载的 `public-file-download`
+- 同名技能冲突时，`.opencode` 下的技能会覆盖 `.claude` / `.agents` 下的同名项
+- 本客户端**不会执行** skill 目录中的脚本、hook 或 JS；只会读取说明文本并列出部分相邻文件
+
+**返回要点**：
+
+- 返回 `<skill_content name="...">...</skill_content>`
+- 技能位置与基目录使用 `file://` URL 形式
+- `<skill_files>` 中的采样文件列表返回本机绝对路径，帮助模型理解技能包结构
 
 **示例**：
 
 ```json
-{ "name": "mobile_agent" }
+{ "name": "explore-api" }
 ```
 
 ---
 
-### 18. `invalid`
+### 19. `invalid`
 
 **作用**：由模型或管线声明某次工具调用非法，用于自纠与展示。
 
@@ -542,7 +588,7 @@
 
 ---
 
-### 19. `plan_exit`
+### 20. `plan_exit`
 
 **作用**：在 **plan** 模式下请求切换到 **build**；会弹出确认。用户选择停留则抛错。
 
@@ -550,7 +596,7 @@
 
 ---
 
-### 20. `task`
+### 21. `task`
 
 **作用**：创建或续用子会话，使用指定子代理执行 `prompt`，返回最后助手输出（包在 `<task_result>` 中）。
 

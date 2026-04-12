@@ -291,6 +291,7 @@ extension AppControllerWorkspace on AppController {
     if (toolName == 'write' ||
         toolName == 'edit' ||
         toolName == 'apply_patch' ||
+        toolName == 'download' ||
         toolName == 'delete' ||
         toolName == 'rename' ||
         toolName == 'move' ||

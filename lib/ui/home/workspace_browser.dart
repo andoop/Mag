@@ -187,6 +187,312 @@ void _openBrowserFile(
   );
 }
 
+Future<String?> _absolutePathForWorkspaceEntry(
+  WorkspaceInfo workspace,
+  WorkspaceEntry entry,
+) async {
+  final root = await WorkspaceBridge.instance.resolveFilesystemPath(
+    treeUri: workspace.treeUri,
+  );
+  if (root == null || root.isEmpty) return null;
+  final rel = entry.path.replaceAll('\\', '/').trim();
+  if (rel.isEmpty) return p.normalize(root);
+  final parts = rel.split('/').where((s) => s.isNotEmpty).toList();
+  return p.normalize(p.join(root, p.joinAll(parts)));
+}
+
+void _invalidatePreviewAfterDelete(
+  AppController controller,
+  WorkspaceInfo workspace,
+  WorkspaceEntry entry,
+) {
+  final t = workspace.treeUri;
+  if (entry.isDirectory) {
+    controller.invalidateWorkspacePreview(treeUri: t, relativePath: '');
+  } else {
+    controller.invalidateWorkspacePreview(treeUri: t, relativePath: entry.path);
+  }
+  controller.invalidateWorkspaceSearchIndex(treeUri: t);
+}
+
+void _invalidatePreviewAfterRename(
+  AppController controller,
+  WorkspaceInfo workspace,
+  WorkspaceEntry before,
+  WorkspaceEntry after,
+) {
+  final t = workspace.treeUri;
+  if (before.isDirectory || after.isDirectory) {
+    controller.invalidateWorkspacePreview(treeUri: t, relativePath: '');
+  } else {
+    controller.invalidateWorkspacePreview(treeUri: t, relativePath: before.path);
+    controller.invalidateWorkspacePreview(treeUri: t, relativePath: after.path);
+  }
+  controller.invalidateWorkspaceSearchIndex(treeUri: t);
+}
+
+Future<void> _copyWorkspaceEntryRelativePath(
+  BuildContext context,
+  WorkspaceEntry entry,
+) async {
+  final copiedLabel =
+      l(context, '相对路径已复制', 'Relative path copied');
+  final messenger = ScaffoldMessenger.maybeOf(context);
+  await Clipboard.setData(ClipboardData(text: entry.path));
+  messenger?.hideCurrentSnackBar();
+  messenger?.showSnackBar(SnackBar(content: Text(copiedLabel)));
+}
+
+Future<void> _shareWorkspaceEntry(
+  BuildContext context,
+  WorkspaceInfo workspace,
+  WorkspaceEntry entry,
+) async {
+  final fallbackShareText = l(
+    context,
+    '工作区相对路径:\n${entry.path}',
+    'Workspace path:\n${entry.path}',
+  );
+  final shareFailedPrefix = l(context, '分享失败', 'Share failed');
+  final langIsZh =
+      Localizations.localeOf(context).languageCode.startsWith('zh');
+  final messenger = ScaffoldMessenger.maybeOf(context);
+  try {
+    final abs = await _absolutePathForWorkspaceEntry(workspace, entry);
+    if (abs != null && !entry.isDirectory) {
+      final file = File(abs);
+      if (await file.exists()) {
+        await Share.shareXFiles(
+          [XFile(abs)],
+          subject: entry.name,
+        );
+        return;
+      }
+    }
+    if (abs != null && entry.isDirectory) {
+      final dir = Directory(abs);
+      if (await dir.exists()) {
+        final folderText =
+            langIsZh ? '文件夹路径:\n$abs' : 'Folder path:\n$abs';
+        await Share.share(
+          folderText,
+          subject: entry.name,
+        );
+        return;
+      }
+    }
+    await Share.share(
+      fallbackShareText,
+      subject: entry.name,
+    );
+  } catch (e) {
+    messenger?.hideCurrentSnackBar();
+    messenger?.showSnackBar(
+      SnackBar(content: Text('$shareFailedPrefix: $e')),
+    );
+  }
+}
+
+Future<void> _promptRenameWorkspaceEntry(
+  BuildContext context, {
+  required WorkspaceInfo workspace,
+  required WorkspaceEntry entry,
+  required AppController controller,
+  required VoidCallback onChanged,
+}) async {
+  final textController = TextEditingController(text: entry.name);
+  final messenger = ScaffoldMessenger.maybeOf(context);
+  final renamedOkLabel = l(context, '已重命名', 'Renamed');
+  final renameFailedPrefix = l(context, '重命名失败', 'Rename failed');
+  try {
+    final ok = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: Text(l(ctx, '重命名', 'Rename')),
+        content: TextField(
+          controller: textController,
+          autofocus: true,
+          decoration: InputDecoration(
+            labelText: l(ctx, '新名称', 'New name'),
+          ),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, false),
+            child: Text(l(ctx, '取消', 'Cancel')),
+          ),
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, true),
+            child: Text(l(ctx, '确定', 'OK')),
+          ),
+        ],
+      ),
+    );
+    if (ok != true) return;
+    final newName = textController.text.trim();
+    if (newName.isEmpty || newName == entry.name) return;
+    final updated = await WorkspaceBridge.instance.renameEntry(
+      treeUri: workspace.treeUri,
+      relativePath: entry.path,
+      newName: newName,
+    );
+    _invalidatePreviewAfterRename(controller, workspace, entry, updated);
+    onChanged();
+    messenger?.hideCurrentSnackBar();
+    messenger?.showSnackBar(SnackBar(content: Text(renamedOkLabel)));
+  } catch (e) {
+    messenger?.hideCurrentSnackBar();
+    messenger?.showSnackBar(
+      SnackBar(content: Text('$renameFailedPrefix: $e')),
+    );
+  } finally {
+    textController.dispose();
+  }
+}
+
+Future<void> _confirmDeleteWorkspaceEntry(
+  BuildContext context, {
+  required WorkspaceInfo workspace,
+  required WorkspaceEntry entry,
+  required AppController controller,
+  required VoidCallback onChanged,
+}) async {
+  final messenger = ScaffoldMessenger.maybeOf(context);
+  final deletedLabel = l(context, '已删除', 'Deleted');
+  final deleteFailedPrefix = l(context, '删除失败', 'Delete failed');
+  final confirmed = await showDialog<bool>(
+    context: context,
+    builder: (ctx) => AlertDialog(
+      title: Text(l(ctx, '删除', 'Delete')),
+      content: Text(
+        entry.isDirectory
+            ? l(
+                ctx,
+                '确定删除文件夹「${entry.name}」及其中的全部内容？',
+                'Delete folder "${entry.name}" and everything inside it?',
+              )
+            : l(
+                ctx,
+                '确定删除文件「${entry.name}」？',
+                'Delete file "${entry.name}"?',
+              ),
+      ),
+      actions: [
+        TextButton(
+          onPressed: () => Navigator.pop(ctx, false),
+          child: Text(l(ctx, '取消', 'Cancel')),
+        ),
+        TextButton(
+          style: TextButton.styleFrom(foregroundColor: Colors.red),
+          onPressed: () => Navigator.pop(ctx, true),
+          child: Text(l(ctx, '删除', 'Delete')),
+        ),
+      ],
+    ),
+  );
+  if (confirmed != true) return;
+  try {
+    await WorkspaceBridge.instance.deleteEntry(
+      treeUri: workspace.treeUri,
+      relativePath: entry.path,
+    );
+    _invalidatePreviewAfterDelete(controller, workspace, entry);
+    onChanged();
+    messenger?.hideCurrentSnackBar();
+    messenger?.showSnackBar(SnackBar(content: Text(deletedLabel)));
+  } catch (e) {
+    messenger?.hideCurrentSnackBar();
+    messenger?.showSnackBar(
+      SnackBar(content: Text('$deleteFailedPrefix: $e')),
+    );
+  }
+}
+
+void _showWorkspaceEntryMoreMenu(
+  BuildContext context, {
+  required WorkspaceInfo workspace,
+  required AppController controller,
+  required WorkspaceEntry entry,
+  required VoidCallback onChanged,
+}) {
+  showModalBottomSheet<void>(
+    context: context,
+    builder: (ctx) {
+      return SafeArea(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            Padding(
+              padding: const EdgeInsets.fromLTRB(20, 12, 20, 4),
+              child: Text(
+                entry.name,
+                style: Theme.of(ctx).textTheme.titleMedium?.copyWith(
+                      fontWeight: FontWeight.w600,
+                    ),
+                maxLines: 2,
+                overflow: TextOverflow.ellipsis,
+              ),
+            ),
+            ListTile(
+              leading: Icon(Icons.drive_file_rename_outline, color: ctx.oc.accent),
+              title: Text(l(ctx, '重命名', 'Rename')),
+              onTap: () {
+                Navigator.pop(ctx);
+                unawaited(_promptRenameWorkspaceEntry(
+                  context,
+                  workspace: workspace,
+                  entry: entry,
+                  controller: controller,
+                  onChanged: onChanged,
+                ));
+              },
+            ),
+            ListTile(
+              leading: Icon(Icons.share_outlined, color: ctx.oc.accent),
+              title: Text(l(ctx, '分享', 'Share')),
+              subtitle: Text(
+                l(ctx, '文件可分享副本；否则分享路径文本', 'Share a file copy, or path text'),
+                style: Theme.of(ctx).textTheme.bodySmall,
+              ),
+              onTap: () {
+                Navigator.pop(ctx);
+                unawaited(_shareWorkspaceEntry(context, workspace, entry));
+              },
+            ),
+            ListTile(
+              leading: Icon(Icons.link, color: ctx.oc.accent),
+              title: Text(l(ctx, '复制相对路径', 'Copy relative path')),
+              onTap: () {
+                Navigator.pop(ctx);
+                unawaited(_copyWorkspaceEntryRelativePath(context, entry));
+              },
+            ),
+            ListTile(
+              leading: Icon(Icons.delete_outline, color: Colors.red.shade700),
+              title: Text(
+                l(ctx, '删除', 'Delete'),
+                style: TextStyle(color: Colors.red.shade700),
+              ),
+              onTap: () {
+                Navigator.pop(ctx);
+                unawaited(_confirmDeleteWorkspaceEntry(
+                  context,
+                  workspace: workspace,
+                  entry: entry,
+                  controller: controller,
+                  onChanged: onChanged,
+                ));
+              },
+            ),
+            const SizedBox(height: 8),
+          ],
+        ),
+      );
+    },
+  );
+}
+
 class _WorkspaceImagePreviewPage extends StatelessWidget {
   const _WorkspaceImagePreviewPage({
     required this.filename,
@@ -438,6 +744,17 @@ class _WorkspaceFileBrowserPageState extends State<_WorkspaceFileBrowserPage> {
                       subtitle: Text(
                         meta,
                         style: TextStyle(fontSize: 11, color: oc.muted),
+                      ),
+                      trailing: IconButton(
+                        tooltip: l(context, '更多', 'More'),
+                        icon: Icon(Icons.more_vert_rounded, color: oc.muted),
+                        onPressed: () => _showWorkspaceEntryMoreMenu(
+                          context,
+                          workspace: widget.workspace,
+                          controller: widget.controller,
+                          entry: e,
+                          onChanged: _reload,
+                        ),
                       ),
                       onTap: () {
                         if (e.isDirectory) {

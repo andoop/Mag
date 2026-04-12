@@ -2,6 +2,7 @@ library home_page;
 
 import 'dart:async';
 import 'dart:convert';
+import 'dart:io';
 
 import 'package:flutter/material.dart';
 import 'package:flutter_highlight/flutter_highlight.dart';
@@ -11,9 +12,12 @@ import 'package:flutter_markdown/flutter_markdown.dart';
 import 'package:markdown/markdown.dart' as md;
 import 'package:pdfx/pdfx.dart';
 import 'package:flutter/services.dart';
+import 'package:path/path.dart' as p;
+import 'package:share_plus/share_plus.dart';
 import 'package:webview_flutter/webview_flutter.dart';
 
 import '../core/models.dart';
+import '../core/skill_registry.dart';
 import '../core/workspace_bridge.dart';
 import '../sdk/local_server_client.dart';
 import '../store/app_controller.dart';
@@ -51,6 +55,7 @@ part 'home/pickers/model_picker.dart';
 part 'home/pickers/variant_picker.dart';
 part 'home/pickers/agent_picker.dart';
 part 'home/pickers/settings_sheet.dart';
+part 'home/pickers/skills_sheet.dart';
 part 'home/pickers/presets.dart';
 
 class HomePage extends StatefulWidget {

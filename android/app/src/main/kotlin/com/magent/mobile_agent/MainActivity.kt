@@ -58,6 +58,7 @@ class MainActivity : FlutterActivity() {
             "readText" -> runWorkspaceCall(result) { handleReadText(call) }
             "readBytes" -> runWorkspaceCall(result) { handleReadBytes(call) }
             "writeText" -> runWorkspaceCall(result) { handleWriteText(call) }
+            "writeBytes" -> runWorkspaceCall(result) { handleWriteBytes(call) }
             "deleteEntry" -> runWorkspaceCall(result) { handleDeleteEntry(call) }
             "renameEntry" -> runWorkspaceCall(result) { handleRenameEntry(call) }
             "moveEntry" -> runWorkspaceCall(result) { handleMoveEntry(call) }
@@ -217,6 +218,25 @@ class MainActivity : FlutterActivity() {
         }
         stream.bufferedWriter().use { writer ->
             writer.write(content)
+        }
+        return null
+    }
+
+    private fun handleWriteBytes(call: MethodCall): Any? {
+        val treeUri = requireTreeUri(call)
+        val relativePath = call.argument<String>("relativePath") ?: ""
+        val bytes = call.argument<ByteArray>("bytes") ?: ByteArray(0)
+        val target = ensureFile(treeUri, relativePath)
+        if (target == null) {
+            throw WorkspaceMethodException("write_failed", "Unable to create file", mapOf("path" to relativePath))
+        }
+        val stream = contentResolver.openOutputStream(target.uri, "w")
+        if (stream == null) {
+            throw WorkspaceMethodException("write_failed", "Unable to open output stream", mapOf("path" to relativePath))
+        }
+        stream.use { output ->
+            output.write(bytes)
+            output.flush()
         }
         return null
     }

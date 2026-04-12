@@ -241,7 +241,8 @@ class SessionEngine {
       model: modelConfig.model,
     );
     final toolModels = [
-      ...toolRegistry.availableForAgent(
+      ...await toolRegistry.availableForWorkspaceAgent(
+        workspace,
         agentDefinition(session.agent),
         modelId: modelConfig.model,
       ),

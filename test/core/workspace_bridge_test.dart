@@ -1,4 +1,5 @@
 import 'dart:io';
+import 'dart:typed_data';
 
 import 'package:flutter_test/flutter_test.dart';
 import 'package:mobile_agent/core/workspace_bridge.dart';
@@ -32,10 +33,19 @@ void main() {
       relativePath: 'README.md',
       content: '# Sandbox\nhello sandbox\n',
     );
+    await bridge.writeBytes(
+      treeUri: treeUri,
+      relativePath: 'assets/data.bin',
+      bytes: Uint8List.fromList([1, 2, 3, 4]),
+    );
 
     expect(
       await bridge.readText(treeUri: treeUri, relativePath: 'lib/main.dart'),
       contains('void main'),
+    );
+    expect(
+      await bridge.readBytes(treeUri: treeUri, relativePath: 'assets/data.bin'),
+      Uint8List.fromList([1, 2, 3, 4]),
     );
 
     final rootEntries = await bridge.listDirectory(treeUri: treeUri);

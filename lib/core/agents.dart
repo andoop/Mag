@@ -65,6 +65,7 @@ class AgentRegistry {
           'git',
           'question',
           'webfetch',
+          'download',
           'browser',
           'skill',
           'todowrite',
@@ -111,6 +112,10 @@ class AgentRegistry {
               pattern: '*',
               action: PermissionAction.allow),
           PermissionRule(
+              permission: 'download',
+              pattern: '*',
+              action: PermissionAction.allow),
+          PermissionRule(
               permission: 'browser',
               pattern: '*',
               action: PermissionAction.allow),
@@ -131,6 +136,7 @@ class AgentRegistry {
           'stat',
           'git',
           'webfetch',
+          'download',
           'browser',
           'skill',
           'question',
@@ -157,6 +163,8 @@ class AgentRegistry {
           permission: 'plan_exit', pattern: '*', action: PermissionAction.deny),
       PermissionRule(
           permission: 'webfetch', pattern: '*', action: PermissionAction.ask),
+      PermissionRule(
+          permission: 'download', pattern: '*', action: PermissionAction.ask),
       PermissionRule(
           permission: 'edit', pattern: '*.env', action: PermissionAction.ask),
       PermissionRule(
@@ -187,6 +195,7 @@ class AgentRegistry {
     'todowrite',
     'question',
     'webfetch',
+    'download',
     'browser',
     'skill',
     'invalid',

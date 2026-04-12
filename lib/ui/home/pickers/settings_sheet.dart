@@ -117,15 +117,19 @@ class _AppSettingsSheetState extends State<_AppSettingsSheet> {
     if (ok != true) {
       return;
     }
+    if (!mounted) return;
     try {
       final messenger = ScaffoldMessenger.maybeOf(context);
+      final navigator = Navigator.of(context);
+      final successMessage =
+          l(context, 'Provider 已断开', 'Provider disconnected');
       await widget.controller.disconnectProvider(connection.id);
       if (!mounted) return;
       _showInfoWithMessenger(
         messenger,
-        l(context, 'Provider 已断开', 'Provider disconnected'),
+        successMessage,
       );
-      Navigator.of(context).pop();
+      navigator.pop();
     } catch (error) {
       if (!mounted) return;
       _showInfo(context, error.toString());
@@ -140,6 +144,26 @@ class _AppSettingsSheetState extends State<_AppSettingsSheet> {
     if (!mounted) return;
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(content: Text(l(context, 'Git 身份已保存', 'Git identity saved'))),
+    );
+  }
+
+  Future<void> _showSkillsBrowser() async {
+    final workspace = widget.controller.state.workspace;
+    if (workspace == null) {
+      _showInfo(
+        context,
+        l(
+          context,
+          '请先打开一个工作区，再查看 skills。',
+          'Open a workspace before browsing skills.',
+        ),
+      );
+      return;
+    }
+    await _openSkillsBrowser(
+      context,
+      controller: widget.controller,
+      workspace: workspace,
     );
   }
 
@@ -456,6 +480,7 @@ class _AppSettingsSheetState extends State<_AppSettingsSheet> {
         final connection = current.currentConnection;
         final gitSettings =
             widget.controller.state.gitSettings ?? GitSettings.defaults();
+        final workspace = widget.controller.state.workspace;
         final themeLabel = context.isDarkMode
             ? l(context, '夜间模式', 'Dark mode')
             : l(context, '日间模式', 'Light mode');
@@ -542,6 +567,39 @@ class _AppSettingsSheetState extends State<_AppSettingsSheet> {
                         ],
                       ),
                       const SizedBox(height: 16),
+                      _SettingsSectionCard(
+                        icon: Icons.auto_awesome_outlined,
+                        title: l(context, 'Skills', 'Skills'),
+                        subtitle: l(
+                          context,
+                          '浏览当前工作区内发现到的 skill 名称、位置、正文和采样文件。',
+                          'Browse discovered skill names, locations, content, and sampled files in the current workspace.',
+                        ),
+                        action: Align(
+                          alignment: Alignment.centerLeft,
+                          child: FilledButton.tonalIcon(
+                            onPressed:
+                                workspace == null ? null : _showSkillsBrowser,
+                            icon: const Icon(Icons.visibility_outlined, size: 18),
+                            label: Text(l(context, '浏览 Skills', 'Browse skills')),
+                          ),
+                        ),
+                        child: Text(
+                          workspace == null
+                              ? l(
+                                  context,
+                                  '当前还没有打开工作区，因此无法扫描 skills。',
+                                  'No workspace is open yet, so skills cannot be scanned.',
+                                )
+                              : l(
+                                  context,
+                                  '会扫描 `.claude/skills`、`.agents/skills`、`.opencode/skill`、`.opencode/skills`。',
+                                  'Scans `.claude/skills`, `.agents/skills`, `.opencode/skill`, and `.opencode/skills`.',
+                                ),
+                          style: TextStyle(fontSize: 12.5, color: oc.muted),
+                        ),
+                      ),
+                      const SizedBox(height: 14),
                       if (connection != null) ...[
                         _SettingsSectionCard(
                           icon: Icons.hub_outlined,

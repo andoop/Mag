@@ -96,6 +96,18 @@ Usage notes:
   - Results may be summarized if the content is very large
 ''';
 
+const String kDownloadToolDescription = r'''
+Download a public file from a URL into the workspace.
+
+Usage:
+- `url` and `filePath` are required.
+- `url` must be a public `http` or `https` URL.
+- `filePath` is the workspace-relative destination where the downloaded file will be saved.
+- If the destination already exists, this tool will fail unless `overwrite` is explicitly set to `true`.
+- This tool writes files inside the workspace.
+- When the `public-file-download` skill is available, load that skill for detailed usage guidance before using this tool.
+''';
+
 /// Client-specific: workspace-relative paths.
 const String kMobileWorkspacePathSuffix = '''
 

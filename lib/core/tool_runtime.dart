@@ -2,8 +2,8 @@ library tool_runtime;
 
 import 'dart:convert';
 import 'dart:io';
+import 'dart:typed_data';
 
-import 'package:crypto/crypto.dart';
 import 'package:path/path.dart' as p;
 
 import 'database.dart';
@@ -12,6 +12,7 @@ import 'git/git_service.dart';
 import 'git/git_settings_store.dart';
 import 'json_coerce.dart';
 import 'models.dart';
+import 'skill_registry.dart';
 import 'tools/builtin_tool_descriptions.dart';
 import 'tools/question_tool_spec.dart';
 import 'tools/todo_tool_spec.dart';
@@ -50,6 +51,16 @@ const int _kMaxReadBytes = 50 * 1024;
 const int _kMaxReadLineLength = 2000;
 const String _kMaxReadLineSuffix = '... (line truncated to 2000 chars)';
 const int _kToolResultLimit = 100;
+
+HttpClient Function() _toolHttpClientFactory = HttpClient.new;
+
+void debugSetToolHttpClientFactoryForTests(HttpClient Function() factory) {
+  _toolHttpClientFactory = factory;
+}
+
+void debugResetToolHttpClientFactoryForTests() {
+  _toolHttpClientFactory = HttpClient.new;
+}
 
 /// Preview length cap for `[mag-edit]` / `[mag-patch]` debug logs (lengths still printed).
 const int _kEditMismatchLogPreviewChars = 900;
@@ -439,6 +450,35 @@ class ToolRegistry {
     );
     register(
       ToolDefinition(
+        id: 'download',
+        description:
+            '${kDownloadToolDescription.trim()}$kMobileWorkspacePathSuffix',
+        parameters: {
+          'type': 'object',
+          'properties': {
+            'url': {
+              'type': 'string',
+              'description': 'REQUIRED. Public http/https URL to download.',
+            },
+            'filePath': {
+              'type': 'string',
+              'description':
+                  'REQUIRED. Workspace-relative destination path for the downloaded file.',
+            },
+            'overwrite': {
+              'type': 'boolean',
+              'description':
+                  'Optional. Set to true to replace an existing file at `filePath`.',
+            },
+          },
+          'required': ['url', 'filePath'],
+          'additionalProperties': false,
+        },
+        execute: _downloadTool,
+      ),
+    );
+    register(
+      ToolDefinition(
         id: 'browser',
         description:
             'Open an HTML page from the workspace in the in-app browser.$kMobileWorkspacePathSuffix',
@@ -456,7 +496,11 @@ class ToolRegistry {
     register(
       ToolDefinition(
         id: 'skill',
-        description: 'Read a built-in mobile agent skill by name.',
+        description:
+            'Load a skill by name. Skills are discovered from workspace-local '
+            '`.opencode/skill`, `.opencode/skills`, `.claude/skills`, and '
+            '`.agents/skills` directories. This tool returns the skill instructions '
+            'and a sampled list of sibling files. It does not execute scripts or hooks.',
         parameters: {
           'type': 'object',
           'properties': {
@@ -707,6 +751,39 @@ class ToolRegistry {
         })
         .map((item) => item.toModel())
         .toList();
+  }
+
+  Future<List<ToolDefinitionModel>> availableForWorkspaceAgent(
+    WorkspaceInfo workspace,
+    AgentDefinition agent, {
+    String? modelId,
+  }) async {
+    final tools = availableForAgent(agent, modelId: modelId);
+    final hasSkillTool = tools.any((item) => item.id == 'skill');
+    if (!hasSkillTool) return tools;
+    final skills = await SkillRegistry.instance.available(
+      workspace,
+      agentDefinition: agent,
+    );
+    final registry = SkillRegistry.instance;
+    return tools.map((item) {
+      if (item.id != 'skill') return item;
+      final parameters = Map<String, dynamic>.from(item.parameters);
+      final properties = Map<String, dynamic>.from(
+        parameters['properties'] as Map? ?? const <String, dynamic>{},
+      );
+      final nameSpec = Map<String, dynamic>.from(
+        properties['name'] as Map? ?? const <String, dynamic>{},
+      );
+      nameSpec['description'] = registry.toolNameParameterDescription(skills);
+      properties['name'] = nameSpec;
+      parameters['properties'] = properties;
+      return ToolDefinitionModel(
+        id: item.id,
+        description: registry.toolDescription(skills),
+        parameters: parameters,
+      );
+    }).toList(growable: false);
   }
 
   ToolDefinition? operator [](String id) => _definitions[id];

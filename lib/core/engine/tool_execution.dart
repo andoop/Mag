@@ -777,7 +777,16 @@ extension SessionEngineTools on SessionEngine {
     required String toolName,
     JsonMap? metadata,
   }) {
-    final writeLikeTools = {'write', 'edit', 'apply_patch'};
+    final writeLikeTools = {
+      'write',
+      'edit',
+      'apply_patch',
+      'download',
+      'delete',
+      'rename',
+      'move',
+      'copy',
+    };
     if (!writeLikeTools.contains(toolName)) return;
     final paths = <String>{};
     final singlePath =

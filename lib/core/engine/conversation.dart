@@ -19,21 +19,29 @@ extension SessionEngineConversation on SessionEngine {
       }
     }
     final zh = platformIsZh;
+    final effectiveTools = toolRegistry
+        .availableForAgent(
+          currentAgentDefinition,
+          modelId: model,
+        )
+        .map((item) => item.id)
+        .toList();
+    final availableSkills = effectiveTools.contains('skill')
+        ? await SkillRegistry.instance.available(
+            workspace,
+            agentDefinition: currentAgentDefinition,
+          )
+        : const <SkillInfo>[];
     final system = await promptAssembler.buildSystemPrompts(
       PromptContext(
         workspace: workspace,
         agent: currentAgent,
         agentDefinition: currentAgentDefinition,
         model: model,
-        effectiveTools: toolRegistry
-            .availableForAgent(
-              currentAgentDefinition,
-              modelId: model,
-            )
-            .map((item) => item.id)
-            .toList(),
+        effectiveTools: effectiveTools,
         agentPrompt: currentAgentDefinition.promptOverride,
-        hasSkillTool: true,
+        hasSkillTool: effectiveTools.contains('skill'),
+        availableSkills: availableSkills,
         currentStep: currentStep,
         maxSteps: maxSteps,
         format: latestUser?.format,

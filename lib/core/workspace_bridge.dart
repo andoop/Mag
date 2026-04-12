@@ -474,6 +474,32 @@ class WorkspaceBridge {
     invalidateCaches(treeUri: treeUri, relativePath: normalizedPath);
   }
 
+  Future<void> writeBytes({
+    required String treeUri,
+    required String relativePath,
+    required Uint8List bytes,
+  }) async {
+    final normalizedPath = _normalizeCachePath(relativePath);
+    final localRoot = _treeUriToPath(treeUri);
+    if (localRoot != null) {
+      final file = File(_resolveLocalPath(localRoot, normalizedPath));
+      await file.parent.create(recursive: true);
+      await file.writeAsBytes(bytes, flush: true);
+      invalidateCaches(treeUri: treeUri, relativePath: normalizedPath);
+      return;
+    }
+
+    await _channel.invokeMethod<void>(
+      'writeBytes',
+      {
+        'treeUri': treeUri,
+        'relativePath': normalizedPath,
+        'bytes': bytes,
+      },
+    );
+    invalidateCaches(treeUri: treeUri, relativePath: normalizedPath);
+  }
+
   Future<void> deleteEntry({
     required String treeUri,
     required String relativePath,
