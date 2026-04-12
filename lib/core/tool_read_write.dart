@@ -6,7 +6,7 @@ String _toolFilePathArg(JsonMap args) {
 }
 
 String _strictReadPathArg(JsonMap args) {
-  final raw = jsonStringCoerce(args['filePath'] ?? args['path'], '').trim();
+  final raw = jsonStringCoerce(args['filePath'], '').trim();
   if (raw.isEmpty) {
     throw Exception(
       'Missing required read path. Provide `filePath` explicitly.',
@@ -177,54 +177,6 @@ Future<_ToolReadLedgerEntry?> _latestToolReadLedgerForPath(
 String _formatLedgerTimestamp(int millis) =>
     DateTime.fromMillisecondsSinceEpoch(millis).toIso8601String();
 
-String _formatLineList(List<int> lines) {
-  if (lines.isEmpty) return '';
-  final sorted = lines.toSet().toList()..sort();
-  if (sorted.length == 1) return '${sorted.first}';
-  if (sorted.length <= 4) return sorted.join(', ');
-  return '${sorted.first}-${sorted.last}';
-}
-
-Future<void> _assertHashlineAnchorsCoveredByLatestReadWindow(
-  ToolRuntimeContext ctx,
-  String filePath, {
-  required Iterable<String> refs,
-  required String toolName,
-}) async {
-  final anchorLines = refs
-      .map((ref) => _parseHashlineRef(ref).line)
-      .toSet()
-      .toList()
-    ..sort();
-  if (anchorLines.isEmpty) return;
-  final ledger = await _latestToolReadLedgerForPath(
-    ctx,
-    filePath,
-    requiredSourceTool: 'read',
-    requireCoverage: true,
-  );
-  if (ledger == null) {
-    throw Exception(
-      'BLOCKED: Your `$toolName` call for "$filePath" uses LINE#ID anchors, '
-      'but there is no recent `read` window recorded for those lines.\n'
-      'Required action: call `read` on "$filePath" with an `offset`/`limit` '
-      'range that includes line(s) ${_formatLineList(anchorLines)}, then '
-      'rebuild the `$toolName` call using anchors from that newest output.',
-    );
-  }
-  final uncovered =
-      anchorLines.where((line) => !ledger.coversLine(line)).toList();
-  if (uncovered.isEmpty) return;
-  throw Exception(
-    'BLOCKED: Your `$toolName` call for "$filePath" uses LINE#ID anchor line(s) '
-    '${_formatLineList(uncovered)}, but the most recent `read` window for this '
-    'file only covered lines ${ledger.startLine}-${ledger.endLine}.\n'
-    'Required action: call `read` on "$filePath" again with an `offset`/`limit` '
-    'range that includes the target lines, then rebuild `$toolName` using '
-    'anchors from that newest output. Do not reuse anchors from an older read window.',
-  );
-}
-
 Future<void> _assertFreshReadForExistingFile(
   ToolRuntimeContext ctx,
   String filePath, {
@@ -241,7 +193,7 @@ Future<void> _assertFreshReadForExistingFile(
   if (ledger == null) {
     throw Exception(
       'BLOCKED: You must `read` the file "$filePath" before using `$toolName`.\n'
-      'Required action: call `read` with path "$filePath" first, then retry your `$toolName` call.',
+      'Required action: call `read` with `filePath` "$filePath" first, then retry your `$toolName` call.',
     );
   }
   if (entry.lastModified > ledger.lastModified) {
@@ -387,11 +339,7 @@ Future<ToolExecutionResult> _readTool(
       hasMoreLines = true;
       break;
     }
-    final numbered = _formatHashlineReadLine(
-      i + 1,
-      line,
-      truncated: original.length > _kMaxReadLineLength,
-    );
+    final numbered = '${i + 1}: $line';
     contentLines.add(numbered);
     bytes += size;
   }
@@ -600,13 +548,492 @@ void _logApplyPatchToolFailure({
 
 Future<ToolExecutionResult> _editTool(
     JsonMap args, ToolRuntimeContext ctx) async {
-  if (args.containsKey('oldString') ||
-      args.containsKey('newString') ||
-      args.containsKey('replaceAll')) {
+  if (args.containsKey('edits') ||
+      args.containsKey('delete') ||
+      args.containsKey('rename')) {
     throw Exception(
-      'The edit tool no longer accepts `oldString` / `newString` / `replaceAll`.\n'
-      'Required action: call `read`, copy exact LINE#ID anchors, then retry `edit` with `edits` operations only.',
+      'The edit tool only accepts `filePath`, `oldString`, `newString`, and optional `replaceAll`.\n'
+      'Required action: call `read`, copy the exact text you want to replace (without line-number prefixes), then retry `edit` with `oldString` / `newString`.',
     );
   }
-  return _executeHashlineEditTool(args, ctx);
+  final filePath = _strictFilePathArg(args, toolName: 'edit');
+  final oldString = jsonStringCoerce(args['oldString'], '');
+  final newString = jsonStringCoerce(args['newString'], '');
+  final replaceAll = args['replaceAll'] == true;
+
+  if (oldString == newString) {
+    throw Exception('No changes to apply: oldString and newString are identical.');
+  }
+
+  final existingEntry = await ctx.bridge.stat(
+    treeUri: ctx.workspace.treeUri,
+    relativePath: filePath,
+  );
+  if (existingEntry != null && existingEntry.isDirectory) {
+    throw Exception('Path is a directory, not a file: $filePath');
+  }
+
+  if (oldString.isEmpty) {
+    final preview = _buildDiffAttachment(
+      kind: 'edit',
+      path: filePath,
+      before: '',
+      after: newString,
+    );
+    await ctx.updateToolProgress(
+      title: filePath,
+      displayOutput: 'Preparing edit for $filePath',
+      metadata: {
+        'phase': 'preparing',
+        'path': filePath,
+        'filePath': filePath,
+      },
+      attachments: [preview],
+    );
+    await ctx.askPermission(
+      PermissionRequest(
+        id: newId('perm'),
+        sessionId: ctx.session.id,
+        permission: 'edit',
+        patterns: [filePath],
+        metadata: {
+          'tool': 'edit',
+          'path': filePath,
+          'filePath': filePath,
+          'preview': preview,
+        },
+        always: [filePath],
+        messageId: ctx.message.id,
+        callId: newId('call'),
+      ),
+    );
+    await ctx.bridge.writeText(
+      treeUri: ctx.workspace.treeUri,
+      relativePath: filePath,
+      content: newString,
+    );
+    final updatedEntry = await ctx.bridge.stat(
+      treeUri: ctx.workspace.treeUri,
+      relativePath: filePath,
+    );
+    return ToolExecutionResult(
+      title: filePath,
+      output: 'Edit applied successfully.',
+      displayOutput: 'Updated $filePath',
+      metadata: {
+        'path': filePath,
+        'filepath': filePath,
+        'diagnostics': const <String, dynamic>{},
+        'filediff': {
+          'file': filePath,
+          'before': '',
+          'after': newString,
+          ..._diffLineChangeCounts('', newString),
+        },
+        if (updatedEntry != null)
+          'readLedger': _toolReadLedgerMetadata(
+            path: filePath,
+            lastModified: updatedEntry.lastModified,
+            sourceTool: 'edit',
+          ),
+      },
+      attachments: [preview],
+    );
+  }
+
+  if (existingEntry == null) {
+    throw Exception('File $filePath not found');
+  }
+  await _assertFreshReadForExistingFile(
+    ctx,
+    filePath,
+    toolName: 'edit',
+  );
+  final existingRaw = await ctx.bridge.readText(
+    treeUri: ctx.workspace.treeUri,
+    relativePath: filePath,
+  );
+  final envelope = _canonicalizeHashlineFileText(existingRaw);
+  final normalizedOld = _normalizeEditLineEndings(oldString);
+  final normalizedNew = _normalizeEditLineEndings(newString);
+  final updatedCanonical = _replaceEditContent(
+    envelope.content,
+    normalizedOld,
+    normalizedNew,
+    replaceAll: replaceAll,
+  );
+  final restored = _restoreHashlineFileText(updatedCanonical, envelope);
+  final preview = _buildDiffAttachment(
+    kind: 'edit',
+    path: filePath,
+    before: existingRaw,
+    after: restored,
+  );
+  await ctx.updateToolProgress(
+    title: filePath,
+    displayOutput: 'Preparing edit for $filePath',
+    metadata: {
+      'phase': 'preparing',
+      'path': filePath,
+      'filePath': filePath,
+    },
+    attachments: [preview],
+  );
+  await ctx.askPermission(
+    PermissionRequest(
+      id: newId('perm'),
+      sessionId: ctx.session.id,
+      permission: 'edit',
+      patterns: [filePath],
+      metadata: {
+        'tool': 'edit',
+        'path': filePath,
+        'filePath': filePath,
+        'preview': preview,
+      },
+      always: [filePath],
+      messageId: ctx.message.id,
+      callId: newId('call'),
+    ),
+  );
+  await ctx.bridge.writeText(
+    treeUri: ctx.workspace.treeUri,
+    relativePath: filePath,
+    content: restored,
+  );
+  final updatedEntry = await ctx.bridge.stat(
+    treeUri: ctx.workspace.treeUri,
+    relativePath: filePath,
+  );
+  return ToolExecutionResult(
+    title: filePath,
+    output: 'Edit applied successfully.',
+    displayOutput: 'Updated $filePath',
+    metadata: {
+      'path': filePath,
+      'filepath': filePath,
+      'diagnostics': const <String, dynamic>{},
+      'filediff': {
+        'file': filePath,
+        'before': existingRaw,
+        'after': restored,
+        ..._diffLineChangeCounts(existingRaw, restored),
+      },
+      if (updatedEntry != null)
+        'readLedger': _toolReadLedgerMetadata(
+          path: filePath,
+          lastModified: updatedEntry.lastModified,
+          sourceTool: 'edit',
+        ),
+    },
+    attachments: [preview],
+  );
+}
+
+String _normalizeEditLineEndings(String text) =>
+    text.replaceAll('\r\n', '\n').replaceAll('\r', '\n');
+
+typedef _StringReplacer = Iterable<String> Function(String content, String find);
+
+Iterable<String> _simpleReplacer(String content, String find) sync* {
+  yield find;
+}
+
+Iterable<String> _lineTrimmedReplacer(String content, String find) sync* {
+  final originalLines = content.split('\n');
+  final searchLines = find.split('\n').toList();
+  if (searchLines.isNotEmpty && searchLines.last.isEmpty) {
+    searchLines.removeLast();
+  }
+  for (var i = 0; i <= originalLines.length - searchLines.length; i++) {
+    var matches = true;
+    for (var j = 0; j < searchLines.length; j++) {
+      if (originalLines[i + j].trim() != searchLines[j].trim()) {
+        matches = false;
+        break;
+      }
+    }
+    if (!matches) continue;
+    final block = originalLines.sublist(i, i + searchLines.length).join('\n');
+    yield block;
+  }
+}
+
+int _levenshtein(String a, String b) {
+  if (a.isEmpty || b.isEmpty) return a.length > b.length ? a.length : b.length;
+  final matrix =
+      List.generate(a.length + 1, (i) => List<int>.filled(b.length + 1, 0));
+  for (var i = 0; i <= a.length; i++) {
+    matrix[i][0] = i;
+  }
+  for (var j = 0; j <= b.length; j++) {
+    matrix[0][j] = j;
+  }
+  for (var i = 1; i <= a.length; i++) {
+    for (var j = 1; j <= b.length; j++) {
+      final cost = a[i - 1] == b[j - 1] ? 0 : 1;
+      matrix[i][j] = [
+        matrix[i - 1][j] + 1,
+        matrix[i][j - 1] + 1,
+        matrix[i - 1][j - 1] + cost,
+      ].reduce((a, b) => a < b ? a : b);
+    }
+  }
+  return matrix[a.length][b.length];
+}
+
+Iterable<String> _blockAnchorReplacer(String content, String find) sync* {
+  final originalLines = content.split('\n');
+  final searchLines = find.split('\n').toList();
+  if (searchLines.length < 3) return;
+  if (searchLines.isNotEmpty && searchLines.last.isEmpty) {
+    searchLines.removeLast();
+  }
+  final firstLineSearch = searchLines.first.trim();
+  final lastLineSearch = searchLines.last.trim();
+  final candidates = <Map<String, int>>[];
+  for (var i = 0; i < originalLines.length; i++) {
+    if (originalLines[i].trim() != firstLineSearch) continue;
+    for (var j = i + 2; j < originalLines.length; j++) {
+      if (originalLines[j].trim() == lastLineSearch) {
+        candidates.add({'start': i, 'end': j});
+        break;
+      }
+    }
+  }
+  if (candidates.isEmpty) return;
+  Map<String, int>? bestMatch;
+  var maxSimilarity = -1.0;
+  for (final candidate in candidates) {
+    final startLine = candidate['start']!;
+    final endLine = candidate['end']!;
+    final actualBlockSize = endLine - startLine + 1;
+    final linesToCheck = [
+      searchLines.length - 2,
+      actualBlockSize - 2,
+    ].reduce((a, b) => a < b ? a : b);
+    var similarity = 0.0;
+    if (linesToCheck > 0) {
+      for (var j = 1;
+          j < searchLines.length - 1 && j < actualBlockSize - 1;
+          j++) {
+        final originalLine = originalLines[startLine + j].trim();
+        final searchLine = searchLines[j].trim();
+        final maxLen =
+            originalLine.length > searchLine.length ? originalLine.length : searchLine.length;
+        if (maxLen == 0) continue;
+        final distance = _levenshtein(originalLine, searchLine);
+        similarity += 1 - distance / maxLen;
+      }
+      similarity /= linesToCheck;
+    } else {
+      similarity = 1.0;
+    }
+    if (similarity > maxSimilarity) {
+      maxSimilarity = similarity;
+      bestMatch = candidate;
+    }
+  }
+  if (bestMatch == null) return;
+  final startLine = bestMatch['start']!;
+  final endLine = bestMatch['end']!;
+  yield originalLines.sublist(startLine, endLine + 1).join('\n');
+}
+
+String _normalizeWhitespace(String text) =>
+    text.replaceAll(RegExp(r'\s+'), ' ').trim();
+
+Iterable<String> _whitespaceNormalizedReplacer(String content, String find) sync* {
+  final normalizedFind = _normalizeWhitespace(find);
+  final lines = content.split('\n');
+  for (final line in lines) {
+    if (_normalizeWhitespace(line) == normalizedFind) {
+      yield line;
+    }
+  }
+  final findLines = find.split('\n');
+  if (findLines.length > 1) {
+    for (var i = 0; i <= lines.length - findLines.length; i++) {
+      final block = lines.sublist(i, i + findLines.length).join('\n');
+      if (_normalizeWhitespace(block) == normalizedFind) {
+        yield block;
+      }
+    }
+  }
+}
+
+String _removeIndentation(String text) {
+  final lines = text.split('\n');
+  final nonEmptyLines = lines.where((line) => line.trim().isNotEmpty).toList();
+  if (nonEmptyLines.isEmpty) return text;
+  var minIndent = 1 << 30;
+  for (final line in nonEmptyLines) {
+    final match = RegExp(r'^(\s*)').firstMatch(line);
+    minIndent = [minIndent, match?.group(1)?.length ?? 0]
+        .reduce((a, b) => a < b ? a : b);
+  }
+  return lines
+      .map((line) =>
+          line.trim().isEmpty ? line : line.substring(minIndent.clamp(0, line.length)))
+      .join('\n');
+}
+
+Iterable<String> _indentationFlexibleReplacer(String content, String find) sync* {
+  final normalizedFind = _removeIndentation(find);
+  final contentLines = content.split('\n');
+  final findLines = find.split('\n');
+  for (var i = 0; i <= contentLines.length - findLines.length; i++) {
+    final block = contentLines.sublist(i, i + findLines.length).join('\n');
+    if (_removeIndentation(block) == normalizedFind) {
+      yield block;
+    }
+  }
+}
+
+String _unescapeEditString(String str) {
+  return str.replaceAllMapped(
+    RegExp(r"""\\(n|t|r|'|"|`|\\|\n|\$)"""),
+    (match) {
+      final captured = match.group(1);
+      switch (captured) {
+        case 'n':
+          return '\n';
+        case 't':
+          return '\t';
+        case 'r':
+          return '\r';
+        case '\'':
+          return '\'';
+        case '"':
+          return '"';
+        case '`':
+          return '`';
+        case r'\\':
+          return '\\';
+        case '\n':
+          return '\n';
+        case r'$':
+          return r'$';
+      }
+      return match.group(0) ?? '';
+    },
+  );
+}
+
+Iterable<String> _escapeNormalizedReplacer(String content, String find) sync* {
+  final unescapedFind = _unescapeEditString(find);
+  if (content.contains(unescapedFind)) {
+    yield unescapedFind;
+  }
+  final lines = content.split('\n');
+  final findLines = unescapedFind.split('\n');
+  for (var i = 0; i <= lines.length - findLines.length; i++) {
+    final block = lines.sublist(i, i + findLines.length).join('\n');
+    if (_unescapeEditString(block) == unescapedFind) {
+      yield block;
+    }
+  }
+}
+
+Iterable<String> _trimmedBoundaryReplacer(String content, String find) sync* {
+  final trimmedFind = find.trim();
+  if (trimmedFind == find) return;
+  if (content.contains(trimmedFind)) {
+    yield trimmedFind;
+  }
+  final lines = content.split('\n');
+  final findLines = find.split('\n');
+  for (var i = 0; i <= lines.length - findLines.length; i++) {
+    final block = lines.sublist(i, i + findLines.length).join('\n');
+    if (block.trim() == trimmedFind) {
+      yield block;
+    }
+  }
+}
+
+Iterable<String> _contextAwareReplacer(String content, String find) sync* {
+  final findLines = find.split('\n').toList();
+  if (findLines.length < 3) return;
+  if (findLines.isNotEmpty && findLines.last.isEmpty) {
+    findLines.removeLast();
+  }
+  final contentLines = content.split('\n');
+  final firstLine = findLines.first.trim();
+  final lastLine = findLines.last.trim();
+  for (var i = 0; i < contentLines.length; i++) {
+    if (contentLines[i].trim() != firstLine) continue;
+    for (var j = i + 2; j < contentLines.length; j++) {
+      if (contentLines[j].trim() != lastLine) continue;
+      final blockLines = contentLines.sublist(i, j + 1);
+      if (blockLines.length == findLines.length) {
+        var matchingLines = 0;
+        var totalNonEmptyLines = 0;
+        for (var k = 1; k < blockLines.length - 1; k++) {
+          final blockLine = blockLines[k].trim();
+          final findLine = findLines[k].trim();
+          if (blockLine.isNotEmpty || findLine.isNotEmpty) {
+            totalNonEmptyLines += 1;
+            if (blockLine == findLine) matchingLines += 1;
+          }
+        }
+        if (totalNonEmptyLines == 0 ||
+            matchingLines / totalNonEmptyLines >= 0.5) {
+          yield blockLines.join('\n');
+          break;
+        }
+      }
+      break;
+    }
+  }
+}
+
+Iterable<String> _multiOccurrenceReplacer(String content, String find) sync* {
+  var startIndex = 0;
+  while (true) {
+    final index = content.indexOf(find, startIndex);
+    if (index == -1) break;
+    yield find;
+    startIndex = index + find.length;
+  }
+}
+
+String _replaceEditContent(
+  String content,
+  String oldString,
+  String newString, {
+  bool replaceAll = false,
+}) {
+  var notFound = true;
+  final replacers = <_StringReplacer>[
+    _simpleReplacer,
+    _lineTrimmedReplacer,
+    _blockAnchorReplacer,
+    _whitespaceNormalizedReplacer,
+    _indentationFlexibleReplacer,
+    _escapeNormalizedReplacer,
+    _trimmedBoundaryReplacer,
+    _contextAwareReplacer,
+    _multiOccurrenceReplacer,
+  ];
+  for (final replacer in replacers) {
+    for (final search in replacer(content, oldString)) {
+      final index = content.indexOf(search);
+      if (index == -1) continue;
+      notFound = false;
+      if (replaceAll) {
+        return content.replaceAll(search, newString);
+      }
+      final lastIndex = content.lastIndexOf(search);
+      if (index != lastIndex) continue;
+      return '${content.substring(0, index)}$newString${content.substring(index + search.length)}';
+    }
+  }
+  if (notFound) {
+    throw Exception(
+      'Could not find oldString in the file. It must match exactly, including whitespace, indentation, and line endings.',
+    );
+  }
+  throw Exception(
+    'Found multiple matches for oldString. Provide more surrounding context to make the match unique.',
+  );
 }

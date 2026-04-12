@@ -15,7 +15,6 @@ void main() {
   late Directory supportDir;
 
   final registry = ToolRegistry.builtins();
-  final readTool = registry['read']!;
   final tool = registry['apply_patch']!;
   final bridge = WorkspaceBridge.instance;
 
@@ -222,124 +221,6 @@ EOF""");
     );
 
     expect(await target.readAsString(), '  line1\nchanged\n  line3\n');
-  });
-
-  test('supports hashline-anchored replace hunks', () async {
-    final target = File('${tempDir.path}/hash_patch.txt');
-    await target.writeAsString('alpha\nbeta\n');
-    await seedReadLedger('hash_patch.txt');
-
-    final readResult = await readTool.execute(
-      {'path': 'hash_patch.txt'},
-      ToolRuntimeContext(
-        workspace: workspace,
-        session: session,
-        message: message,
-        agent: 'build',
-        agentDefinition: AgentRegistry.build,
-        bridge: bridge,
-        database: AppDatabase.instance,
-        askPermission: (request) async {
-          permissionRequests.add(request);
-        },
-        askQuestion: (_) async => const [],
-        resolveInstructionReminder: (_) async => '',
-        runSubtask: ({
-          required SessionInfo session,
-          required String description,
-          required String prompt,
-          required String subagentType,
-          String? taskId,
-        }) async {
-          throw UnimplementedError(
-              'runSubtask should not be used in patch tests');
-        },
-        saveTodos: (_) async {},
-        updateToolProgress: (
-            {String? title,
-            String? displayOutput,
-            JsonMap? metadata,
-            List<JsonMap>? attachments}) async {},
-      ),
-    );
-    final anchor =
-        RegExp(r'1#[A-Z]{2}').firstMatch(readResult.output)?.group(0);
-    expect(anchor, isNotNull);
-
-    await executePatch(
-      '*** Begin Patch\n'
-      '*** Update File: hash_patch.txt\n'
-      '@@ replace $anchor\n'
-      '-alpha\n'
-      '+gamma\n'
-      '*** End Patch',
-    );
-
-    expect(await target.readAsString(), 'gamma\nbeta\n');
-  });
-
-  test('rejects stale hashline patch anchors', () async {
-    final target = File('${tempDir.path}/hash_patch_stale.txt');
-    await target.writeAsString('alpha\nbeta\n');
-    await seedReadLedger('hash_patch_stale.txt');
-
-    final readResult = await readTool.execute(
-      {'path': 'hash_patch_stale.txt'},
-      ToolRuntimeContext(
-        workspace: workspace,
-        session: session,
-        message: message,
-        agent: 'build',
-        agentDefinition: AgentRegistry.build,
-        bridge: bridge,
-        database: AppDatabase.instance,
-        askPermission: (request) async {
-          permissionRequests.add(request);
-        },
-        askQuestion: (_) async => const [],
-        resolveInstructionReminder: (_) async => '',
-        runSubtask: ({
-          required SessionInfo session,
-          required String description,
-          required String prompt,
-          required String subagentType,
-          String? taskId,
-        }) async {
-          throw UnimplementedError(
-              'runSubtask should not be used in patch tests');
-        },
-        saveTodos: (_) async {},
-        updateToolProgress: (
-            {String? title,
-            String? displayOutput,
-            JsonMap? metadata,
-            List<JsonMap>? attachments}) async {},
-      ),
-    );
-    final anchor =
-        RegExp(r'1#[A-Z]{2}').firstMatch(readResult.output)?.group(0);
-    expect(anchor, isNotNull);
-
-    await target.writeAsString('changed\nbeta\n');
-    await seedReadLedger('hash_patch_stale.txt');
-
-    await expectLater(
-      executePatch(
-        '*** Begin Patch\n'
-        '*** Update File: hash_patch_stale.txt\n'
-        '@@ replace $anchor\n'
-        '-alpha\n'
-        '+gamma\n'
-        '*** End Patch',
-      ),
-      throwsA(
-        predicate(
-          (error) =>
-              error.toString().contains('changed since last read') &&
-              error.toString().contains('>>> 1#'),
-        ),
-      ),
-    );
   });
 
   test('verifies all sections before writing files', () async {

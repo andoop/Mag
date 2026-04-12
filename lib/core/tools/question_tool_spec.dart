@@ -4,17 +4,17 @@ import '../models.dart';
 const String kToolCallingRulesPrompt = '''
 <tool-calling-rules>
 1. Tool arguments MUST be valid JSON. Required string fields must be real strings, never null. Do not omit required keys.
-2. CRITICAL — read before edit: You MUST call `read` on a file before using `edit` or `apply_patch` on it. The `read` result must arrive first, so do NOT emit `read` and `edit`/`apply_patch` for the same file in one assistant response. Your edit anchors MUST come from the most recent `read` output that actually covers the line(s) you are changing. If the needed line is outside the last `read` window, call `read` again for the correct range before editing. If the tool returns an error, `read` the file again before retrying. Never guess file contents.
+2. CRITICAL — read before edit: You MUST call `read` on a file before using `edit` or `apply_patch` on it. If the tool returns an error, `read` the file again before retrying. Never guess file contents.
 3. CRITICAL — write is for NEW files only: The `write` tool creates new files. If a file already exists, you MUST use `edit` or `apply_patch` instead. Never use `write` to update existing files.
-4. CRITICAL — re-read after each edit: If you just modified a file and need to modify it again, call `read` first in a later assistant response. Do not emit multiple same-file mutation calls in one response, and do not reuse stale content from a previous read or edit.
+4. CRITICAL — re-read after each edit: If you just modified a file and need to modify it again, call `read` first. Do not reuse stale content from a previous read or edit.
 5. When a tool returns an error, you MUST:
    a. Read the error message carefully — it contains the exact reason and recovery steps.
    b. Follow the recovery steps described in the error. Do NOT repeat the same call with the same arguments.
    c. If the error says to `read` first, then call `read` before retrying.
    d. If the error says the file already exists, switch to `edit` or `apply_patch`.
-6. Never fabricate file contents or line anchors. Always copy them from actual `read` output.
-7. When using `edit` with hash-anchored LINE#ID references, copy exact anchors from the most recent relevant `read` output. Do not guess, fabricate, or reuse anchors from an older read window that did not cover the target lines.
-8. CRITICAL — multiline replace requires a range: `replace` with `pos` only replaces exactly one existing line. If you need to replace 2 or more existing lines, you MUST provide both `pos` and `end` for that full range. Otherwise the trailing old lines survive and often get duplicated.
+6. Never fabricate file contents. Always copy exact text from actual `read` output, but do NOT include the `lineNumber: ` prefix in `oldString` or `newString`.
+7. If `edit` says `oldString` was not found, call `read` again and copy a larger exact block from the file, including surrounding context, to make the match unique.
+8. If `edit` says there were multiple matches, either include more surrounding context in `oldString` or set `replaceAll` to true when you intentionally want every occurrence changed.
 </tool-calling-rules>
 ''';
 

@@ -378,7 +378,7 @@ extension SessionEngineTools on SessionEngine {
   }
 
   bool _usesStrictFilePath(String toolName) =>
-      toolName == 'edit' || toolName == 'write';
+      toolName == 'read' || toolName == 'edit' || toolName == 'write';
 
   String? _validateToolArguments({
     required ToolDefinition tool,
@@ -705,13 +705,13 @@ extension SessionEngineTools on SessionEngine {
     if (toolName == 'write' && lower.contains('already exists')) {
       return 'STOP using `write` for this file. The file already exists.\n'
           'Step 1: Call `read` on the file to get its current contents.\n'
-          'Step 2: Use `edit` (with oldString/newString or LINE#ID edits) to make changes.\n'
+          'Step 2: Use `edit` with `oldString` / `newString` to make changes.\n'
           'Do NOT call `write` again on this file.';
     }
     if ((toolName == 'edit' || toolName == 'apply_patch') &&
         lower.contains('must read')) {
       return 'You have not read this file yet.\n'
-          'Step 1: Call `read` on the file path mentioned in the error.\n'
+          'Step 1: Call `read` again using the correct `filePath`.\n'
           'Step 2: Then retry your `$toolName` call using the fresh content from `read`.\n'
           'Do NOT retry `$toolName` without reading first.';
     }
@@ -719,8 +719,8 @@ extension SessionEngineTools on SessionEngine {
         lower.contains('modified since')) {
       return 'The file has changed since you last read it (possibly by another edit).\n'
           'Step 1: Call `read` on the file to get the latest contents.\n'
-          'Step 2: Rebuild your edit using the new content and line anchors.\n'
-          'Do NOT reuse old content or anchors.';
+          'Step 2: Rebuild your edit using the new content.\n'
+          'Do NOT reuse old content.';
     }
     if (toolName == 'edit' && lower.contains('oldstring not found')) {
       return 'The oldString you provided does not match any text in the file.\n'
@@ -729,29 +729,32 @@ extension SessionEngineTools on SessionEngine {
           'Do NOT guess or slightly modify the text. It must match exactly.';
     }
     if (toolName == 'edit' &&
-        lower.contains(
-            'no longer accepts `oldstring` / `newstring` / `replaceall`')) {
-      return 'The legacy string-based edit format is disabled.\n'
+        lower.contains('only accepts `filepath`, `oldstring`, `newstring`')) {
+      return 'The edit tool only accepts `filePath`, `oldString`, `newString`, and optional `replaceAll`.\n'
           'Step 1: Call `read` on the file.\n'
-          'Step 2: Copy the exact LINE#ID anchors from the `read` output.\n'
-          'Step 3: Retry `edit` with `edits` operations only.';
+          'Step 2: Copy the exact text you want to replace from `read` output, without the `lineNumber: ` prefix.\n'
+          'Step 3: Retry `edit` with `oldString` / `newString`.';
     }
-    if ((toolName == 'edit' || toolName == 'apply_patch') &&
+    if (toolName == 'apply_patch' &&
         lower.contains('changed since last read')) {
-      return 'Your LINE#ID anchors are stale — the file content has changed.\n'
-          'Step 1: Copy the updated LINE#ID anchors shown in the `>>>` error output directly.\n'
-          'Step 2: If the target line you want to edit is not covered by those updated anchors, call `read` for the correct range first.\n'
-          'Step 3: Retry your `$toolName` call using anchors from the newest output that actually covers the target lines.\n'
-          'Do not reuse anchors from an older `read` window.';
+      return 'The file content changed since your last `read`.\n'
+          'Step 1: Call `read` again on the file.\n'
+          'Step 2: Regenerate the patch from the latest contents with enough surrounding context.\n'
+          'Do NOT reuse patch text built from older file contents.';
     }
     if (toolName == 'edit' &&
-        lower.contains('no changes made to') &&
-        lower.contains('no-op edits')) {
-      return 'Your `edit` call was a no-op — the replacement content is identical to the current file.\n'
+        lower.contains('no changes to apply') &&
+        lower.contains('identical')) {
+      return 'Your `edit` call was a no-op — `oldString` and `newString` are identical.\n'
           'Step 1: Do NOT repeat the same `edit` call.\n'
           'Step 2: If the file already matches your intent, stop editing this section.\n'
-          'Step 3: If you intended a different change, call `read` and submit only lines that actually differ.\n'
-          'For the same file, prefer one batched `edit` call instead of several sequential calls.';
+          'Step 3: If you intended a different change, call `read` and submit only the exact differing text.';
+    }
+    if (toolName == 'edit' && lower.contains('multiple matches for oldstring')) {
+      return 'The oldString you provided matched multiple places in the file.\n'
+          'Step 1: Call `read` and copy a larger surrounding block so the match is unique.\n'
+          'Step 2: If you intentionally want to change every occurrence, retry with `replaceAll: true`.\n'
+          'Do NOT repeat the same ambiguous `oldString`.';
     }
     if (lower.contains('missing required')) {
       return 'You omitted required parameters. Re-read the error message carefully, '

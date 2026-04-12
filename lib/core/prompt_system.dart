@@ -212,17 +212,16 @@ class PromptAssembler {
               '同一文件的一组相关修改应尽量合并到一次 `edit` / `apply_patch` 调用里。',
               '如果你刚刚修改过某个文件，又要再次修改同一文件，先重新 `read` 一次最新内容。',
               '再次修改必须发生在后续响应里，不要在同一个助手响应中连续发多个同文件编辑调用。',
-              '不要复用上一次读取或修改前的旧片段、旧锚点。',
-              '如果你要修改的那一行不在最近一次 `read` 返回的窗口里，先重新 `read` 覆盖该行的正确范围，再生成 `edit` / `apply_patch`。',
+              '不要复用上一次读取或修改前的旧片段。',
               '',
               '## 规则 4：工具报错时必须认真处理',
               '当工具返回错误时，你必须：仔细阅读错误信息，按照错误信息中的恢复步骤操作。',
               '绝不能用相同参数重复调用失败的工具。',
               '',
               '## 编辑方式',
-              '`edit` 使用 `edits` 数组和基于内容哈希的 `LINE#ID` 锚点；请直接复用 `read` 输出中的精确锚点，不要猜测，也不要带上后面的 `|内容`。',
-              '`replace` 只有 `pos` 时只会替换那 1 行；如果要替换 2 行或更多已有内容，必须同时提供 `pos` 和 `end` 覆盖完整旧范围，否则后面的旧行会保留并容易出现重复。',
-              '`apply_patch` 也支持 hashline 头部，例如 `@@ replace 12#VK`、`@@ replace 12#VK 15#MB`。',
+              '`edit` 使用 `filePath`、`oldString`、`newString` 和可选的 `replaceAll`。',
+              '从 `read` 输出复制文本时，不要把前面的 `行号: ` 前缀带进 `oldString` / `newString`。',
+              '如果 `oldString` 匹配不唯一，就扩大上下文；如果你本来就想改所有匹配，设置 `replaceAll: true`。',
               '修改已有文件时优先使用 `edit` 或 `apply_patch`。',
             ]
           : [
@@ -231,7 +230,7 @@ class PromptAssembler {
               '',
               '## Rule 1: Read before edit (absolute requirement)',
               'Before any `edit` or `apply_patch` on an existing file, you MUST call `read` on that file and use the fresh contents.',
-              'The `read` result must arrive before you generate the later `edit` / `apply_patch` call for that file. Do not emit both for the same file in one assistant response.',
+              'You must `read` the file before editing it, and rebuild the edit from the current contents when needed.',
               'If the tool returns an error saying "must read first", you MUST call `read` then retry — do NOT repeat the same failing call.',
               '',
               '## Rule 2: Existing files require a fresh `read` before `write`',
@@ -241,18 +240,17 @@ class PromptAssembler {
               '## Rule 3: Re-read after each edit',
               'Put all related changes for the same file into one `edit` or `apply_patch` call whenever possible.',
               'If you just changed a file and need to modify that same file again, call `read` first.',
-              'The next modification must happen in a later assistant response, not as another same-file mutation in the current response.',
-              'Do not reuse stale content or anchors from before the previous edit.',
-              'If the line you want to change is not inside your most recent `read` window, call `read` again for a range that includes that line before generating `edit` / `apply_patch`.',
+              'If you need another modification on the same file, `read` it again first.',
+              'Do not reuse stale content from before the previous edit.',
               '',
               '## Rule 4: Handle tool errors carefully',
               'When a tool returns an error, you MUST: read the error message, follow the recovery steps it describes.',
               'NEVER repeat the exact same tool call with the same arguments — that will produce the same error.',
               '',
               '## Edit mechanics',
-              '`edit` uses hash-anchored `LINE#ID` references via the `edits` array. Reuse exact anchors from `read` output; do not guess them.',
-              '`replace` with `pos` only replaces exactly one existing line. If you need to replace 2 or more existing lines, you MUST provide both `pos` and `end` for the full old range; otherwise trailing old lines survive and often get duplicated.',
-              '`apply_patch` also supports hashline headers such as `@@ replace 12#VK`, `@@ replace 12#VK 15#MB`.',
+              '`edit` uses `filePath`, `oldString`, `newString`, and optional `replaceAll`.',
+              'When copying from `read`, do not include the `lineNumber: ` prefix inside `oldString` or `newString`.',
+              'If `oldString` is not unique, include more surrounding context. If you intentionally want every occurrence, set `replaceAll: true`.',
               'For one file, prefer one batched edit call over multiple sequential edit calls.',
               'Prefer `edit` or `apply_patch` for modifying existing files.',
               'For workspace file operations: `delete` removes files/dirs; `rename` changes name in same folder; `move` for cross-folder; `copy` duplicates.',
@@ -402,7 +400,7 @@ class PromptAssembler {
         '## 编辑（串行，必须先 Read）',
       ]);
       if (hasEdit) {
-        lines.add('- `edit`：修改已有文件前必须先 `read`，拿到最新 `LINE#ID` 锚点后再编辑。');
+        lines.add('- `edit`：修改已有文件前必须先 `read`，然后用 `oldString` / `newString` 基于精确文本做替换。');
       }
       if (hasApplyPatch) {
         lines.add(
@@ -432,10 +430,8 @@ class PromptAssembler {
       lines.add('');
       lines.add('## 严禁');
       lines.add('- 不要在没有 `read` 的情况下直接对已有文件调用 `edit` 或 `apply_patch`。');
-      lines.add('- 不要在同一个助手响应里对同一文件同时发出 `read` 和 `edit` / `apply_patch`。');
-      lines.add('- 不要把同一文件拆成多次连续 `edit` / `apply_patch`，除非中间已经重新 `read`。');
-      lines.add('- 不要在同一文件第二次修改时继续复用上一次的旧锚点。');
-      lines.add('- 不要用最近一次 `read` 没有覆盖到的旧锚点去修改别的行；目标行不在窗口里就先重读正确范围。');
+      lines.add('- 不要在没有最新内容的情况下猜测要替换的文本。');
+      lines.add('- 不要在 `oldString` / `newString` 里包含 `read` 输出前面的行号前缀。');
       return lines.join('\n');
     }
 
@@ -447,7 +443,7 @@ class PromptAssembler {
     ]);
     if (hasEdit) {
       lines.add(
-          '- `edit`: modifying existing files. MUST `read` the file first to get fresh `LINE#ID` anchors.');
+        '- `edit`: modifying existing files. MUST `read` the file first, then replace exact text using `oldString` / `newString`.');
     }
     if (hasApplyPatch) {
       lines.add(
@@ -484,13 +480,9 @@ class PromptAssembler {
     lines.add(
         '- Do not call `edit` or `apply_patch` on an existing file before `read`.');
     lines.add(
-        '- Do not emit `read` and `edit` / `apply_patch` for the same file in the same assistant response.');
+        '- Do not guess replacement text without first reading the current file contents.');
     lines.add(
-        '- Do not split one file into multiple consecutive `edit` / `apply_patch` calls unless you re-read in between.');
-    lines.add(
-        '- Do not reuse anchors from before the previous successful edit on the same file.');
-    lines.add(
-        '- Do not edit with anchors from an older read window when your latest read did not cover the target line; re-read the correct range first.');
+        '- Do not include the `lineNumber: ` prefix from `read` output inside `oldString` or `newString`.');
     return lines.join('\n');
   }
 

@@ -153,15 +153,10 @@ class ToolRegistry {
         parameters: {
           'type': 'object',
           'properties': {
-            'path': {
-              'type': 'string',
-              'description':
-                  'Workspace-relative path to the file or directory. Required.',
-            },
             'filePath': {
               'type': 'string',
               'description':
-                  'Preferred path argument for compatibility with opencode. Required.',
+                  'REQUIRED. Workspace-relative path to the file or directory.',
             },
             'offset': {
               'type': 'integer',
@@ -172,14 +167,7 @@ class ToolRegistry {
               'description': 'Maximum number of lines to read',
             },
           },
-          'anyOf': [
-            {
-              'required': ['path'],
-            },
-            {
-              'required': ['filePath'],
-            },
-          ],
+          'required': ['filePath'],
           'additionalProperties': false,
         },
         execute: _readTool,
@@ -220,38 +208,24 @@ class ToolRegistry {
             'filePath': {
               'type': 'string',
               'description':
-                  'REQUIRED. Workspace-relative path to the file being edited. Use `filePath` on every call; do not send `path`.',
+                  'REQUIRED. Workspace-relative path to the file being edited.',
             },
-            'delete': {'type': 'boolean'},
-            'rename': {'type': 'string'},
-            'edits': {
-              'type': 'array',
-              'items': {
-                'type': 'object',
-                'properties': {
-                  'op': {
-                    'type': 'string',
-                    'enum': ['replace', 'append', 'prepend'],
-                  },
-                  'pos': {'type': 'string'},
-                  'end': {'type': 'string'},
-                  'lines': {
-                    'anyOf': [
-                      {'type': 'string'},
-                      {
-                        'type': 'array',
-                        'items': {'type': 'string'},
-                      },
-                      {'type': 'null'},
-                    ],
-                  },
-                },
-                'required': ['op', 'lines'],
-                'additionalProperties': false,
-              },
+            'oldString': {
+              'type': 'string',
+              'description': 'The exact text to replace.',
+            },
+            'newString': {
+              'type': 'string',
+              'description':
+                  'The replacement text. Must be different from `oldString`.',
+            },
+            'replaceAll': {
+              'type': 'boolean',
+              'description':
+                  'Optional. Replace all matches of `oldString` instead of requiring a unique match.',
             },
           },
-          'required': ['filePath'],
+          'required': ['filePath', 'oldString', 'newString'],
           'additionalProperties': false,
         },
         execute: _editTool,
@@ -261,7 +235,7 @@ class ToolRegistry {
       ToolDefinition(
         id: 'apply_patch',
         description:
-            '${kApplyPatchToolDescription.trim()}$kMobileApplyPatchHashlineSuffix$kMobileWorkspacePathSuffix',
+            '${kApplyPatchToolDescription.trim()}$kMobileWorkspacePathSuffix',
         parameters: {
           'type': 'object',
           'properties': {

@@ -49,14 +49,14 @@
 
 ### 1. `read`
 
-**作用**：读取工作区内文本文件（带 `LINE#ID` 哈希锚点），或列出目录条目；必须显式提供具体路径。
+**作用**：读取工作区内文本文件或列出目录条目；必须显式提供具体路径。
 
 **参数**：
 
 
 | 参数       | 类型      | 说明                              |
 | -------- | ------- | ------------------------------- |
-| `path`   | string  | 必填，相对工作区根的具体文件/目录路径 |
+| `filePath` | string  | 必填，相对工作区根的具体文件/目录路径 |
 | `offset` | integer | 可选，从第几行（文件）或第几条（目录）开始，默认 `1`    |
 | `limit`  | integer | 可选，最多行数/条目数，默认 `2000`，上限 `5000` |
 
@@ -64,8 +64,8 @@
 **行为要点**：
 
 - 单行最长约 2000 字符，超出会截断并标注。
-- 未截断的文本行会以 `LINE#ID|内容` 形式返回，例如 `12#VK|final answer = 42;`。
-- 截断行仍保留普通行号展示，此类行不要直接拿去做 hashline 锚点编辑。
+- 文本行会以 `行号: 内容` 形式返回，例如 `12: final answer = 42;`。
+- 用 `edit` 时，复制的是行号后面的实际文本，不要把前面的 `12: ` 前缀带进 `oldString` / `newString`。
 - 总输出约 **50KB** 上限；超出需用更大 `offset` 续读。
 - 图片 / PDF：返回附件元数据，非全文文本。
 - 判定为二进制且非上述类型：抛错。
@@ -73,15 +73,11 @@
 **示例**：
 
 ```json
-{ "path": "lib/main.dart", "offset": 1, "limit": 100 }
+{ "filePath": "lib/main.dart", "offset": 1, "limit": 100 }
 ```
 
 ```json
-{ "path": "lib" }
-```
-
-```json
-{}
+{ "filePath": "lib" }
 ```
 
 ---
@@ -95,34 +91,34 @@
 
 | 参数        | 类型     | 说明                |
 | --------- | ------ | ----------------- |
-| `path`    | string | **必填**，相对路径       |
+| `filePath`    | string | **必填**，相对路径       |
 | `content` | string | **必填**，要写入文件的完整内容 |
 
 
 **行为要点**：
 
-- `write` 只用于创建新文件。
-- 若目标文件已存在，`write` 会直接拒绝，要求改用 `edit` 或 `apply_patch`。
-- `write` 必须同时传 `path`/`filePath` 和完整 `content`。
+- `write` 用于新建或整文件覆写。
+- 若目标文件已存在，必须先 `read`，否则会被拒绝。
+- `write` 必须同时传 `filePath` 和完整 `content`。
 - 成功写入后，会把该文件的最新时间戳回写到会话 ledger，供后续 `edit` / `apply_patch` 继续使用。
 
 **示例（短内容）**：
 
 ```json
-{ "path": "docs/note.md", "content": "# Hello" }
+{ "filePath": "docs/note.md", "content": "# Hello" }
 ```
 
 **示例（完整内容）**：
 
 ```json
-{ "path": "lib/main.dart", "content": "void main() {}\n" }
+{ "filePath": "lib/main.dart", "content": "void main() {}\n" }
 ```
 
 ---
 
 ### 3. `edit`
 
-**作用**：优先使用基于内容哈希的 `LINE#ID` 锚点编辑文件；兼容旧的 `oldString` / `newString` 文本替换。需 `**edit` 权限**。
+**作用**：基于精确文本做字符串替换编辑。需 `**edit` 权限**。
 
 **参数**：
 
@@ -130,23 +126,19 @@
 | 参数         | 类型      | 说明                             |
 | ---------- | ------- | ------------------------------ |
 | `filePath` | string  | 目标文件，相对路径；**必须使用 `filePath`** |
-| `edits`             | array   | hashline 编辑操作数组，推荐用法 |
-| `delete`            | boolean | 可选，删除文件              |
-| `rename`            | string  | 可选，编辑后另存/移动到新路径      |
-| `oldString`         | string  | 兼容旧接口时使用             |
-| `newString`         | string  | 兼容旧接口时使用             |
-| `replaceAll`        | boolean | 兼容旧接口时使用             |
+| `oldString`         | string  | 要替换的原始文本             |
+| `newString`         | string  | 替换后的文本             |
+| `replaceAll`        | boolean | 可选，是否替换全部匹配             |
 
 
 **行为要点**：
 
-- 必须先 `read` 目标文件，并直接复用返回的 `LINE#ID` 锚点。
+- 必须先 `read` 目标文件。
 - 每次调用都必须传 `filePath`；`edit` 不再接受 `path` 别名。
-- `edits` 中每项只支持 `replace` / `append` / `prepend` 三种操作。
-- `replace` 只有 `pos` 时，只会替换 1 行已有内容；如果要替换 2 行或更多已有内容，必须同时提供 `pos` 和 `end`。
-- `replace` 的 `lines: null` 等价于删除目标行或目标区间。
-- 如果文件在读取后发生变化，锚点校验会失败，并返回带 `>>>` 标记的最新可用锚点片段。
-- 若刚成功改过同一文件、还要继续改，建议先重新 `read` 最新内容，再生成新的锚点。
+- 从 `read` 输出复制文本时，不要把前面的 `行号: ` 前缀带进 `oldString` / `newString`。
+- 如果 `oldString` 在文件中找不到，通常是空白、缩进或上下文不够精确；先重新 `read`，然后复制更大的精确片段。
+- 如果 `oldString` 匹配了多处，扩大上下文让它唯一；如果你本来就要全部替换，设置 `replaceAll: true`。
+- 如果文件在读取后发生变化，必须重新 `read` 后再重建这次编辑。
 - 成功写回后也会刷新会话内的 read ledger。
 
 **示例**：
@@ -154,27 +146,17 @@
 ```json
 {
   "filePath": "lib/foo.dart",
-  "edits": [
-    {
-      "op": "replace",
-      "pos": "12#VK",
-      "lines": ["final value = 42;"]
-    }
-  ]
+  "oldString": "const answer = 41;",
+  "newString": "const answer = 42;"
 }
 ```
 
 ```json
 {
   "filePath": "lib/foo.dart",
-  "edits": [
-    {
-      "op": "replace",
-      "pos": "12#VK",
-      "end": "14#MB",
-      "lines": ["if (ready) {", "  return true;", "}"]
-    }
-  ]
+  "oldString": "tempValue",
+  "newString": "finalValue",
+  "replaceAll": true
 }
 ```
 
@@ -203,8 +185,6 @@
 **使用建议**：
 
 - 修改已有文件前，先用 `read` 读取最新内容，再生成 patch。
-- `apply_patch` 也支持 hashline 头部：`@@ replace 12#VK`、`@@ replace 12#VK 15#MB`、`@@ append 20#QR`、`@@ prepend 20#QR`。
-- 使用 hashline 头部时，锚点必须直接复制自 `read` 输出，只保留 `LINE#ID`，不要带 `|内容`。
 - 若自上次 `read` 后文件发生变化，`apply_patch` 会拒绝执行并要求重新读取。
 - 若刚对同一文件执行过 `edit` / `apply_patch`，再次修改前最好先重新 `read`，不要复用旧上下文。
 - `@@` 后可带一个简短上下文锚点（如函数名 / 类名 / 附近唯一行）帮助定位重复代码块。
@@ -220,17 +200,6 @@
 - old line
 + new line
 ```
-
-**Hashline 示例**：
-
-```text
-*** Update File: lib/a.dart
-@@ replace 12#VK
-- old line
-+ new line
-```
-
----
 
 ### 5. `list`
 

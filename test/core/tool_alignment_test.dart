@@ -254,7 +254,7 @@ void main() {
                   'You must `read` the file "note.txt" before using `write`') &&
               error
                   .toString()
-                  .contains('call `read` with path "note.txt" first'),
+                  .contains('call `read` with `filePath` "note.txt" first'),
         ),
       ),
     );
@@ -267,7 +267,7 @@ void main() {
 
     final readResult = await readTool.execute(
       {
-        'path': 'note_overwrite.txt',
+        'filePath': 'note_overwrite.txt',
       },
       makeContext(),
     );
@@ -301,7 +301,7 @@ void main() {
 
     final readResult = await readTool.execute(
       {
-        'path': 'note_stale.txt',
+        'filePath': 'note_stale.txt',
       },
       makeContext(),
     );
@@ -429,19 +429,19 @@ void main() {
         inferMaxOutputTokens('qwen3-plus'));
   });
 
-  test('read returns hashline-tagged text lines', () async {
-    final target = File('${tempDir.path}/hashline_read.txt');
+  test('read returns numbered text lines', () async {
+    final target = File('${tempDir.path}/numbered_read.txt');
     await target.writeAsString('alpha\nbeta\n');
 
     final result = await readTool.execute(
       {
-        'path': 'hashline_read.txt',
+        'filePath': 'numbered_read.txt',
       },
       makeContext(),
     );
 
-    expect(result.output, contains(RegExp(r'1#[A-Z]{2}\|alpha')));
-    expect(result.output, contains(RegExp(r'2#[A-Z]{2}\|beta')));
+    expect(result.output, contains('1: alpha'));
+    expect(result.output, contains('2: beta'));
   });
 
   test('read requires an explicit path argument', () async {
@@ -463,7 +463,7 @@ void main() {
     await expectLater(
       readTool.execute(
         {
-          'path': '.',
+          'filePath': '.',
         },
         makeContext(),
       ),
@@ -491,7 +491,7 @@ void main() {
     expect(result.displayOutput, 'Wrote empty.txt');
   });
 
-  test('edit failure tells the model to re-read after prior edits', () async {
+  test('edit rejects hashline-style arguments', () async {
     final target = File('${tempDir.path}/edit_hint.txt');
     await target.writeAsString('alpha\nbeta\n');
     final initial = await bridge.stat(
@@ -514,13 +514,15 @@ void main() {
       throwsA(
         predicate(
           (error) =>
-              error.toString().contains('edits must be a non-empty array'),
+              error
+                  .toString()
+                  .contains('only accepts `filePath`, `oldString`, `newString`'),
         ),
       ),
     );
   });
 
-  test('legacy edit arguments are rejected', () async {
+  test('edit updates file content using oldString and newString', () async {
     final target = File('${tempDir.path}/edit_exact.txt');
     await target.writeAsString('  alpha\n  beta\n');
     final initial = await bridge.stat(
@@ -532,113 +534,46 @@ void main() {
       lastModified: initial!.lastModified,
     );
 
-    await expectLater(
-      editTool.execute(
-        {
-          'filePath': 'edit_exact.txt',
-          'oldString': 'alpha\nbeta',
-          'newString': 'gamma',
-        },
-        makeContext(),
-      ),
-      throwsA(
-        predicate(
-          (error) => error.toString().contains(
-              'no longer accepts `oldString` / `newString` / `replaceAll`'),
-        ),
-      ),
-    );
-  });
-
-  test('hashline edit updates file content using read anchors', () async {
-    final target = File('${tempDir.path}/hashline_edit.txt');
-    await target.writeAsString('alpha\nbeta\n');
-
-    final readResult = await readTool.execute(
-      {
-        'path': 'hashline_edit.txt',
-      },
-      makeContext(),
-    );
-    final anchor =
-        RegExp(r'1#[A-Z]{2}').firstMatch(readResult.output)?.group(0);
-    expect(anchor, isNotNull);
-    final entry = await bridge.stat(
-      treeUri: workspace.treeUri,
-      relativePath: 'hashline_edit.txt',
-    );
-    await seedReadLedger(
-      filePath: 'hashline_edit.txt',
-      lastModified: entry!.lastModified,
-      startLine: 1,
-      endLine: 2,
-    );
-
     final result = await editTool.execute(
       {
-        'filePath': 'hashline_edit.txt',
-        'edits': [
-          {
-            'op': 'replace',
-            'pos': anchor,
-            'lines': ['gamma'],
-          }
-        ],
+        'filePath': 'edit_exact.txt',
+        'oldString': '  alpha\n  beta',
+        'newString': '  gamma',
       },
       makeContext(),
     );
 
-    expect(await target.readAsString(), 'gamma\nbeta\n');
-    expect(result.displayOutput, 'Updated hashline_edit.txt');
+    expect(await target.readAsString(), '  gamma\n');
+    expect(result.displayOutput, 'Updated edit_exact.txt');
     expect(permissionRequests, hasLength(1));
   });
 
-  test('hashline edit reports noop edits when replacement is identical',
-      () async {
-    final target = File('${tempDir.path}/hashline_noop.txt');
+  test('edit reports identical old and new strings as a no-op', () async {
+    final target = File('${tempDir.path}/edit_noop.txt');
     await target.writeAsString('alpha\nbeta\n');
-
-    final readResult = await readTool.execute(
-      {
-        'path': 'hashline_noop.txt',
-      },
-      makeContext(),
-    );
-    final anchor =
-        RegExp(r'1#[A-Z]{2}').firstMatch(readResult.output)?.group(0);
-    expect(anchor, isNotNull);
     final entry = await bridge.stat(
       treeUri: workspace.treeUri,
-      relativePath: 'hashline_noop.txt',
+      relativePath: 'edit_noop.txt',
     );
     await seedReadLedger(
-      filePath: 'hashline_noop.txt',
+      filePath: 'edit_noop.txt',
       lastModified: entry!.lastModified,
-      startLine: 1,
-      endLine: 2,
     );
 
     await expectLater(
       editTool.execute(
         {
-          'filePath': 'hashline_noop.txt',
-          'edits': [
-            {
-              'op': 'replace',
-              'pos': anchor,
-              'lines': ['alpha'],
-            }
-          ],
+          'filePath': 'edit_noop.txt',
+          'oldString': 'alpha',
+          'newString': 'alpha',
         },
         makeContext(),
       ),
       throwsA(
         predicate(
           (error) =>
-              error
-                  .toString()
-                  .contains('No changes made to hashline_noop.txt') &&
-              error.toString().contains('No-op edits: 1'),
+              error.toString().contains(
+                  'No changes to apply: oldString and newString are identical.'),
         ),
       ),
     );
@@ -646,28 +581,16 @@ void main() {
     expect(permissionRequests, isEmpty);
   });
 
-  test('hashline edit rejects stale anchors with updated references', () async {
-    final target = File('${tempDir.path}/hashline_stale.txt');
+  test('edit rejects stale reads when the file changed afterwards', () async {
+    final target = File('${tempDir.path}/edit_stale.txt');
     await target.writeAsString('alpha\nbeta\n');
-
-    final readResult = await readTool.execute(
-      {
-        'path': 'hashline_stale.txt',
-      },
-      makeContext(),
-    );
-    final anchor =
-        RegExp(r'1#[A-Z]{2}').firstMatch(readResult.output)?.group(0);
-    expect(anchor, isNotNull);
     final entry = await bridge.stat(
       treeUri: workspace.treeUri,
-      relativePath: 'hashline_stale.txt',
+      relativePath: 'edit_stale.txt',
     );
     await seedReadLedger(
-      filePath: 'hashline_stale.txt',
+      filePath: 'edit_stale.txt',
       lastModified: entry!.lastModified,
-      startLine: 1,
-      endLine: 2,
     );
 
     await target.writeAsString('changed\nbeta\n');
@@ -675,88 +598,79 @@ void main() {
     await expectLater(
       editTool.execute(
         {
-          'filePath': 'hashline_stale.txt',
-          'edits': [
-            {
-              'op': 'replace',
-              'pos': anchor,
-              'lines': ['gamma'],
-            }
-          ],
+          'filePath': 'edit_stale.txt',
+          'oldString': 'alpha',
+          'newString': 'gamma',
         },
         makeContext(),
       ),
       throwsA(
         predicate(
           (error) =>
-              error.toString().contains('changed since last read') &&
-              error.toString().contains('>>> 1#'),
+              error.toString().contains('modified since your last `read`'),
         ),
       ),
     );
     expect(permissionRequests, isEmpty);
   });
 
-  test('edit blocks anchors outside the most recent read window', () async {
-    final target = File('${tempDir.path}/hashline_window_guard.txt');
-    await target.writeAsString('alpha\nbeta\ngamma\ndelta\n');
-
-    final readResult = await readTool.execute(
-      {
-        'path': 'hashline_window_guard.txt',
-      },
-      makeContext(),
-    );
-    final firstAnchor =
-        RegExp(r'1#[A-Z]{2}').firstMatch(readResult.output)?.group(0);
-    expect(firstAnchor, isNotNull);
-
+  test('edit reports oldString not found when text does not match', () async {
+    final target = File('${tempDir.path}/edit_not_found.txt');
+    await target.writeAsString('alpha\nbeta\n');
     final entry = await bridge.stat(
       treeUri: workspace.treeUri,
-      relativePath: 'hashline_window_guard.txt',
+      relativePath: 'edit_not_found.txt',
     );
-    expect(entry, isNotNull);
-    final now = DateTime.now().millisecondsSinceEpoch;
     await seedReadLedger(
-      filePath: 'hashline_window_guard.txt',
+      filePath: 'edit_not_found.txt',
       lastModified: entry!.lastModified,
-      startLine: 1,
-      endLine: 4,
-      createdAt: now,
-    );
-    await seedReadLedger(
-      filePath: 'hashline_window_guard.txt',
-      lastModified: entry.lastModified,
-      startLine: 3,
-      endLine: 4,
-      createdAt: now + 1,
     );
 
     await expectLater(
       editTool.execute(
         {
-          'filePath': 'hashline_window_guard.txt',
-          'edits': [
-            {
-              'op': 'replace',
-              'pos': firstAnchor,
-              'lines': ['ALPHA'],
-            }
-          ],
+          'filePath': 'edit_not_found.txt',
+          'oldString': 'missing',
+          'newString': 'gamma',
         },
         makeContext(),
       ),
       throwsA(
         predicate(
           (error) =>
-              error.toString().contains('most recent `read` window') &&
-              error.toString().contains('only covered lines 3-4') &&
-              error.toString().contains('anchor line(s) 1'),
+              error.toString().contains('Could not find oldString in the file'),
         ),
       ),
     );
-    expect(await target.readAsString(), 'alpha\nbeta\ngamma\ndelta\n');
+    expect(await target.readAsString(), 'alpha\nbeta\n');
     expect(permissionRequests, isEmpty);
+  });
+
+  test('edit can replace all matching occurrences', () async {
+    final target = File('${tempDir.path}/edit_replace_all.txt');
+    await target.writeAsString('alpha\nbeta\nalpha\n');
+    final entry = await bridge.stat(
+      treeUri: workspace.treeUri,
+      relativePath: 'edit_replace_all.txt',
+    );
+    await seedReadLedger(
+      filePath: 'edit_replace_all.txt',
+      lastModified: entry!.lastModified,
+    );
+
+    final result = await editTool.execute(
+      {
+        'filePath': 'edit_replace_all.txt',
+        'oldString': 'alpha',
+        'newString': 'gamma',
+        'replaceAll': true,
+      },
+      makeContext(),
+    );
+
+    expect(await target.readAsString(), 'gamma\nbeta\ngamma\n');
+    expect(result.displayOutput, 'Updated edit_replace_all.txt');
+    expect(permissionRequests, hasLength(1));
   });
 
   test(
@@ -819,20 +733,24 @@ void main() {
     expect(advertisedTools.contains('edit'), isFalse);
     expect(
       envPrompt.contains(
-          'The next modification must happen in a later assistant response, not as another same-file mutation in the current response.'),
+          'If you need another modification on the same file, `read` it again first.'),
       isTrue,
     );
     expect(
       envPrompt.contains(
-          'If the line you want to change is not inside your most recent `read` window, call `read` again for a range that includes that line before generating `edit` / `apply_patch`.'),
+          '`edit` uses `filePath`, `oldString`, `newString`, and optional `replaceAll`.'),
       isTrue,
     );
     expect(
       envPrompt.contains(
-          '`replace` with `pos` only replaces exactly one existing line. If you need to replace 2 or more existing lines, you MUST provide both `pos` and `end` for the full old range; otherwise trailing old lines survive and often get duplicated.'),
+          'When copying from `read`, do not include the `lineNumber: ` prefix inside `oldString` or `newString`.'),
       isTrue,
     );
-    expect(envPrompt.contains('@@ replace 12#VK'), isTrue);
+    expect(
+      envPrompt.contains(
+          'If `oldString` is not unique, include more surrounding context. If you intentionally want every occurrence, set `replaceAll: true`.'),
+      isTrue,
+    );
   });
 
   test('engine preview returns the provider request payload', () async {
@@ -3172,7 +3090,7 @@ void main() {
     );
   });
 
-  test('prompt blocks same-turn read then edit for the same file', () async {
+  test('prompt allows same-turn read then edit for the same file', () async {
     final target = File('${tempDir.path}/same_turn_read_edit.txt');
     await target.writeAsString('alpha\nbeta\n');
 
@@ -3183,20 +3101,15 @@ void main() {
           ToolCall(
             id: 'call_read',
             name: 'read',
-            arguments: const {'path': 'same_turn_read_edit.txt'},
+            arguments: const {'filePath': 'same_turn_read_edit.txt'},
           ),
           ToolCall(
             id: 'call_edit',
             name: 'edit',
             arguments: const {
               'filePath': 'same_turn_read_edit.txt',
-              'edits': [
-                {
-                  'op': 'replace',
-                  'pos': '1#AA',
-                  'lines': ['gamma'],
-                }
-              ],
+              'oldString': 'alpha',
+              'newString': 'gamma',
             },
           ),
         ],
@@ -3235,34 +3148,13 @@ void main() {
     );
     final state =
         Map<String, dynamic>.from(toolPart.data['state'] as Map? ?? const {});
-    expect(state['status'], ToolStatus.error.name);
-    expect(
-      state['output'] as String? ?? '',
-      contains('Invalid same-turn tool sequence'),
-    );
-    expect(
-      state['output'] as String? ?? '',
-      contains('Do not emit `read` and `edit` for the same file'),
-    );
-    expect(await target.readAsString(), 'alpha\nbeta\n');
+    expect(state['status'], ToolStatus.completed.name);
+    expect(await target.readAsString(), 'gamma\nbeta\n');
   });
 
-  test('prompt blocks a second same-turn mutation for the same file', () async {
+  test('prompt allows a second same-turn mutation for the same file', () async {
     final target = File('${tempDir.path}/same_turn_double_edit.txt');
     await target.writeAsString('alpha\nbeta\n');
-
-    final readResult = await readTool.execute(
-      {
-        'path': 'same_turn_double_edit.txt',
-      },
-      makeContext(),
-    );
-    final firstAnchor =
-        RegExp(r'1#[A-Z]{2}').firstMatch(readResult.output)?.group(0);
-    final secondAnchor =
-        RegExp(r'2#[A-Z]{2}').firstMatch(readResult.output)?.group(0);
-    expect(firstAnchor, isNotNull);
-    expect(secondAnchor, isNotNull);
     final entry = await bridge.stat(
       treeUri: workspace.treeUri,
       relativePath: 'same_turn_double_edit.txt',
@@ -3281,29 +3173,19 @@ void main() {
           ToolCall(
             id: 'call_edit_first',
             name: 'edit',
-            arguments: {
+            arguments: const {
               'filePath': 'same_turn_double_edit.txt',
-              'edits': [
-                {
-                  'op': 'replace',
-                  'pos': firstAnchor,
-                  'lines': ['gamma'],
-                }
-              ],
+              'oldString': 'alpha',
+              'newString': 'gamma',
             },
           ),
           ToolCall(
             id: 'call_edit_second',
             name: 'edit',
-            arguments: {
+            arguments: const {
               'filePath': 'same_turn_double_edit.txt',
-              'edits': [
-                {
-                  'op': 'replace',
-                  'pos': secondAnchor,
-                  'lines': ['delta'],
-                }
-              ],
+              'oldString': 'beta',
+              'newString': 'delta',
             },
           ),
         ],
@@ -3343,11 +3225,7 @@ void main() {
     );
     final state =
         Map<String, dynamic>.from(toolPart.data['state'] as Map? ?? const {});
-    expect(state['status'], ToolStatus.error.name);
-    expect(
-      state['output'] as String? ?? '',
-      contains('multiple mutation calls for the same file'),
-    );
-    expect(await target.readAsString(), 'gamma\nbeta\n');
+    expect(state['status'], ToolStatus.completed.name);
+    expect(await target.readAsString(), 'gamma\ndelta\n');
   });
 }

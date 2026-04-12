@@ -184,56 +184,8 @@ extension SessionEnginePrompt on SessionEngine {
         return paths;
       }
 
-      Map<String, JsonMap> blockedToolCallsForResponse(List<ToolCall> calls) {
-        final readPaths = <String>{};
-        for (final call in calls) {
-          readPaths.addAll(readTargetsForCall(call));
-        }
-
-        final mutationCounts = <String, int>{};
-        final blocked = <String, JsonMap>{};
-        for (final call in calls) {
-          if (call.name != 'edit' && call.name != 'apply_patch') continue;
-          final targets = mutationTargetsForCall(call).toList()..sort();
-          if (targets.isEmpty) continue;
-
-          final sameTurnReadPaths =
-              targets.where((path) => readPaths.contains(path)).toList();
-          if (sameTurnReadPaths.isNotEmpty) {
-            final joined = sameTurnReadPaths.join(', ');
-            blocked[call.id] = {
-              'guard': 'same_turn_read_then_mutate',
-              'error':
-                  'Invalid same-turn tool sequence: this assistant response emitted `read` and `${call.name}` for the same file(s): $joined.',
-              'recovery':
-                  'Do not emit `read` and `${call.name}` for the same file in one assistant response.\n'
-                      'Step 1: End the current response after the `read` call.\n'
-                      'Step 2: Wait for the `read` result.\n'
-                      'Step 3: In the next assistant response, submit one batched `${call.name}` call built from the fresh output.',
-            };
-          } else {
-            final repeatedPaths = targets
-                .where((path) => (mutationCounts[path] ?? 0) > 0)
-                .toList();
-            if (repeatedPaths.isNotEmpty) {
-              final joined = repeatedPaths.join(', ');
-              blocked[call.id] = {
-                'guard': 'same_turn_multiple_mutations',
-                'error':
-                    'Invalid same-turn tool sequence: this assistant response emitted multiple mutation calls for the same file(s): $joined.',
-                'recovery': 'Only one `edit` or `apply_patch` call per file is allowed in a single assistant response.\n'
-                    'Step 1: Merge related changes for the same file into one batched mutation call.\n'
-                    'Step 2: If another pass is still needed, wait for the tool result, then `read` the file again in a later assistant response.',
-              };
-            }
-          }
-
-          for (final path in targets) {
-            mutationCounts[path] = (mutationCounts[path] ?? 0) + 1;
-          }
-        }
-        return blocked;
-      }
+      Map<String, JsonMap> blockedToolCallsForResponse(List<ToolCall> calls) =>
+          const <String, JsonMap>{};
 
       Future<ToolExecutionResult> rejectBlockedToolCall({
         required ToolCall call,
@@ -637,8 +589,8 @@ extension SessionEnginePrompt on SessionEngine {
                       '- If `write` failed because file exists → use `edit` instead\n'
                       '- If `edit` failed because no read → call `read` first\n'
                       '- If `edit` failed because oldString not found → call `read` to get current contents, then use exact text from the output\n'
-                      '- If `edit` was a no-op → do not repeat it; if you still need another change on the same file, `read` again and batch the next edit\n'
-                      '- If anchors are stale → copy updated LINE#ID anchors from the `>>>` error output; only call `read` if needed anchors are missing\n'
+                      '- If `edit` failed because there were multiple matches → include more surrounding context in oldString, or set replaceAll true if you want every match\n'
+                      '- If `edit` was a no-op → do not repeat it; if you still need another change, make oldString/newString actually differ\n'
                       'Read the error messages above carefully and take a DIFFERENT action.\n'
                       '</system-warning>',
                 },
