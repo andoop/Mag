@@ -108,6 +108,43 @@ Usage:
 - When the `public-file-download` skill is available, load that skill for detailed usage guidance before using this tool.
 ''';
 
+const String kListMcpResourcesToolDescription = r'''
+List MCP resources exposed by configured remote MCP servers.
+
+Usage:
+- Optional `serverId` limits the result to a single configured MCP server.
+- Use this tool before `read_mcp_resource` when you need to discover available resource URIs.
+- Results include server ID, URI, resource name, description, and mime type when present.
+''';
+
+const String kReadMcpResourceToolDescription = r'''
+Read a resource from a configured remote MCP server.
+
+Usage:
+- `serverId` and `uri` are required.
+- Call `list_mcp_resources` first if you do not already know the exact resource URI.
+- Returns text content directly when available; binary/blob content is returned as metadata or base64 text.
+''';
+
+const String kListMcpPromptsToolDescription = r'''
+List MCP prompts exposed by configured remote MCP servers.
+
+Usage:
+- Optional `serverId` limits the result to a single configured MCP server.
+- Use this tool before `get_mcp_prompt` when you need to discover prompt names or arguments.
+- Results include prompt name, description, and argument schema metadata when present.
+''';
+
+const String kGetMcpPromptToolDescription = r'''
+Resolve a prompt template from a configured remote MCP server.
+
+Usage:
+- `serverId` and `name` are required.
+- `arguments` is optional and should be an object of string values keyed by argument name.
+- Call `list_mcp_prompts` first if you do not already know the exact prompt name and arguments.
+- Returns the prompt messages exactly as provided by the MCP server.
+''';
+
 /// Client-specific: workspace-relative paths.
 const String kMobileWorkspacePathSuffix = '''
 

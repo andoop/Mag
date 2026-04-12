@@ -188,6 +188,133 @@ class LocalServerClient {
     await _post('/settings/model', config.toJson());
   }
 
+  Future<List<McpServerConfig>> listMcpServers() async {
+    final data = await _get('/mcp/server');
+    return (data as List)
+        .map((item) => McpServerConfig.fromJson(Map<String, dynamic>.from(item as Map)))
+        .toList();
+  }
+
+  Future<Map<String, McpServerStatus>> listMcpStatuses() async {
+    final data = await _get('/mcp/status');
+    return Map<String, dynamic>.from(data as Map).map(
+      (key, value) => MapEntry(
+        key,
+        McpServerStatus.fromJson(Map<String, dynamic>.from(value as Map)),
+      ),
+    );
+  }
+
+  Future<List<McpToolDefinition>> listMcpTools({String? serverId}) async {
+    final query = serverId == null ? '' : '?serverId=$serverId';
+    final data = await _get('/mcp/tool$query');
+    return (data as List)
+        .map((item) => McpToolDefinition.fromJson(Map<String, dynamic>.from(item as Map)))
+        .toList();
+  }
+
+  Future<List<McpResourceDefinition>> listMcpResources({String? serverId}) async {
+    final query = serverId == null ? '' : '?serverId=$serverId';
+    final data = await _get('/mcp/resource$query');
+    return (data as List)
+        .map((item) =>
+            McpResourceDefinition.fromJson(Map<String, dynamic>.from(item as Map)))
+        .toList();
+  }
+
+  Future<List<McpPromptDefinition>> listMcpPrompts({String? serverId}) async {
+    final query = serverId == null ? '' : '?serverId=$serverId';
+    final data = await _get('/mcp/prompt$query');
+    return (data as List)
+        .map((item) => McpPromptDefinition.fromJson(Map<String, dynamic>.from(item as Map)))
+        .toList();
+  }
+
+  Future<List<McpServerConfig>> saveMcpServer(McpServerConfig server) async {
+    final data = await _post('/mcp/server', server.toJson());
+    return (data as List)
+        .map((item) => McpServerConfig.fromJson(Map<String, dynamic>.from(item as Map)))
+        .toList();
+  }
+
+  Future<List<McpServerConfig>> deleteMcpServer(String serverId) async {
+    final request = await _client.deleteUrl(baseUri.resolve('/mcp/server/$serverId'));
+    final response = await request.close();
+    final text = await response.transform(utf8.decoder).join();
+    _throwIfHttpError(response.statusCode, text, '/mcp/server/$serverId');
+    final data = jsonDecode(text);
+    return (data as List)
+        .map((item) => McpServerConfig.fromJson(Map<String, dynamic>.from(item as Map)))
+        .toList();
+  }
+
+  Future<McpServerStatus> refreshMcpServer(String serverId) async {
+    final data = await _post('/mcp/server/$serverId/refresh', const {});
+    return McpServerStatus.fromJson(Map<String, dynamic>.from(data as Map));
+  }
+
+  Future<void> disconnectMcpServer(String serverId) async {
+    await _post('/mcp/server/$serverId/disconnect', const {});
+  }
+
+  Future<McpOAuthAuthorization> authorizeMcpOAuth(String serverId) async {
+    final data = await _post('/mcp/oauth/authorize', {
+      'serverId': serverId,
+    });
+    return McpOAuthAuthorization.fromJson(Map<String, dynamic>.from(data as Map));
+  }
+
+  Future<void> callbackMcpOAuth({
+    required String serverId,
+    required String code,
+  }) async {
+    await _post('/mcp/oauth/callback', {
+      'serverId': serverId,
+      'code': code,
+    });
+  }
+
+  Future<McpToolCallResult> callMcpTool({
+    required String serverId,
+    required String toolName,
+    JsonMap arguments = const {},
+  }) async {
+    final data = await _post('/mcp/tool/call', {
+      'serverId': serverId,
+      'toolName': toolName,
+      'arguments': arguments,
+    });
+    return McpToolCallResult.fromJson(Map<String, dynamic>.from(data as Map));
+  }
+
+  Future<List<McpResourceContent>> readMcpResource({
+    required String serverId,
+    required String uri,
+  }) async {
+    final data = await _post('/mcp/resource/read', {
+      'serverId': serverId,
+      'uri': uri,
+    });
+    return (data as List)
+        .map((item) => McpResourceContent.fromJson(Map<String, dynamic>.from(item as Map)))
+        .toList();
+  }
+
+  Future<List<McpPromptMessage>> getMcpPrompt({
+    required String serverId,
+    required String promptName,
+    Map<String, String> arguments = const {},
+  }) async {
+    final data = await _post('/mcp/prompt/get', {
+      'serverId': serverId,
+      'promptName': promptName,
+      'arguments': arguments,
+    });
+    return (data as List)
+        .map((item) => McpPromptMessage.fromJson(Map<String, dynamic>.from(item as Map)))
+        .toList();
+  }
+
   Future<List<PermissionRequest>> listPermissions() async {
     final data = await _get('/permission');
     return (data as List)

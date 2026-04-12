@@ -3,6 +3,7 @@ import 'dart:convert';
 import 'dart:io';
 
 import 'database.dart';
+import 'mcp_service.dart';
 import 'models.dart';
 import 'session_engine.dart';
 import 'workspace_bridge.dart';
@@ -21,12 +22,14 @@ class LocalServer {
     required this.engine,
     required this.events,
     required this.workspaceBridge,
+    required this.mcpService,
   });
 
   final AppDatabase database;
   final SessionEngine engine;
   final LocalEventBus events;
   final WorkspaceBridge workspaceBridge;
+  final McpService mcpService;
 
   HttpServer? _server;
   static const _modelsDevUrl = 'https://models.dev/api.json';
@@ -245,7 +248,137 @@ class LocalServer {
         await _json(request.response, config.toJson());
         return;
       }
+      if (path == '/mcp/server' && request.method == 'GET') {
+        await _json(
+          request.response,
+          (await mcpService.listServers()).map((item) => item.toJson()).toList(),
+        );
+        return;
+      }
+      if (path == '/mcp/status' && request.method == 'GET') {
+        final statuses = await mcpService.listStatuses();
+        await _json(
+          request.response,
+          statuses.map((key, value) => MapEntry(key, value.toJson())),
+        );
+        return;
+      }
+      if (path == '/mcp/tool' && request.method == 'GET') {
+        final serverId = request.uri.queryParameters['serverId'];
+        await _json(
+          request.response,
+          (await mcpService.listTools(serverId)).map((item) => item.toJson()).toList(),
+        );
+        return;
+      }
+      if (path == '/mcp/resource' && request.method == 'GET') {
+        final serverId = request.uri.queryParameters['serverId'];
+        await _json(
+          request.response,
+          (await mcpService.listResources(serverId))
+              .map((item) => item.toJson())
+              .toList(),
+        );
+        return;
+      }
+      if (path == '/mcp/prompt' && request.method == 'GET') {
+        final serverId = request.uri.queryParameters['serverId'];
+        await _json(
+          request.response,
+          (await mcpService.listPrompts(serverId)).map((item) => item.toJson()).toList(),
+        );
+        return;
+      }
+      if (path == '/mcp/server' && request.method == 'POST') {
+        final body = await _readJson(request);
+        final server = McpServerConfig.fromJson(body);
+        await _json(
+          request.response,
+          (await mcpService.saveServer(server)).map((item) => item.toJson()).toList(),
+        );
+        return;
+      }
+      if (path == '/mcp/oauth/authorize' && request.method == 'POST') {
+        final body = await _readJson(request);
+        final serverId = body['serverId'] as String? ?? '';
+        final result = await mcpService.authorizeOAuth(serverId);
+        await _json(request.response, result.toJson());
+        return;
+      }
+      if (path == '/mcp/oauth/callback' && request.method == 'POST') {
+        final body = await _readJson(request);
+        final serverId = body['serverId'] as String? ?? '';
+        final code = body['code'] as String? ?? '';
+        await mcpService.callbackOAuth(serverId, code: code);
+        await _json(request.response, true);
+        return;
+      }
       final segments = request.uri.pathSegments;
+      if (segments.length == 3 &&
+          segments.first == 'mcp' &&
+          segments[1] == 'server' &&
+          request.method == 'DELETE') {
+        await _json(
+          request.response,
+          (await mcpService.deleteServer(segments[2]))
+              .map((item) => item.toJson())
+              .toList(),
+        );
+        return;
+      }
+      if (segments.length == 4 &&
+          segments.first == 'mcp' &&
+          segments[1] == 'server' &&
+          segments[3] == 'refresh' &&
+          request.method == 'POST') {
+        await _json(request.response, (await mcpService.refreshServer(segments[2])).toJson());
+        return;
+      }
+      if (segments.length == 4 &&
+          segments.first == 'mcp' &&
+          segments[1] == 'server' &&
+          segments[3] == 'disconnect' &&
+          request.method == 'POST') {
+        await mcpService.disconnect(segments[2]);
+        await _json(request.response, true);
+        return;
+      }
+      if (path == '/mcp/tool/call' && request.method == 'POST') {
+        final body = await _readJson(request);
+        final serverId = body['serverId'] as String? ?? '';
+        final toolName = body['toolName'] as String? ?? '';
+        final arguments =
+            Map<String, dynamic>.from(body['arguments'] as Map? ?? const {});
+        final result = await mcpService.callTool(serverId, toolName, arguments);
+        await _json(request.response, result.toJson());
+        return;
+      }
+      if (path == '/mcp/resource/read' && request.method == 'POST') {
+        final body = await _readJson(request);
+        final serverId = body['serverId'] as String? ?? '';
+        final uri = body['uri'] as String? ?? '';
+        final result = await mcpService.readResource(serverId, uri);
+        await _json(request.response, result.map((item) => item.toJson()).toList());
+        return;
+      }
+      if (path == '/mcp/prompt/get' && request.method == 'POST') {
+        final body = await _readJson(request);
+        final serverId = body['serverId'] as String? ?? '';
+        final promptName = body['promptName'] as String? ?? '';
+        final arguments = Map<String, String>.from(
+          (body['arguments'] as Map?)?.map(
+                (key, value) => MapEntry(key.toString(), value?.toString() ?? ''),
+              ) ??
+              const <String, String>{},
+        );
+        final result = await mcpService.getPrompt(
+          serverId,
+          promptName,
+          arguments: arguments,
+        );
+        await _json(request.response, result.map((item) => item.toJson()).toList());
+        return;
+      }
       if (segments.length == 4 &&
           segments.first == 'provider' &&
           segments[2] == 'oauth' &&

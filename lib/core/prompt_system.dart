@@ -196,6 +196,18 @@ class PromptAssembler {
         (zh
             ? '如果你只需要先查看远程文本内容，不需要落盘，优先使用 `webfetch`。'
             : 'If you only need to inspect remote text without saving it, prefer `webfetch`.'),
+      if (tools.contains('list_mcp_resources'))
+        (zh
+            ? '当远程 MCP server 已配置时，可用 `list_mcp_resources` / `read_mcp_resource` 发现并读取 MCP resources。'
+            : 'When remote MCP servers are configured, use `list_mcp_resources` / `read_mcp_resource` to discover and read MCP resources.'),
+      if (tools.contains('list_mcp_prompts'))
+        (zh
+            ? '当远程 MCP server 已配置时，可用 `list_mcp_prompts` / `get_mcp_prompt` 发现并获取 MCP prompt 模板。'
+            : 'When remote MCP servers are configured, use `list_mcp_prompts` / `get_mcp_prompt` to discover and retrieve MCP prompt templates.'),
+      if (tools.any((item) => item.startsWith('mcp.')))
+        (zh
+            ? '名字形如 `mcp.<serverId>.<toolName>` 的工具来自远程 MCP server，可直接调用。'
+            : 'Tools named like `mcp.<serverId>.<toolName>` come from remote MCP servers and can be called directly.'),
       kToolCallingRulesPrompt.trim(),
     ];
 

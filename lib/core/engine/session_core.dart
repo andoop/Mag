@@ -10,7 +10,9 @@ class SessionEngine {
     required this.questionCenter,
     required this.toolRegistry,
     required this.modelGateway,
-  });
+    McpService? mcpService,
+  }) : mcpService =
+            mcpService ?? McpService(database: database, emitEvent: events.emit);
 
   final AppDatabase database;
   final LocalEventBus events;
@@ -20,6 +22,7 @@ class SessionEngine {
   final QuestionCenter questionCenter;
   final ToolRegistry toolRegistry;
   final ModelGateway modelGateway;
+  final McpService mcpService;
 
   final Map<String, bool> _busy = {};
   final Map<String, CancelToken> _cancelTokens = {};
@@ -29,6 +32,20 @@ class SessionEngine {
 
   List<AgentDefinition> listAgents() =>
       AgentRegistry.all().where((item) => !item.hidden).toList();
+
+  Future<List<ToolDefinitionModel>> availableToolModels(
+    WorkspaceInfo workspace,
+    AgentDefinition agent, {
+    String? modelId,
+  }) async {
+    final mcpTools = (await mcpService.listTools()).map((item) => item.toToolModel()).toList();
+    return toolRegistry.availableForWorkspaceAgent(
+      workspace,
+      agent,
+      modelId: modelId,
+      extraTools: mcpTools,
+    );
+  }
 
   Future<ProjectInfo> ensureProject(WorkspaceInfo workspace) async {
     final existing = await database.projectForWorkspace(workspace.id);
@@ -241,7 +258,7 @@ class SessionEngine {
       model: modelConfig.model,
     );
     final toolModels = [
-      ...await toolRegistry.availableForWorkspaceAgent(
+      ...await availableToolModels(
         workspace,
         agentDefinition(session.agent),
         modelId: modelConfig.model,

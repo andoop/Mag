@@ -11,10 +11,10 @@
 
 | Agent       | 模式    | 可用工具 ID                                                                                                                                                                                                         |
 | ----------- | ----- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| **build**   | 主会话默认 | `read`, `list`, `write`, `edit`, `apply_patch`, `glob`, `grep`, `stat`, `delete`, `rename`, `move`, `copy`, `task`, `todowrite`, `question`, `webfetch`, `download`, `browser`, `skill`, `invalid`, `plan_exit` |
+| **build**   | 主会话默认 | `read`, `list`, `write`, `edit`, `apply_patch`, `glob`, `grep`, `stat`, `delete`, `rename`, `move`, `copy`, `task`, `todowrite`, `question`, `webfetch`, `download`, `list_mcp_resources`, `read_mcp_resource`, `list_mcp_prompts`, `get_mcp_prompt`, `browser`, `skill`, `invalid`, `plan_exit` |
 | **general** | 子代理   | 与 build 相同（`todowrite` 在权限规则中可能被 deny，见 `agents.dart`）                                                                                                                                                          |
-| **plan**    | 主会话规划 | `read`, `list`, `glob`, `grep`, `stat`, `question`, `webfetch`, `browser`, `skill`, `todowrite`, `task`, `plan_exit`, `invalid`（**无** `write` / `edit` / `apply_patch` 及 `delete` / `rename` / `move` / `copy`） |
-| **explore** | 子代理探索 | `read`, `list`, `glob`, `grep`, `stat`, `webfetch`, `browser`, `skill`, `question`, `invalid`（**无** 写类、`task`、`todowrite`、`plan_exit`）                                                                          |
+| **plan**    | 主会话规划 | `read`, `list`, `glob`, `grep`, `stat`, `question`, `webfetch`, `download`, `list_mcp_resources`, `read_mcp_resource`, `list_mcp_prompts`, `get_mcp_prompt`, `browser`, `skill`, `todowrite`, `task`, `plan_exit`, `invalid`（**无** `write` / `edit` / `apply_patch` 及 `delete` / `rename` / `move` / `copy`） |
+| **explore** | 子代理探索 | `read`, `list`, `glob`, `grep`, `stat`, `webfetch`, `download`, `list_mcp_resources`, `read_mcp_resource`, `list_mcp_prompts`, `get_mcp_prompt`, `browser`, `skill`, `question`, `invalid`（**无** 写类、`task`、`todowrite`、`plan_exit`）                                                                          |
 
 
 默认权限规则要点（可被各 Agent 覆盖）：
@@ -512,7 +512,75 @@
 
 ---
 
-### 17. `browser`
+### 17. `list_mcp_resources`
+
+**作用**：列出已配置远程 MCP server 暴露的 resources。
+
+**参数**：
+
+| 参数       | 类型     | 说明 |
+| ---------- | -------- | ---- |
+| `serverId` | string   | 可选；只查看某一个 MCP server |
+
+**行为要点**：
+
+- 返回 `serverId`、`uri`、`name`、`description`、`mimeType`
+- 当你还不知道 resource URI 时，先用它做发现
+- 这些 resources 来自 MCP server，不是工作区本地文件
+
+### 18. `read_mcp_resource`
+
+**作用**：读取一个远程 MCP resource 的内容。
+
+**参数**：
+
+| 参数       | 类型     | 说明 |
+| ---------- | -------- | ---- |
+| `serverId` | string   | **必填**；MCP server ID |
+| `uri`      | string   | **必填**；resource URI |
+
+**行为要点**：
+
+- 通常先用 `list_mcp_resources` 获取精确 URI
+- 若 server 返回文本，会直接以文本形式返回
+- 若 server 返回 blob / 非文本内容，会以 JSON 元数据形式返回
+
+### 19. `list_mcp_prompts`
+
+**作用**：列出已配置远程 MCP server 暴露的 prompt 模板。
+
+**参数**：
+
+| 参数       | 类型     | 说明 |
+| ---------- | -------- | ---- |
+| `serverId` | string   | 可选；只查看某一个 MCP server |
+
+**行为要点**：
+
+- 返回 `name`、`description` 和 argument 定义
+- 当你还不知道 prompt 名称或参数时，先用它做发现
+
+### 20. `get_mcp_prompt`
+
+**作用**：获取一个远程 MCP prompt 模板展开后的消息列表。
+
+**参数**：
+
+| 参数        | 类型    | 说明 |
+| ----------- | ------- | ---- |
+| `serverId`  | string  | **必填**；MCP server ID |
+| `name`      | string  | **必填**；prompt 名称 |
+| `arguments` | object  | 可选；传给 prompt 的字符串参数对象 |
+
+**行为要点**：
+
+- 通常先用 `list_mcp_prompts` 获取名称和参数
+- 返回的是 MCP server 给出的 message 数组，不会自动执行
+- 动态 MCP tools 也会直接注入模型，名称形如 `mcp.<serverId>.<toolName>`
+
+---
+
+### 21. `browser`
 
 **作用**：在应用内打开工作区内的 **HTML** 页面（返回 `browser_page` 类附件）。
 
@@ -532,7 +600,7 @@
 
 ---
 
-### 18. `skill`
+### 22. `skill`
 
 **作用**：按名称加载工作区内的 `SKILL.md` 技能说明，并把技能正文与同目录采样文件列表注入模型上下文。
 
@@ -567,7 +635,7 @@
 
 ---
 
-### 19. `invalid`
+### 23. `invalid`
 
 **作用**：由模型或管线声明某次工具调用非法，用于自纠与展示。
 
@@ -588,7 +656,7 @@
 
 ---
 
-### 20. `plan_exit`
+### 24. `plan_exit`
 
 **作用**：在 **plan** 模式下请求切换到 **build**；会弹出确认。用户选择停留则抛错。
 
@@ -596,7 +664,7 @@
 
 ---
 
-### 21. `task`
+### 25. `task`
 
 **作用**：创建或续用子会话，使用指定子代理执行 `prompt`，返回最后助手输出（包在 `<task_result>` 中）。
 

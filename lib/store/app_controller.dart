@@ -12,6 +12,7 @@ import '../core/database.dart';
 import '../core/debug_trace.dart';
 import '../core/git/git_settings_store.dart';
 import '../core/local_server.dart';
+import '../core/mcp_service.dart';
 import '../core/models.dart';
 import '../core/prompt_system.dart';
 import '../core/session_engine.dart';
@@ -23,6 +24,7 @@ import 'project_recents_store.dart';
 part 'app_controller_events.dart';
 part 'app_controller_session.dart';
 part 'app_controller_provider.dart';
+part 'app_controller_mcp.dart';
 part 'app_controller_git.dart';
 part 'app_controller_workspace.dart';
 part 'app_controller_state.dart';
@@ -65,6 +67,11 @@ class AppState {
     this.gitSettings,
     this.providerList,
     this.providerAuth = const {},
+    this.mcpServers = const [],
+    this.mcpStatuses = const {},
+    this.mcpTools = const [],
+    this.mcpResources = const [],
+    this.mcpPrompts = const [],
     this.recentModelKeys = const [],
     this.sessionStatuses = const {},
     this.error,
@@ -85,6 +92,11 @@ class AppState {
   final GitSettings? gitSettings;
   final ProviderListResponse? providerList;
   final Map<String, List<ProviderAuthMethod>> providerAuth;
+  final List<McpServerConfig> mcpServers;
+  final Map<String, McpServerStatus> mcpStatuses;
+  final List<McpToolDefinition> mcpTools;
+  final List<McpResourceDefinition> mcpResources;
+  final List<McpPromptDefinition> mcpPrompts;
   final List<String> recentModelKeys;
   final Map<String, SessionRunStatus> sessionStatuses;
   final String? error;
@@ -114,6 +126,11 @@ class AppState {
     GitSettings? gitSettings,
     ProviderListResponse? providerList,
     Map<String, List<ProviderAuthMethod>>? providerAuth,
+    List<McpServerConfig>? mcpServers,
+    Map<String, McpServerStatus>? mcpStatuses,
+    List<McpToolDefinition>? mcpTools,
+    List<McpResourceDefinition>? mcpResources,
+    List<McpPromptDefinition>? mcpPrompts,
     List<String>? recentModelKeys,
     Map<String, SessionRunStatus>? sessionStatuses,
     Object? error = _noChange,
@@ -136,6 +153,11 @@ class AppState {
       gitSettings: gitSettings ?? this.gitSettings,
       providerList: providerList ?? this.providerList,
       providerAuth: providerAuth ?? this.providerAuth,
+      mcpServers: mcpServers ?? this.mcpServers,
+      mcpStatuses: mcpStatuses ?? this.mcpStatuses,
+      mcpTools: mcpTools ?? this.mcpTools,
+      mcpResources: mcpResources ?? this.mcpResources,
+      mcpPrompts: mcpPrompts ?? this.mcpPrompts,
       recentModelKeys: recentModelKeys ?? this.recentModelKeys,
       sessionStatuses: sessionStatuses ?? this.sessionStatuses,
       error: identical(error, _noChange) ? this.error : error as String?,
@@ -149,6 +171,7 @@ class AppController extends ChangeNotifier {
         _workspaceBridge = WorkspaceBridge.instance,
         _events = LocalEventBus(),
         _gitSettingsStore = GitSettingsStore(database: AppDatabase.instance) {
+    _mcpService = McpService(database: _db, emitEvent: _events.emit);
     _engine = SessionEngine(
       database: _db,
       events: _events,
@@ -158,12 +181,14 @@ class AppController extends ChangeNotifier {
       questionCenter: QuestionCenter(_db, _events),
       toolRegistry: ToolRegistry.builtins(),
       modelGateway: ModelGateway(),
+      mcpService: _mcpService,
     );
     _server = LocalServer(
       database: _db,
       engine: _engine,
       events: _events,
       workspaceBridge: _workspaceBridge,
+      mcpService: _mcpService,
     );
   }
 
@@ -171,6 +196,7 @@ class AppController extends ChangeNotifier {
   final WorkspaceBridge _workspaceBridge;
   final LocalEventBus _events;
   final GitSettingsStore _gitSettingsStore;
+  late final McpService _mcpService;
   late final SessionEngine _engine;
   late final LocalServer _server;
   LocalServerClient? _client;
@@ -228,6 +254,11 @@ class AppController extends ChangeNotifier {
     final modelConfig = await _client!.loadModelConfig();
     final providerList = await _client!.listProviders();
     final providerAuth = await _client!.listProviderAuth();
+    final mcpServers = await _client!.listMcpServers();
+    final mcpStatuses = await _client!.listMcpStatuses();
+    final mcpTools = await _client!.listMcpTools();
+    final mcpResources = await _client!.listMcpResources();
+    final mcpPrompts = await _client!.listMcpPrompts();
     final gitSettings = await _gitSettingsStore.load();
     final recentModelKeys = await _loadRecentModelKeys();
     state = state.copyWith(
@@ -236,6 +267,11 @@ class AppController extends ChangeNotifier {
       gitSettings: gitSettings,
       providerList: providerList,
       providerAuth: providerAuth,
+      mcpServers: mcpServers,
+      mcpStatuses: mcpStatuses,
+      mcpTools: mcpTools,
+      mcpResources: mcpResources,
+      mcpPrompts: mcpPrompts,
       agents: agents,
       recentModelKeys: recentModelKeys,
     );
@@ -396,6 +432,48 @@ class AppController extends ChangeNotifier {
                 TodoItem.fromJson(Map<String, dynamic>.from(item as Map)))
             .toList();
         state = state.copyWith(todos: todos);
+        notifyListeners();
+        return;
+      case 'mcp.status.changed':
+        final status =
+            McpServerStatus.fromJson(Map<String, dynamic>.from(event.properties));
+        state = state.copyWith(
+          mcpStatuses: {
+            ...state.mcpStatuses,
+            status.serverId: status,
+          },
+        );
+        notifyListeners();
+        return;
+      case 'mcp.catalog.changed':
+        final serverId = event.properties['serverId'] as String? ?? '';
+        final tools = (event.properties['tools'] as List? ?? const [])
+            .map((item) => McpToolDefinition.fromJson(Map<String, dynamic>.from(item as Map)))
+            .toList();
+        final resources = (event.properties['resources'] as List? ?? const [])
+            .map((item) =>
+                McpResourceDefinition.fromJson(Map<String, dynamic>.from(item as Map)))
+            .toList();
+        final prompts = (event.properties['prompts'] as List? ?? const [])
+            .map((item) => McpPromptDefinition.fromJson(Map<String, dynamic>.from(item as Map)))
+            .toList();
+        state = state.copyWith(
+          mcpTools: [
+            for (final item in state.mcpTools)
+              if (item.serverId != serverId) item,
+            ...tools,
+          ],
+          mcpResources: [
+            for (final item in state.mcpResources)
+              if (item.serverId != serverId) item,
+            ...resources,
+          ],
+          mcpPrompts: [
+            for (final item in state.mcpPrompts)
+              if (item.serverId != serverId) item,
+            ...prompts,
+          ],
+        );
         notifyListeners();
         return;
       default:

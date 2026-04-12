@@ -379,6 +379,92 @@ bool _looksTextDownload({
   return !probe.any((b) => b == 0);
 }
 
+Future<ToolExecutionResult> _listMcpResourcesTool(
+    JsonMap args, ToolRuntimeContext ctx) async {
+  final serverId = (args['serverId'] as String? ?? '').trim();
+  final resources = await ctx.mcpService
+      .listResources(serverId.isEmpty ? null : serverId);
+  final payload = resources.map((item) => item.toJson()).toList();
+  return ToolExecutionResult(
+    title: serverId.isEmpty
+        ? '${resources.length} MCP resources'
+        : '${resources.length} MCP resources from $serverId',
+    output: const JsonEncoder.withIndent('  ').convert(payload),
+    metadata: {
+      'serverId': serverId,
+      'count': resources.length,
+    },
+  );
+}
+
+Future<ToolExecutionResult> _readMcpResourceTool(
+    JsonMap args, ToolRuntimeContext ctx) async {
+  final serverId = (args['serverId'] as String? ?? '').trim();
+  final uri = (args['uri'] as String? ?? '').trim();
+  final contents = await ctx.mcpService.readResource(serverId, uri);
+  final buffer = StringBuffer();
+  for (final item in contents) {
+    if ((item.text ?? '').isNotEmpty) {
+      if (buffer.isNotEmpty) buffer.writeln('\n');
+      buffer.write(item.text);
+    } else {
+      if (buffer.isNotEmpty) buffer.writeln('\n');
+      buffer.write(const JsonEncoder.withIndent('  ').convert(item.toJson()));
+    }
+  }
+  return ToolExecutionResult(
+    title: uri,
+    output: buffer.isEmpty ? 'MCP resource returned no text.' : buffer.toString(),
+    metadata: {
+      'serverId': serverId,
+      'uri': uri,
+      'count': contents.length,
+    },
+  );
+}
+
+Future<ToolExecutionResult> _listMcpPromptsTool(
+    JsonMap args, ToolRuntimeContext ctx) async {
+  final serverId = (args['serverId'] as String? ?? '').trim();
+  final prompts = await ctx.mcpService.listPrompts(serverId.isEmpty ? null : serverId);
+  final payload = prompts.map((item) => item.toJson()).toList();
+  return ToolExecutionResult(
+    title: serverId.isEmpty
+        ? '${prompts.length} MCP prompts'
+        : '${prompts.length} MCP prompts from $serverId',
+    output: const JsonEncoder.withIndent('  ').convert(payload),
+    metadata: {
+      'serverId': serverId,
+      'count': prompts.length,
+    },
+  );
+}
+
+Future<ToolExecutionResult> _getMcpPromptTool(
+    JsonMap args, ToolRuntimeContext ctx) async {
+  final serverId = (args['serverId'] as String? ?? '').trim();
+  final name = (args['name'] as String? ?? '').trim();
+  final rawArguments = Map<String, dynamic>.from(args['arguments'] as Map? ?? const {});
+  final promptArguments = rawArguments.map(
+    (key, value) => MapEntry(key, value?.toString() ?? ''),
+  );
+  final messages = await ctx.mcpService.getPrompt(
+    serverId,
+    name,
+    arguments: promptArguments,
+  );
+  final payload = messages.map((item) => item.toJson()).toList();
+  return ToolExecutionResult(
+    title: name,
+    output: const JsonEncoder.withIndent('  ').convert(payload),
+    metadata: {
+      'serverId': serverId,
+      'name': name,
+      'messageCount': messages.length,
+    },
+  );
+}
+
 String _downloadMimeFromPath(String filePath) {
   final lower = filePath.toLowerCase();
   if (lower.endsWith('.txt')) return 'text/plain';

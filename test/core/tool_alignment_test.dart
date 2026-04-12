@@ -6,6 +6,7 @@ import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:mobile_agent/core/agents.dart';
 import 'package:mobile_agent/core/database.dart';
+import 'package:mobile_agent/core/mcp_service.dart';
 import 'package:mobile_agent/core/models.dart';
 import 'package:mobile_agent/core/prompt_system.dart';
 import 'package:mobile_agent/core/session_engine.dart';
@@ -214,6 +215,7 @@ void main() {
       agentDefinition: AgentRegistry.build,
       bridge: bridge,
       database: database,
+      mcpService: McpService(database: database, emitEvent: (_) {}),
       askPermission: (request) async {
         permissionRequests.add(request);
       },

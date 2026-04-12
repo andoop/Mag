@@ -598,7 +598,7 @@ extension SessionEnginePrompt on SessionEngine {
             }
           }
           final toolModels = [
-            ...await toolRegistry.availableForWorkspaceAgent(
+            ...await availableToolModels(
               workspace,
               agentDefinition(currentAgent),
               modelId: modelConfig.model,

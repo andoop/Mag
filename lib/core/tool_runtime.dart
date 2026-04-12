@@ -11,6 +11,7 @@ import 'git/exceptions/git_exceptions.dart';
 import 'git/git_service.dart';
 import 'git/git_settings_store.dart';
 import 'json_coerce.dart';
+import 'mcp_service.dart';
 import 'models.dart';
 import 'skill_registry.dart';
 import 'tools/builtin_tool_descriptions.dart';
@@ -92,6 +93,7 @@ class ToolRuntimeContext {
     required this.agentDefinition,
     required this.bridge,
     required this.database,
+    required this.mcpService,
     required this.askPermission,
     required this.askQuestion,
     required this.resolveInstructionReminder,
@@ -108,6 +110,7 @@ class ToolRuntimeContext {
   final AgentDefinition agentDefinition;
   final WorkspaceBridge bridge;
   final AppDatabase database;
+  final McpService mcpService;
   final AskPermission askPermission;
   final AskQuestion askQuestion;
   final ResolveInstructionReminder resolveInstructionReminder;
@@ -479,6 +482,76 @@ class ToolRegistry {
     );
     register(
       ToolDefinition(
+        id: 'list_mcp_resources',
+        description: kListMcpResourcesToolDescription.trim(),
+        parameters: {
+          'type': 'object',
+          'properties': {
+            'serverId': {
+              'type': 'string',
+              'description': 'Optional. Limit results to one configured MCP server.',
+            },
+          },
+          'additionalProperties': false,
+        },
+        execute: _listMcpResourcesTool,
+      ),
+    );
+    register(
+      ToolDefinition(
+        id: 'read_mcp_resource',
+        description: kReadMcpResourceToolDescription.trim(),
+        parameters: {
+          'type': 'object',
+          'properties': {
+            'serverId': {'type': 'string'},
+            'uri': {'type': 'string'},
+          },
+          'required': ['serverId', 'uri'],
+          'additionalProperties': false,
+        },
+        execute: _readMcpResourceTool,
+      ),
+    );
+    register(
+      ToolDefinition(
+        id: 'list_mcp_prompts',
+        description: kListMcpPromptsToolDescription.trim(),
+        parameters: {
+          'type': 'object',
+          'properties': {
+            'serverId': {
+              'type': 'string',
+              'description': 'Optional. Limit results to one configured MCP server.',
+            },
+          },
+          'additionalProperties': false,
+        },
+        execute: _listMcpPromptsTool,
+      ),
+    );
+    register(
+      ToolDefinition(
+        id: 'get_mcp_prompt',
+        description: kGetMcpPromptToolDescription.trim(),
+        parameters: {
+          'type': 'object',
+          'properties': {
+            'serverId': {'type': 'string'},
+            'name': {'type': 'string'},
+            'arguments': {
+              'type': 'object',
+              'description': 'Optional string arguments for the MCP prompt.',
+            },
+          },
+          'required': ['serverId', 'name'],
+          'additionalProperties': false,
+        },
+        execute: _getMcpPromptTool,
+      ),
+    );
+    register(
+      ToolDefinition(
         id: 'browser',
         description:
             'Open an HTML page from the workspace in the in-app browser.$kMobileWorkspacePathSuffix',
@@ -757,8 +830,9 @@ class ToolRegistry {
     WorkspaceInfo workspace,
     AgentDefinition agent, {
     String? modelId,
+    List<ToolDefinitionModel> extraTools = const [],
   }) async {
-    final tools = availableForAgent(agent, modelId: modelId);
+    final tools = [...availableForAgent(agent, modelId: modelId), ...extraTools];
     final hasSkillTool = tools.any((item) => item.id == 'skill');
     if (!hasSkillTool) return tools;
     final skills = await SkillRegistry.instance.available(

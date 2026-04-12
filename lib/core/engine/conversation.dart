@@ -19,11 +19,11 @@ extension SessionEngineConversation on SessionEngine {
       }
     }
     final zh = platformIsZh;
-    final effectiveTools = toolRegistry
-        .availableForAgent(
+    final effectiveTools = (await availableToolModels(
+          workspace,
           currentAgentDefinition,
           modelId: model,
-        )
+        ))
         .map((item) => item.id)
         .toList();
     final availableSkills = effectiveTools.contains('skill')

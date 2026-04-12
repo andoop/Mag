@@ -74,7 +74,7 @@ extension SessionEngineTools on SessionEngine {
     void Function(MessagePart part)? onPartSaved,
   }) async {
     cancelToken?.throwIfCancelled();
-    final prepared = _prepareToolExecution(call);
+    final prepared = await _prepareToolExecution(call);
     final tool = prepared.tool;
     final executableCall = prepared.call;
     final argumentError = prepared.argumentError;
@@ -86,6 +86,7 @@ extension SessionEngineTools on SessionEngine {
       agentDefinition: agentDefinition(agent),
       bridge: workspaceBridge,
       database: database,
+      mcpService: mcpService,
       callId: call.id,
       askPermission: (request) async {
         await _updateToolState(
@@ -325,10 +326,11 @@ extension SessionEngineTools on SessionEngine {
     }
   }
 
-  _PreparedToolExecution _prepareToolExecution(ToolCall call) {
+  Future<_PreparedToolExecution> _prepareToolExecution(ToolCall call) async {
     final requestedToolName =
         call.name.trim().isEmpty ? 'unknown' : call.name.trim();
-    final resolvedTool = toolRegistry[requestedToolName];
+    final resolvedTool =
+        toolRegistry[requestedToolName] ?? await _resolveDynamicMcpTool(requestedToolName);
     if (resolvedTool == null) {
       return _PreparedToolExecution(
         requestedToolName: requestedToolName,
@@ -357,6 +359,76 @@ extension SessionEngineTools on SessionEngine {
         requestedToolName: requestedToolName,
         args: args,
       ),
+    );
+  }
+
+  Future<ToolDefinition?> _resolveDynamicMcpTool(String requestedToolName) async {
+    if (!requestedToolName.startsWith('mcp.')) return null;
+    final parts = requestedToolName.split('.');
+    if (parts.length < 3) return null;
+    final serverId = parts[1].trim();
+    final toolName = parts.sublist(2).join('.').trim();
+    if (serverId.isEmpty || toolName.isEmpty) return null;
+    final tools = await mcpService.listTools(serverId);
+    final match = tools.cast<McpToolDefinition?>().firstWhere(
+          (item) => item?.name == toolName,
+          orElse: () => null,
+        );
+    if (match == null) return null;
+    return ToolDefinition(
+      id: requestedToolName,
+      description: match.description,
+      parameters: match.inputSchema.isEmpty ? const {'type': 'object'} : match.inputSchema,
+      execute: (args, ctx) => _executeDynamicMcpTool(
+        serverId: serverId,
+        toolName: toolName,
+        arguments: args,
+      ),
+    );
+  }
+
+  Future<ToolExecutionResult> _executeDynamicMcpTool({
+    required String serverId,
+    required String toolName,
+    required JsonMap arguments,
+  }) async {
+    final result = await mcpService.callTool(serverId, toolName, arguments);
+    final buffer = StringBuffer();
+    for (final item in result.content) {
+      final type = item['type'] as String? ?? 'text';
+      if (type == 'text') {
+        final text = item['text'] as String? ?? '';
+        if (text.isNotEmpty) {
+          if (buffer.isNotEmpty) buffer.writeln('\n');
+          buffer.write(text);
+        }
+      } else if (type == 'image') {
+        final mimeType = item['mimeType'] as String? ?? 'image/*';
+        if (buffer.isNotEmpty) buffer.writeln('\n');
+        buffer.write('[image result: $mimeType]');
+      } else if (type == 'resource') {
+        if (buffer.isNotEmpty) buffer.writeln('\n');
+        buffer.write(jsonEncode(item));
+      } else {
+        if (buffer.isNotEmpty) buffer.writeln('\n');
+        buffer.write(jsonEncode(item));
+      }
+    }
+    if (buffer.isEmpty && result.structuredContent.isNotEmpty) {
+      buffer.write(const JsonEncoder.withIndent('  ').convert(result.structuredContent));
+    }
+    if (buffer.isEmpty) {
+      buffer.write('MCP tool completed with no textual output.');
+    }
+    return ToolExecutionResult(
+      title: 'mcp.$serverId.$toolName',
+      output: buffer.toString(),
+      metadata: {
+        'serverId': serverId,
+        'toolName': toolName,
+        'structuredContent': result.structuredContent,
+        'isError': result.isError,
+      },
     );
   }
 
