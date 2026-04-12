@@ -50,3 +50,4 @@ logs
 *.pem
 opencode/
 oh-my-openagent/
+claude-code-sourcemap-main/
