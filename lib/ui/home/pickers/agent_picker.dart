@@ -208,9 +208,12 @@ extension _HomePageAgentPicker on _HomePageState {
       isScrollControlled: true,
       backgroundColor: context.oc.pageBackground,
       barrierColor: Colors.transparent,
-      builder: (context) => _AppSettingsSheet(
-        controller: widget.controller,
-        modelConfig: config ?? ModelConfig.defaults(),
+      builder: (context) => FractionallySizedBox(
+        heightFactor: 0.92,
+        child: _AppSettingsSheet(
+          controller: widget.controller,
+          modelConfig: config ?? ModelConfig.defaults(),
+        ),
       ),
     );
   }

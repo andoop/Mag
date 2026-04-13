@@ -1,5 +1,24 @@
 part of '../../home_page.dart';
 
+enum _SettingsDestination {
+  overview,
+  models,
+  mcp,
+  git,
+}
+
+double _dialogMaxWidth(
+  BuildContext context, {
+  required double maxWidth,
+  double horizontalMargin = 40,
+}) {
+  final width = MediaQuery.of(context).size.width - horizontalMargin;
+  if (width <= 0) {
+    return maxWidth;
+  }
+  return width < maxWidth ? width : maxWidth;
+}
+
 class _AppSettingsSheet extends StatefulWidget {
   const _AppSettingsSheet({
     required this.controller,
@@ -19,6 +38,13 @@ class _AppSettingsSheetState extends State<_AppSettingsSheet> {
   late final TextEditingController _modelController;
   late final TextEditingController _gitNameController;
   late final TextEditingController _gitEmailController;
+  _SettingsDestination _destination = _SettingsDestination.overview;
+  String _mcpQuery = '';
+  String _modelsQuery = '';
+  bool _showAllMcpServers = false;
+  bool _showAllSshKeys = false;
+  bool _showAllRemoteCredentials = false;
+  final Map<String, bool> _expandedModelProviders = <String, bool>{};
 
   @override
   void initState() {
@@ -75,6 +101,36 @@ class _AppSettingsSheetState extends State<_AppSettingsSheet> {
         SnackBar(
           content: Text(
             l(context, '模型设置已保存', 'Model settings saved'),
+          ),
+        ),
+      );
+    } catch (error) {
+      if (!mounted) return;
+      _showInfo(context, error.toString());
+    }
+  }
+
+  Future<void> _refreshProviderCatalog() async {
+    final current = widget.modelConfig;
+    final connection = current.currentConnection;
+    if (connection == null) {
+      return;
+    }
+    try {
+      await widget.controller.discoverProviderModels(
+        providerId: connection.id,
+        baseUrl: _baseUrlController.text.trim().isEmpty
+            ? connection.baseUrl
+            : _baseUrlController.text.trim(),
+        apiKey: _apiKeyController.text.trim(),
+        usePublicToken:
+            connection.id == 'mag' && _apiKeyController.text.trim().isEmpty,
+      );
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(
+            l(context, '模型目录已刷新', 'Model catalog refreshed'),
           ),
         ),
       );
@@ -207,7 +263,7 @@ class _AppSettingsSheetState extends State<_AppSettingsSheet> {
                       : l(context, '编辑 MCP Server', 'Edit MCP server'),
                 ),
                 content: SizedBox(
-                  width: 520,
+                  width: _dialogMaxWidth(context, maxWidth: 520),
                   child: Column(
                     mainAxisSize: MainAxisSize.min,
                     children: [
@@ -474,62 +530,65 @@ class _AppSettingsSheetState extends State<_AppSettingsSheet> {
         ..loadRequest(Uri.parse(authorization.url));
       await showDialog<void>(
         context: context,
-        builder: (context) => AlertDialog(
-          title: Text(l(context, '连接 ${server.name}', 'Connect ${server.name}')),
-          content: SizedBox(
-            width: 760,
-            height: 620,
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.stretch,
-              children: [
-                Text(
-                  authorization!.instructions,
-                  style: TextStyle(fontSize: 12.5, color: context.oc.muted),
-                ),
-                const SizedBox(height: 12),
-                Expanded(child: WebViewWidget(controller: webViewController!)),
-                const SizedBox(height: 12),
-                TextField(
-                  controller: codeController,
-                  decoration: InputDecoration(
-                    labelText: l(context, 'Authorization Code', 'Authorization code'),
+        builder: (context) {
+          final dialogHeight = MediaQuery.of(context).size.height * 0.72;
+          return AlertDialog(
+            title: Text(l(context, '连接 ${server.name}', 'Connect ${server.name}')),
+            content: SizedBox(
+              width: _dialogMaxWidth(context, maxWidth: 760),
+              height: dialogHeight.clamp(420.0, 620.0),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: [
+                  Text(
+                    authorization!.instructions,
+                    style: TextStyle(fontSize: 12.5, color: context.oc.muted),
                   ),
-                ),
-              ],
-            ),
-          ),
-          actions: [
-            TextButton(
-              onPressed: () => Navigator.of(context).pop(),
-              child: Text(l(context, '取消', 'Cancel')),
-            ),
-            FilledButton(
-              onPressed: () async {
-                final navigator = Navigator.of(context);
-                final messenger = ScaffoldMessenger.of(context);
-                final successText =
-                    l(context, 'MCP OAuth 已连接', 'MCP OAuth connected');
-                try {
-                  await widget.controller.callbackMcpOAuth(
-                    serverId: server.id,
-                    code: codeController.text.trim(),
-                  );
-                  if (!mounted) return;
-                  navigator.pop();
-                  messenger.showSnackBar(
-                    SnackBar(
-                      content: Text(successText),
+                  const SizedBox(height: 12),
+                  Expanded(child: WebViewWidget(controller: webViewController!)),
+                  const SizedBox(height: 12),
+                  TextField(
+                    controller: codeController,
+                    decoration: InputDecoration(
+                      labelText: l(context, 'Authorization Code', 'Authorization code'),
                     ),
-                  );
-                } catch (error) {
-                  if (!mounted) return;
-                  _showInfo(this.context, error.toString());
-                }
-              },
-              child: Text(l(context, '完成连接', 'Complete connection')),
+                  ),
+                ],
+              ),
             ),
-          ],
-        ),
+            actions: [
+              TextButton(
+                onPressed: () => Navigator.of(context).pop(),
+                child: Text(l(context, '取消', 'Cancel')),
+              ),
+              FilledButton(
+                onPressed: () async {
+                  final navigator = Navigator.of(context);
+                  final messenger = ScaffoldMessenger.of(context);
+                  final successText =
+                      l(context, 'MCP OAuth 已连接', 'MCP OAuth connected');
+                  try {
+                    await widget.controller.callbackMcpOAuth(
+                      serverId: server.id,
+                      code: codeController.text.trim(),
+                    );
+                    if (!mounted) return;
+                    navigator.pop();
+                    messenger.showSnackBar(
+                      SnackBar(
+                        content: Text(successText),
+                      ),
+                    );
+                  } catch (error) {
+                    if (!mounted) return;
+                    _showInfo(this.context, error.toString());
+                  }
+                },
+                child: Text(l(context, '完成连接', 'Complete connection')),
+              ),
+            ],
+          );
+        },
       );
     } catch (error) {
       if (!mounted) return;
@@ -548,70 +607,107 @@ class _AppSettingsSheetState extends State<_AppSettingsSheet> {
       );
       return;
     }
+    var query = '';
     await showDialog<void>(
       context: context,
       builder: (context) {
-        return AlertDialog(
-          title: Text(l(context, 'MCP Resources', 'MCP resources')),
-          content: SizedBox(
-            width: 720,
-            child: ListView.separated(
-              shrinkWrap: true,
-              itemCount: resources.length,
-              separatorBuilder: (_, __) => const Divider(height: 1),
-              itemBuilder: (context, index) {
-                final item = resources[index];
-                return ListTile(
-                  contentPadding: EdgeInsets.zero,
-                  title: Text(item.name),
-                  subtitle: Text('${item.serverId}\n${item.uri}'),
-                  isThreeLine: true,
-                  trailing: const Icon(Icons.chevron_right),
-                  onTap: () async {
-                    final hostContext = this.context;
-                    try {
-                      final contents = await widget.controller.readMcpResource(
-                        serverId: item.serverId,
-                        uri: item.uri,
-                      );
-                      if (!mounted) return;
-                      await showDialog<void>(
-                        context: hostContext,
-                        builder: (context) => AlertDialog(
-                          title: Text(item.name),
-                          content: SizedBox(
-                            width: 760,
-                            child: SingleChildScrollView(
-                              child: SelectableText(
-                                contents
-                                    .map((e) => e.text ?? const JsonEncoder.withIndent('  ').convert(e.toJson()))
-                                    .join('\n\n'),
+        return StatefulBuilder(
+          builder: (context, setDialogState) {
+            final filtered = resources.where((item) {
+              if (query.trim().isEmpty) return true;
+              final q = query.trim().toLowerCase();
+              return item.name.toLowerCase().contains(q) ||
+                  item.serverId.toLowerCase().contains(q) ||
+                  item.uri.toLowerCase().contains(q);
+            }).toList();
+            return AlertDialog(
+              title: Text(l(context, 'MCP Resources', 'MCP resources')),
+              content: SizedBox(
+                width: _dialogMaxWidth(context, maxWidth: 720),
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    TextField(
+                      onChanged: (value) {
+                        query = value;
+                        setDialogState(() {});
+                      },
+                      decoration: _compactPickerSearchDecoration(
+                        context,
+                        hint: l(context, '过滤 resources…', 'Filter resources…'),
+                      ),
+                    ),
+                    const SizedBox(height: 12),
+                    Flexible(
+                      child: filtered.isEmpty
+                          ? Center(
+                              child: Text(
+                                l(context, '没有匹配的 resources。', 'No matching resources.'),
+                                style: TextStyle(fontSize: 12.5, color: context.oc.muted),
                               ),
+                            )
+                          : ListView.separated(
+                              shrinkWrap: true,
+                              itemCount: filtered.length,
+                              separatorBuilder: (_, __) => const Divider(height: 1),
+                              itemBuilder: (context, index) {
+                                final item = filtered[index];
+                                return ListTile(
+                                  contentPadding: EdgeInsets.zero,
+                                  title: Text(item.name),
+                                  subtitle: Text('${item.serverId}\n${item.uri}'),
+                                  isThreeLine: true,
+                                  trailing: const Icon(Icons.chevron_right),
+                                  onTap: () async {
+                                    final hostContext = this.context;
+                                    try {
+                                      final contents = await widget.controller.readMcpResource(
+                                        serverId: item.serverId,
+                                        uri: item.uri,
+                                      );
+                                      if (!mounted) return;
+                                      await showDialog<void>(
+                                        context: hostContext,
+                                        builder: (context) => AlertDialog(
+                                          title: Text(item.name),
+                                          content: SizedBox(
+                                            width: _dialogMaxWidth(context, maxWidth: 760),
+                                            child: SingleChildScrollView(
+                                              child: SelectableText(
+                                                contents
+                                                    .map((e) => e.text ?? const JsonEncoder.withIndent('  ').convert(e.toJson()))
+                                                    .join('\n\n'),
+                                              ),
+                                            ),
+                                          ),
+                                          actions: [
+                                            TextButton(
+                                              onPressed: () => Navigator.of(context).pop(),
+                                              child: Text(l(context, '关闭', 'Close')),
+                                            ),
+                                          ],
+                                        ),
+                                      );
+                                    } catch (error) {
+                                      if (!context.mounted) return;
+                                      _showInfo(context, error.toString());
+                                    }
+                                  },
+                                );
+                              },
                             ),
-                          ),
-                          actions: [
-                            TextButton(
-                              onPressed: () => Navigator.of(context).pop(),
-                              child: Text(l(context, '关闭', 'Close')),
-                            ),
-                          ],
-                        ),
-                      );
-                    } catch (error) {
-                      if (!context.mounted) return;
-                      _showInfo(context, error.toString());
-                    }
-                  },
-                );
-              },
-            ),
-          ),
-          actions: [
-            TextButton(
-              onPressed: () => Navigator.of(context).pop(),
-              child: Text(l(context, '关闭', 'Close')),
-            ),
-          ],
+                    ),
+                  ],
+                ),
+              ),
+              actions: [
+                TextButton(
+                  onPressed: () => Navigator.of(context).pop(),
+                  child: Text(l(context, '关闭', 'Close')),
+                ),
+              ],
+            );
+          },
         );
       },
     );
@@ -626,39 +722,76 @@ class _AppSettingsSheetState extends State<_AppSettingsSheet> {
       );
       return;
     }
+    var query = '';
     await showDialog<void>(
       context: context,
       builder: (context) {
-        return AlertDialog(
-          title: Text(l(context, 'MCP Prompts', 'MCP prompts')),
-          content: SizedBox(
-            width: 720,
-            child: ListView.separated(
-              shrinkWrap: true,
-              itemCount: prompts.length,
-              separatorBuilder: (_, __) => const Divider(height: 1),
-              itemBuilder: (context, index) {
-                final item = prompts[index];
-                return ListTile(
-                  contentPadding: EdgeInsets.zero,
-                  title: Text(item.name),
-                  subtitle: Text([
-                    item.serverId,
-                    if ((item.description ?? '').isNotEmpty) item.description!,
-                  ].join('\n')),
-                  isThreeLine: (item.description ?? '').isNotEmpty,
-                  trailing: const Icon(Icons.chevron_right),
-                  onTap: () => _showMcpPromptRunDialog(item),
-                );
-              },
-            ),
-          ),
-          actions: [
-            TextButton(
-              onPressed: () => Navigator.of(context).pop(),
-              child: Text(l(context, '关闭', 'Close')),
-            ),
-          ],
+        return StatefulBuilder(
+          builder: (context, setDialogState) {
+            final filtered = prompts.where((item) {
+              if (query.trim().isEmpty) return true;
+              final q = query.trim().toLowerCase();
+              return item.name.toLowerCase().contains(q) ||
+                  item.serverId.toLowerCase().contains(q) ||
+                  (item.description ?? '').toLowerCase().contains(q);
+            }).toList();
+            return AlertDialog(
+              title: Text(l(context, 'MCP Prompts', 'MCP prompts')),
+              content: SizedBox(
+                width: _dialogMaxWidth(context, maxWidth: 720),
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    TextField(
+                      onChanged: (value) {
+                        query = value;
+                        setDialogState(() {});
+                      },
+                      decoration: _compactPickerSearchDecoration(
+                        context,
+                        hint: l(context, '过滤 prompts…', 'Filter prompts…'),
+                      ),
+                    ),
+                    const SizedBox(height: 12),
+                    Flexible(
+                      child: filtered.isEmpty
+                          ? Center(
+                              child: Text(
+                                l(context, '没有匹配的 prompts。', 'No matching prompts.'),
+                                style: TextStyle(fontSize: 12.5, color: context.oc.muted),
+                              ),
+                            )
+                          : ListView.separated(
+                              shrinkWrap: true,
+                              itemCount: filtered.length,
+                              separatorBuilder: (_, __) => const Divider(height: 1),
+                              itemBuilder: (context, index) {
+                                final item = filtered[index];
+                                return ListTile(
+                                  contentPadding: EdgeInsets.zero,
+                                  title: Text(item.name),
+                                  subtitle: Text([
+                                    item.serverId,
+                                    if ((item.description ?? '').isNotEmpty) item.description!,
+                                  ].join('\n')),
+                                  isThreeLine: (item.description ?? '').isNotEmpty,
+                                  trailing: const Icon(Icons.chevron_right),
+                                  onTap: () => _showMcpPromptRunDialog(item),
+                                );
+                              },
+                            ),
+                    ),
+                  ],
+                ),
+              ),
+              actions: [
+                TextButton(
+                  onPressed: () => Navigator.of(context).pop(),
+                  child: Text(l(context, '关闭', 'Close')),
+                ),
+              ],
+            );
+          },
         );
       },
     );
@@ -674,7 +807,7 @@ class _AppSettingsSheetState extends State<_AppSettingsSheet> {
         builder: (context) => AlertDialog(
           title: Text(prompt.name),
           content: SizedBox(
-            width: 560,
+            width: _dialogMaxWidth(context, maxWidth: 560),
             child: SingleChildScrollView(
               child: Column(
                 mainAxisSize: MainAxisSize.min,
@@ -730,7 +863,7 @@ class _AppSettingsSheetState extends State<_AppSettingsSheet> {
         builder: (context) => AlertDialog(
           title: Text(prompt.name),
           content: SizedBox(
-            width: 760,
+            width: _dialogMaxWidth(context, maxWidth: 760),
             child: SingleChildScrollView(
               child: SelectableText(
                 const JsonEncoder.withIndent('  ')
@@ -841,7 +974,7 @@ class _AppSettingsSheetState extends State<_AppSettingsSheet> {
           return AlertDialog(
             title: Text(l(context, '导入 SSH Key', 'Import SSH key')),
             content: SizedBox(
-              width: 520,
+              width: _dialogMaxWidth(context, maxWidth: 520),
               child: SingleChildScrollView(
                 child: Column(
                   mainAxisSize: MainAxisSize.min,
@@ -930,7 +1063,7 @@ class _AppSettingsSheetState extends State<_AppSettingsSheet> {
         return AlertDialog(
           title: Text(l(context, '公钥', 'Public key')),
           content: SizedBox(
-            width: 520,
+            width: _dialogMaxWidth(context, maxWidth: 520),
             child: SelectableText(key.publicKeyOpenSsh),
           ),
           actions: [
@@ -1059,6 +1192,1144 @@ class _AppSettingsSheetState extends State<_AppSettingsSheet> {
     await widget.controller.deleteGitRemoteCredential(credential.id);
   }
 
+  String _destinationLabel(BuildContext context, _SettingsDestination destination) {
+    switch (destination) {
+      case _SettingsDestination.overview:
+        return l(context, '总览', 'Overview');
+      case _SettingsDestination.models:
+        return l(context, '模型', 'Models');
+      case _SettingsDestination.mcp:
+        return 'MCP';
+      case _SettingsDestination.git:
+        return 'Git';
+    }
+  }
+
+  IconData _destinationIcon(_SettingsDestination destination) {
+    switch (destination) {
+      case _SettingsDestination.overview:
+        return Icons.dashboard_outlined;
+      case _SettingsDestination.models:
+        return Icons.hub_outlined;
+      case _SettingsDestination.mcp:
+        return Icons.extension_outlined;
+      case _SettingsDestination.git:
+        return Icons.source_outlined;
+    }
+  }
+
+  Widget _buildDestinationTabs(BuildContext context) {
+    return SingleChildScrollView(
+      scrollDirection: Axis.horizontal,
+      child: Row(
+        children: [
+          for (final destination in _SettingsDestination.values) ...[
+            _SettingsNavChip(
+              icon: _destinationIcon(destination),
+              label: _destinationLabel(context, destination),
+              selected: _destination == destination,
+              onTap: () {
+                setState(() {
+                  _destination = destination;
+                });
+              },
+            ),
+            if (destination != _SettingsDestination.values.last)
+              const SizedBox(width: 8),
+          ],
+        ],
+      ),
+    );
+  }
+
+  Widget _buildSettingsBody(
+    BuildContext context, {
+    required Widget child,
+  }) {
+    return ListView(
+      padding: const EdgeInsets.fromLTRB(0, 0, 0, 4),
+      children: [child],
+    );
+  }
+
+  bool _matchesSettingsModelQuery(_ModelChoice item, String query) {
+    if (query.trim().isEmpty) return true;
+    final normalized = query.trim().toLowerCase();
+    final providerLabel = _providerLabel(
+      item.providerId,
+      config: widget.controller.state.modelConfig,
+      state: widget.controller.state,
+    ).toLowerCase();
+    return item.name.toLowerCase().contains(normalized) ||
+        item.id.toLowerCase().contains(normalized) ||
+        item.providerId.toLowerCase().contains(normalized) ||
+        providerLabel.contains(normalized);
+  }
+
+  Future<void> _setProviderModelsVisibility(
+    _ProviderModelGroup group,
+    bool visible,
+  ) async {
+    for (final item in group.models) {
+      await widget.controller.setModelVisibility(
+        providerId: item.providerId,
+        modelId: item.id,
+        visible: visible,
+      );
+    }
+    if (!mounted) return;
+    setState(() {});
+  }
+
+  Widget _buildOverviewPage(
+    BuildContext context, {
+    required ModelConfig current,
+    required ProviderConnection? connection,
+    required GitSettings gitSettings,
+    required WorkspaceInfo? workspace,
+  }) {
+    final mcpServers = widget.controller.state.mcpServers;
+    final connectedMcp = widget.controller.state.mcpStatuses.values
+        .where((item) => item.connected)
+        .length;
+    final visibleModelCount = _connectedModelGroups(
+      current,
+      state: widget.controller.state,
+      onlyVisible: true,
+    ).fold<int>(0, (sum, group) => sum + group.models.length);
+    return _buildSettingsBody(
+      context,
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          _SettingsSectionCard(
+            icon: Icons.dashboard_customize_outlined,
+            title: l(context, '快速入口', 'Quick access'),
+            subtitle: l(
+              context,
+              '把高频动作放到前面，避免在一个长页面里来回滚动。',
+              'Bring frequent actions forward so you do not need to scroll a long page.',
+            ),
+            child: Column(
+              children: [
+                _SettingsDestinationCard(
+                  icon: Icons.hub_outlined,
+                  title: l(context, 'Models & Providers', 'Models & providers'),
+                  subtitle: connection == null
+                      ? l(context, '当前还没有连接 provider。', 'No provider connected yet.')
+                      : '${connection.name} · ${current.model}',
+                  trailing: '$visibleModelCount ${l(context, "models", "models")}',
+                  onTap: () {
+                    setState(() {
+                      _destination = _SettingsDestination.models;
+                    });
+                  },
+                ),
+                const SizedBox(height: 10),
+                _SettingsDestinationCard(
+                  icon: Icons.extension_outlined,
+                  title: l(context, 'MCP', 'MCP'),
+                  subtitle: l(
+                    context,
+                    '远程 tools / resources / prompts 管理。',
+                    'Manage remote tools / resources / prompts.',
+                  ),
+                  trailing: '$connectedMcp/${mcpServers.length}',
+                  onTap: () {
+                    setState(() {
+                      _destination = _SettingsDestination.mcp;
+                    });
+                  },
+                ),
+                const SizedBox(height: 10),
+                _SettingsDestinationCard(
+                  icon: Icons.source_outlined,
+                  title: l(context, 'Git & Credentials', 'Git & credentials'),
+                  subtitle: gitSettings.identity.name.trim().isEmpty
+                      ? l(context, '还没有设置 Git 身份。', 'Git identity is not configured yet.')
+                      : '${gitSettings.identity.name} · ${gitSettings.identity.email}',
+                  trailing:
+                      '${gitSettings.sshKeys.length + gitSettings.remoteCredentials.length}',
+                  onTap: () {
+                    setState(() {
+                      _destination = _SettingsDestination.git;
+                    });
+                  },
+                ),
+              ],
+            ),
+          ),
+          const SizedBox(height: 14),
+          _SettingsSectionCard(
+            icon: Icons.auto_awesome_outlined,
+            title: l(context, 'Skills', 'Skills'),
+            subtitle: l(
+              context,
+              '工作区技能保持独立入口，不和模型/MCP 配置挤在一起。',
+              'Workspace skills stay on their own path instead of sharing the same long setup form.',
+            ),
+            action: Align(
+              alignment: Alignment.centerLeft,
+              child: FilledButton.tonalIcon(
+                onPressed: workspace == null ? null : _showSkillsBrowser,
+                icon: const Icon(Icons.visibility_outlined, size: 18),
+                label: Text(l(context, '浏览 Skills', 'Browse skills')),
+              ),
+            ),
+            child: Text(
+              workspace == null
+                  ? l(
+                      context,
+                      '当前还没有打开工作区，因此无法扫描 skills。',
+                      'No workspace is open yet, so skills cannot be scanned.',
+                    )
+                  : l(
+                      context,
+                      '会扫描 `.claude/skills`、`.agents/skills`、`.opencode/skill`、`.opencode/skills`。',
+                      'Scans `.claude/skills`, `.agents/skills`, `.opencode/skill`, and `.opencode/skills`.',
+                    ),
+              style: TextStyle(fontSize: 12.5, color: context.oc.muted),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildModelsPage(
+    BuildContext context, {
+    required ModelConfig current,
+    required ProviderConnection? connection,
+  }) {
+    final state = widget.controller.state;
+    final allGroups = _connectedModelGroups(
+      current,
+      state: state,
+    ).map((group) {
+      final matches = group.models
+          .where((item) => _matchesSettingsModelQuery(item, _modelsQuery))
+          .toList();
+      return _ProviderModelGroup(
+        provider: group.provider,
+        models: matches,
+      );
+    }).where((group) => group.models.isNotEmpty).toList();
+    var visibleModelCount = 0;
+    var totalModelCount = 0;
+    for (final group in allGroups) {
+      totalModelCount += group.models.length;
+      visibleModelCount += group.models
+          .where((item) => _isModelVisible(current, item))
+          .length;
+      _expandedModelProviders.putIfAbsent(group.provider.id, () => true);
+    }
+    return _buildSettingsBody(
+      context,
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          _SettingsSectionCard(
+            icon: Icons.hub_outlined,
+            title: l(context, '模型连接', 'Model connection'),
+            subtitle: l(
+              context,
+              '高频模型设置单独放一页，减少和 Git/MCP 混在一起时的滚动成本。',
+              'High-frequency model settings live on their own page to reduce scrolling with Git and MCP.',
+            ),
+            action: connection == null
+                ? null
+                : Align(
+                    alignment: Alignment.centerLeft,
+                    child: Text(
+                      '${connection.name} · ${current.model}',
+                      style: TextStyle(fontSize: 12.5, color: context.oc.muted),
+                    ),
+                  ),
+            child: connection == null
+                ? Text(
+                    l(
+                      context,
+                      '当前还没有连接 provider。可先从主页模型按钮连接，再回到这里调整 endpoint 和默认模型。',
+                      'No provider is connected yet. Connect one from the home model picker first, then return here to tune the endpoint and default model.',
+                    ),
+                    style: TextStyle(fontSize: 12.5, color: context.oc.muted),
+                  )
+                : Column(
+                    crossAxisAlignment: CrossAxisAlignment.stretch,
+                    children: [
+                      Wrap(
+                        spacing: 8,
+                        runSpacing: 8,
+                        children: [
+                          _SettingsMetaChip(
+                            icon: Icons.visibility_outlined,
+                            label:
+                                '$visibleModelCount/$totalModelCount ${l(context, '可见', 'visible')}',
+                          ),
+                          _SettingsMetaChip(
+                            icon: Icons.refresh_rounded,
+                            label: l(context, '可刷新模型目录', 'Refreshable catalog'),
+                          ),
+                        ],
+                      ),
+                      const SizedBox(height: 12),
+                      TextField(
+                        controller: _baseUrlController,
+                        decoration: InputDecoration(
+                          labelText: l(context, 'Base URL', 'Base URL'),
+                        ),
+                      ),
+                      const SizedBox(height: 12),
+                      TextField(
+                        controller: _apiKeyController,
+                        obscureText: true,
+                        decoration: InputDecoration(
+                          labelText: l(context, 'API Key', 'API Key'),
+                        ),
+                      ),
+                      const SizedBox(height: 12),
+                      TextField(
+                        controller: _modelController,
+                        decoration: InputDecoration(
+                          labelText: l(context, '模型', 'Model'),
+                        ),
+                      ),
+                      const SizedBox(height: 12),
+                      Wrap(
+                        alignment: WrapAlignment.end,
+                        spacing: 8,
+                        runSpacing: 8,
+                        children: [
+                          OutlinedButton.icon(
+                            onPressed: _refreshProviderCatalog,
+                            icon: const Icon(Icons.refresh_rounded),
+                            label: Text(
+                              l(context, '刷新模型目录', 'Refresh catalog'),
+                            ),
+                          ),
+                          OutlinedButton.icon(
+                            onPressed: _disconnectCurrentProvider,
+                            icon: const Icon(Icons.link_off_rounded),
+                            label: Text(l(context, '断开', 'Disconnect')),
+                          ),
+                          FilledButton(
+                            onPressed: _saveProviderSettings,
+                            child: Text(
+                              l(context, '保存模型设置', 'Save model settings'),
+                            ),
+                          ),
+                        ],
+                      ),
+                    ],
+                  ),
+          ),
+          const SizedBox(height: 14),
+          _SettingsSectionCard(
+            icon: Icons.tune_rounded,
+            title: l(context, '模型可见性', 'Model visibility'),
+            subtitle: l(
+              context,
+              '按 provider 分组管理模型显示，和模型选择器保持联动。',
+              'Manage which models appear in the picker, grouped by provider.',
+            ),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                TextField(
+                  onChanged: (value) {
+                    setState(() {
+                      _modelsQuery = value;
+                    });
+                  },
+                  decoration: _compactPickerSearchDecoration(
+                    context,
+                    hint: l(context, '过滤模型…', 'Filter models…'),
+                  ),
+                ),
+                const SizedBox(height: 12),
+                if (allGroups.isEmpty)
+                  Text(
+                    _modelsQuery.trim().isEmpty
+                        ? l(
+                            context,
+                            '还没有可管理的模型。先连接 provider 或刷新当前模型目录。',
+                            'No models available yet. Connect a provider or refresh the current catalog first.',
+                          )
+                        : l(context, '没有匹配的模型。', 'No matching models.'),
+                    style: TextStyle(fontSize: 12.5, color: context.oc.muted),
+                  )
+                else
+                  Column(
+                    children: allGroups.map((group) {
+                      final provider = group.provider;
+                      final models = group.models;
+                      final providerId = provider.id;
+                      final expanded = _modelsQuery.trim().isNotEmpty ||
+                          (_expandedModelProviders[providerId] ?? true);
+                      final visibleCount = models
+                          .where((item) => _isModelVisible(current, item))
+                          .length;
+                      final allVisible = visibleCount == models.length;
+                      return Padding(
+                        padding: const EdgeInsets.only(bottom: 12),
+                        child: Container(
+                          decoration: BoxDecoration(
+                            color: context.oc.mutedPanel,
+                            borderRadius: BorderRadius.circular(14),
+                            border: Border.all(color: context.oc.border),
+                          ),
+                          child: Column(
+                            children: [
+                              InkWell(
+                                borderRadius: const BorderRadius.vertical(
+                                  top: Radius.circular(14),
+                                ),
+                                onTap: () {
+                                  if (_modelsQuery.trim().isNotEmpty) return;
+                                  setState(() {
+                                    _expandedModelProviders[providerId] = !expanded;
+                                  });
+                                },
+                                child: Padding(
+                                  padding: const EdgeInsets.fromLTRB(12, 10, 12, 10),
+                                  child: Row(
+                                    children: [
+                                      Expanded(
+                                        child: Column(
+                                          crossAxisAlignment: CrossAxisAlignment.start,
+                                          children: [
+                                            Text(
+                                              provider.name,
+                                              style: TextStyle(
+                                                fontSize: 13.5,
+                                                fontWeight: FontWeight.w700,
+                                                color: context.oc.text,
+                                              ),
+                                            ),
+                                            const SizedBox(height: 3),
+                                            Text(
+                                              '$visibleCount / ${models.length} ${l(context, '可见模型', 'visible models')}',
+                                              style: TextStyle(
+                                                fontSize: 11.5,
+                                                color: context.oc.muted,
+                                              ),
+                                            ),
+                                          ],
+                                        ),
+                                      ),
+                                      Switch.adaptive(
+                                        value: allVisible,
+                                        onChanged: (value) =>
+                                            _setProviderModelsVisibility(group, value),
+                                      ),
+                                      const SizedBox(width: 4),
+                                      Icon(
+                                        expanded
+                                            ? Icons.expand_less_rounded
+                                            : Icons.expand_more_rounded,
+                                        size: 18,
+                                        color: context.oc.muted,
+                                      ),
+                                    ],
+                                  ),
+                                ),
+                              ),
+                              if (expanded) ...[
+                                Divider(height: 1, color: context.oc.border),
+                                for (var i = 0; i < models.length; i++) ...[
+                                  SwitchListTile.adaptive(
+                                    value: _isModelVisible(current, models[i]),
+                                    dense: true,
+                                    contentPadding: const EdgeInsets.symmetric(
+                                      horizontal: 12,
+                                      vertical: 4,
+                                    ),
+                                    title: Row(
+                                      crossAxisAlignment: CrossAxisAlignment.start,
+                                      children: [
+                                        Expanded(
+                                          child: Text(
+                                            models[i].name,
+                                            style: const TextStyle(
+                                              fontSize: 13.5,
+                                              fontWeight: FontWeight.w500,
+                                            ),
+                                          ),
+                                        ),
+                                        if (_modelChoiceIsFree(models[i])) ...[
+                                          const SizedBox(width: 6),
+                                          OcModelTag(
+                                            label: l(context, '免费', 'Free'),
+                                          ),
+                                        ],
+                                        if (_modelChoiceIsLatest(models[i])) ...[
+                                          const SizedBox(width: 6),
+                                          OcModelTag(
+                                            label: l(context, '最新', 'Latest'),
+                                          ),
+                                        ],
+                                      ],
+                                    ),
+                                    subtitle: Padding(
+                                      padding: const EdgeInsets.only(top: 4),
+                                      child: Text(
+                                        models[i].id,
+                                        style: TextStyle(
+                                          fontSize: 11.5,
+                                          color: context.oc.muted,
+                                        ),
+                                      ),
+                                    ),
+                                    onChanged: (value) async {
+                                      await widget.controller.setModelVisibility(
+                                        providerId: models[i].providerId,
+                                        modelId: models[i].id,
+                                        visible: value,
+                                      );
+                                      if (!mounted) return;
+                                      setState(() {});
+                                    },
+                                  ),
+                                  if (i != models.length - 1)
+                                    Divider(height: 1, color: context.oc.border),
+                                ],
+                              ],
+                            ],
+                          ),
+                        ),
+                      );
+                    }).toList(),
+                  ),
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildMcpPage(BuildContext context) {
+    final oc = context.oc;
+    final servers = widget.controller.state.mcpServers;
+    final statuses = widget.controller.state.mcpStatuses;
+    final connectedCount = statuses.values.where((item) => item.connected).length;
+    final filteredServers = servers.where((server) {
+      if (_mcpQuery.trim().isEmpty) return true;
+      final q = _mcpQuery.trim().toLowerCase();
+      return server.name.toLowerCase().contains(q) ||
+          server.url.toLowerCase().contains(q) ||
+          server.id.toLowerCase().contains(q);
+    }).toList();
+    final visibleServers = _showAllMcpServers || filteredServers.length <= 3
+        ? filteredServers
+        : filteredServers.take(3).toList();
+    return _buildSettingsBody(
+      context,
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          _SettingsSectionCard(
+            icon: Icons.extension_outlined,
+            title: l(context, 'MCP Servers', 'MCP servers'),
+            subtitle: l(
+              context,
+              '借鉴 opencode 的做法，把 server 状态、目录和操作集中在一个清晰区域里。',
+              'Inspired by opencode: keep server state, catalogs, and actions in one clear area.',
+            ),
+            action: Wrap(
+              spacing: 8,
+              runSpacing: 8,
+              children: [
+                FilledButton.tonalIcon(
+                  onPressed: () => _showMcpServerDialog(),
+                  icon: const Icon(Icons.add_link_outlined, size: 18),
+                  label: Text(l(context, '添加 Server', 'Add server')),
+                ),
+                OutlinedButton.icon(
+                  onPressed: _showMcpResourcesBrowser,
+                  icon: const Icon(Icons.inventory_2_outlined, size: 18),
+                  label: Text(l(context, 'Resources', 'Resources')),
+                ),
+                OutlinedButton.icon(
+                  onPressed: _showMcpPromptsBrowser,
+                  icon: const Icon(Icons.text_snippet_outlined, size: 18),
+                  label: Text(l(context, 'Prompts', 'Prompts')),
+                ),
+              ],
+            ),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                Row(
+                  children: [
+                    Expanded(
+                      child: Text(
+                        l(
+                          context,
+                          '已连接 $connectedCount / ${servers.length} 个 server',
+                          '$connectedCount / ${servers.length} servers connected',
+                        ),
+                        style: TextStyle(fontSize: 12.5, color: oc.muted),
+                      ),
+                    ),
+                  ],
+                ),
+                const SizedBox(height: 10),
+                TextField(
+                  onChanged: (value) {
+                    setState(() {
+                      _mcpQuery = value;
+                      _showAllMcpServers = false;
+                    });
+                  },
+                  decoration: _compactPickerSearchDecoration(
+                    context,
+                    hint: l(context, '过滤 MCP server…', 'Filter MCP servers…'),
+                  ),
+                ),
+                const SizedBox(height: 12),
+                if (servers.isEmpty)
+                  Text(
+                    l(
+                      context,
+                      '还没有配置 MCP server。当前先支持远程 HTTP MCP，可选 Bearer Token 或 OAuth。',
+                      'No MCP servers configured yet. Remote HTTP MCP with optional bearer token or OAuth is supported now.',
+                    ),
+                    style: TextStyle(fontSize: 12.5, color: oc.muted),
+                  )
+                else if (filteredServers.isEmpty)
+                  Text(
+                    l(context, '没有匹配的 MCP server。', 'No matching MCP servers.'),
+                    style: TextStyle(fontSize: 12.5, color: oc.muted),
+                  )
+                else ...[
+                  for (final server in visibleServers) ...[
+                    _buildMcpServerCard(context, server, statuses[server.id]),
+                    if (server != visibleServers.last) const SizedBox(height: 10),
+                  ],
+                  if (filteredServers.length > visibleServers.length) ...[
+                    const SizedBox(height: 10),
+                    Align(
+                      alignment: Alignment.centerLeft,
+                      child: OutlinedButton.icon(
+                        onPressed: () {
+                          setState(() {
+                            _showAllMcpServers = true;
+                          });
+                        },
+                        icon: const Icon(Icons.expand_more_rounded, size: 18),
+                        label: Text(
+                          l(
+                            context,
+                            '查看全部 ${filteredServers.length} 个 server',
+                            'Show all ${filteredServers.length} servers',
+                          ),
+                        ),
+                      ),
+                    ),
+                  ],
+                ],
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildGitPage(BuildContext context, {required GitSettings gitSettings}) {
+    final sshKeys = _showAllSshKeys || gitSettings.sshKeys.length <= 2
+        ? gitSettings.sshKeys
+        : gitSettings.sshKeys.take(2).toList();
+    final remoteCredentials =
+        _showAllRemoteCredentials || gitSettings.remoteCredentials.length <= 2
+            ? gitSettings.remoteCredentials
+            : gitSettings.remoteCredentials.take(2).toList();
+    return _buildSettingsBody(
+      context,
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          _SettingsSectionCard(
+            icon: Icons.badge_outlined,
+            title: l(context, 'Git 身份', 'Git identity'),
+            subtitle: l(
+              context,
+              '提交作者信息会用于本地 Git 操作。',
+              'Commit author details used for local Git operations.',
+            ),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                TextField(
+                  controller: _gitNameController,
+                  decoration: InputDecoration(
+                    labelText: l(context, 'Git 用户名', 'Git user name'),
+                  ),
+                ),
+                const SizedBox(height: 12),
+                TextField(
+                  controller: _gitEmailController,
+                  decoration: InputDecoration(
+                    labelText: l(context, 'Git 邮箱', 'Git email'),
+                  ),
+                ),
+                const SizedBox(height: 12),
+                Align(
+                  alignment: Alignment.centerRight,
+                  child: FilledButton(
+                    onPressed: _saveGitIdentity,
+                    child: Text(l(context, '保存 Git 身份', 'Save Git identity')),
+                  ),
+                ),
+              ],
+            ),
+          ),
+          const SizedBox(height: 14),
+          _buildGitSshSection(context, gitSettings, sshKeys),
+          const SizedBox(height: 14),
+          _buildRemoteCredentialSection(context, gitSettings, remoteCredentials),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildCurrentDestinationPage(
+    BuildContext context, {
+    required ModelConfig current,
+    required ProviderConnection? connection,
+    required GitSettings gitSettings,
+    required WorkspaceInfo? workspace,
+  }) {
+    switch (_destination) {
+      case _SettingsDestination.overview:
+        return _buildOverviewPage(
+          context,
+          current: current,
+          connection: connection,
+          gitSettings: gitSettings,
+          workspace: workspace,
+        );
+      case _SettingsDestination.models:
+        return _buildModelsPage(
+          context,
+          current: current,
+          connection: connection,
+        );
+      case _SettingsDestination.mcp:
+        return _buildMcpPage(context);
+      case _SettingsDestination.git:
+        return _buildGitPage(
+          context,
+          gitSettings: gitSettings,
+        );
+    }
+  }
+
+  Widget _buildMcpServerCard(
+    BuildContext context,
+    McpServerConfig server,
+    McpServerStatus? status,
+  ) {
+    final oc = context.oc;
+    final healthy = status?.connected ?? false;
+    final subtitle = [
+      server.url,
+      if (server.oauth != null)
+        l(
+          context,
+          'Auth: OAuth${server.hasAuth ? " (connected)" : " (not connected)"}',
+          'Auth: OAuth${server.hasAuth ? " (connected)" : " (not connected)"}',
+        )
+      else if (server.hasAuth)
+        l(context, 'Auth: Bearer token', 'Auth: Bearer token'),
+      if (status != null)
+        '${status.toolCount} tools / ${status.resourceCount} resources / ${status.promptCount} prompts',
+      if ((status?.error ?? '').isNotEmpty) status!.error!,
+    ].join('\n');
+    return Container(
+      padding: const EdgeInsets.all(12),
+      decoration: BoxDecoration(
+        color: oc.mutedPanel,
+        borderRadius: BorderRadius.circular(14),
+        border: Border.all(color: oc.border),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              Expanded(
+                child: Text(
+                  server.name,
+                  style: TextStyle(
+                    fontWeight: FontWeight.w700,
+                    color: oc.text,
+                  ),
+                ),
+              ),
+              Icon(
+                healthy
+                    ? Icons.check_circle_outline
+                    : Icons.radio_button_unchecked,
+                size: 18,
+                color: healthy ? Colors.green : oc.muted,
+              ),
+            ],
+          ),
+          const SizedBox(height: 6),
+          Text(
+            subtitle,
+            style: TextStyle(
+              fontSize: 12.5,
+              height: 1.35,
+              color: oc.muted,
+            ),
+          ),
+          const SizedBox(height: 10),
+          Wrap(
+            spacing: 8,
+            runSpacing: 8,
+            children: [
+              OutlinedButton.icon(
+                onPressed: () => _showMcpServerDialog(server),
+                icon: const Icon(Icons.edit_outlined, size: 18),
+                label: Text(l(context, '编辑', 'Edit')),
+              ),
+              OutlinedButton.icon(
+                onPressed: () => _refreshMcpServer(server.id),
+                icon: const Icon(Icons.refresh_rounded, size: 18),
+                label: Text(l(context, '刷新', 'Refresh')),
+              ),
+              if (server.oauth != null)
+                OutlinedButton.icon(
+                  onPressed: () => _showMcpOAuthSheet(server),
+                  icon: const Icon(Icons.lock_open_outlined, size: 18),
+                  label: Text(
+                    server.hasAuth
+                        ? l(context, '重连 OAuth', 'Reconnect OAuth')
+                        : l(context, '连接 OAuth', 'Connect OAuth'),
+                  ),
+                ),
+              OutlinedButton.icon(
+                onPressed: () => _deleteMcpServer(server),
+                icon: const Icon(Icons.delete_outline, size: 18),
+                label: Text(l(context, '删除', 'Delete')),
+              ),
+            ],
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildGitSshSection(
+    BuildContext context,
+    GitSettings gitSettings,
+    List<GitSshKey> visibleKeys,
+  ) {
+    final oc = context.oc;
+    return _SettingsSectionCard(
+      icon: Icons.vpn_key_outlined,
+      title: l(context, 'SSH Keys', 'SSH keys'),
+      subtitle: l(
+        context,
+        '支持生成、导入和设置默认 SSH Key。',
+        'Generate, import, and manage your default SSH key.',
+      ),
+      action: Wrap(
+        spacing: 8,
+        runSpacing: 8,
+        children: [
+          OutlinedButton.icon(
+            onPressed: _showImportKeyDialog,
+            icon: const Icon(Icons.file_upload_outlined, size: 18),
+            label: Text(l(context, '导入', 'Import')),
+          ),
+          FilledButton.tonalIcon(
+            onPressed: _showGenerateKeyDialog,
+            icon: const Icon(Icons.auto_awesome_outlined, size: 18),
+            label: Text(l(context, '生成', 'Generate')),
+          ),
+        ],
+      ),
+      child: gitSettings.sshKeys.isEmpty
+          ? Text(
+              l(
+                context,
+                '还没有 SSH Key。当前仅支持 Ed25519 OpenSSH，可直接生成或导入现有私钥。',
+                'No SSH keys yet. Only Ed25519 OpenSSH is supported now.',
+              ),
+              style: TextStyle(fontSize: 12.5, color: oc.muted),
+            )
+          : Column(
+              children: [
+                for (final key in visibleKeys) ...[
+                  Container(
+                    width: double.infinity,
+                    margin: const EdgeInsets.only(bottom: 10),
+                    decoration: BoxDecoration(
+                      border: Border.all(color: oc.border),
+                      borderRadius: BorderRadius.circular(14),
+                      color: oc.surface.withOpacity(0.55),
+                    ),
+                    child: Padding(
+                      padding: const EdgeInsets.all(12),
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Row(
+                            children: [
+                              Expanded(
+                                child: Text(
+                                  key.name,
+                                  style: TextStyle(
+                                    fontSize: 14,
+                                    fontWeight: FontWeight.w600,
+                                    color: oc.text,
+                                  ),
+                                ),
+                              ),
+                              if (gitSettings.defaultSshKey?.id == key.id)
+                                Container(
+                                  padding: const EdgeInsets.symmetric(
+                                    horizontal: 8,
+                                    vertical: 4,
+                                  ),
+                                  decoration: BoxDecoration(
+                                    color: oc.tagGreen.withOpacity(0.12),
+                                    borderRadius: BorderRadius.circular(999),
+                                  ),
+                                  child: Text(
+                                    l(context, '默认', 'Default'),
+                                    style: TextStyle(
+                                      fontSize: 11,
+                                      color: oc.tagGreen,
+                                    ),
+                                  ),
+                                ),
+                            ],
+                          ),
+                          const SizedBox(height: 6),
+                          Text(
+                            '${key.algorithm}  ${key.fingerprint}',
+                            style: TextStyle(fontSize: 12, color: oc.muted),
+                          ),
+                          if (key.comment.trim().isNotEmpty) ...[
+                            const SizedBox(height: 4),
+                            Text(
+                              key.comment,
+                              style: TextStyle(fontSize: 12, color: oc.muted),
+                            ),
+                          ],
+                          const SizedBox(height: 10),
+                          Wrap(
+                            spacing: 8,
+                            runSpacing: 8,
+                            children: [
+                              OutlinedButton(
+                                onPressed: gitSettings.defaultSshKey?.id == key.id
+                                    ? null
+                                    : () => widget.controller.setDefaultGitSshKey(key.id),
+                                child: Text(l(context, '设为默认', 'Set default')),
+                              ),
+                              OutlinedButton(
+                                onPressed: () => _showPublicKeyDialog(key),
+                                child: Text(l(context, '查看公钥', 'View public key')),
+                              ),
+                              OutlinedButton(
+                                onPressed: () => _confirmDeleteKey(key),
+                                child: Text(l(context, '删除', 'Delete')),
+                              ),
+                            ],
+                          ),
+                        ],
+                      ),
+                    ),
+                  ),
+                ],
+                if (gitSettings.sshKeys.length > visibleKeys.length)
+                  Align(
+                    alignment: Alignment.centerLeft,
+                    child: OutlinedButton.icon(
+                      onPressed: () {
+                        setState(() {
+                          _showAllSshKeys = true;
+                        });
+                      },
+                      icon: const Icon(Icons.expand_more_rounded, size: 18),
+                      label: Text(
+                        l(
+                          context,
+                          '查看全部 ${gitSettings.sshKeys.length} 个 SSH Key',
+                          'Show all ${gitSettings.sshKeys.length} SSH keys',
+                        ),
+                      ),
+                    ),
+                  ),
+              ],
+            ),
+    );
+  }
+
+  Widget _buildRemoteCredentialSection(
+    BuildContext context,
+    GitSettings gitSettings,
+    List<GitRemoteCredential> visibleCredentials,
+  ) {
+    final oc = context.oc;
+    return _SettingsSectionCard(
+      icon: Icons.shield_outlined,
+      title: l(context, '远程认证', 'Remote credentials'),
+      subtitle: l(
+        context,
+        '按主机和路径前缀自动匹配远程仓库认证。',
+        'Credentials are matched automatically by host and path prefix.',
+      ),
+      action: PopupMenuButton<String>(
+        onSelected: _showRemoteCredentialDialog,
+        itemBuilder: (context) => [
+          PopupMenuItem<String>(
+            value: 'httpsToken',
+            child: Text(l(context, '新增 HTTPS Token', 'Add HTTPS token')),
+          ),
+          PopupMenuItem<String>(
+            value: 'httpsBasic',
+            child: Text(l(context, '新增 HTTPS 账号密码', 'Add HTTPS user/password')),
+          ),
+          PopupMenuItem<String>(
+            value: 'sshKey',
+            child: Text(l(context, '新增 SSH 绑定', 'Add SSH binding')),
+          ),
+        ],
+        child: Container(
+          decoration: BoxDecoration(
+            color: oc.surface.withOpacity(0.9),
+            borderRadius: BorderRadius.circular(12),
+            border: Border.all(color: oc.border),
+          ),
+          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 9),
+          child: Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Icon(Icons.add_circle_outline, size: 18, color: oc.text),
+              const SizedBox(width: 8),
+              Text(
+                l(context, '新增认证', 'Add credential'),
+                style: TextStyle(
+                  fontSize: 13,
+                  fontWeight: FontWeight.w600,
+                  color: oc.text,
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+      child: gitSettings.remoteCredentials.isEmpty
+          ? Text(
+              l(
+                context,
+                'SSH 远程如果没有单独配置，会回退到默认 SSH Key。',
+                'SSH remotes fall back to the default SSH key when no explicit binding exists.',
+              ),
+              style: TextStyle(fontSize: 12.5, color: oc.muted),
+            )
+          : Column(
+              children: [
+                for (final credential in visibleCredentials) ...[
+                  Builder(
+                    builder: (context) {
+                      final sshKey = credential.sshKeyId == null
+                          ? null
+                          : gitSettings.sshKeys
+                              .where((item) => item.id == credential.sshKeyId)
+                              .cast<GitSshKey?>()
+                              .firstWhere((item) => item != null, orElse: () => null);
+                      final typeLabel = credential.type == 'sshKey'
+                          ? 'SSH'
+                          : credential.type == 'httpsBasic'
+                              ? 'HTTPS Password'
+                              : 'HTTPS Token';
+                      final pathLabel = credential.pathPrefix.trim().isEmpty
+                          ? '/'
+                          : credential.pathPrefix;
+                      return Container(
+                        width: double.infinity,
+                        margin: const EdgeInsets.only(bottom: 10),
+                        decoration: BoxDecoration(
+                          border: Border.all(color: oc.border),
+                          borderRadius: BorderRadius.circular(14),
+                          color: oc.surface.withOpacity(0.55),
+                        ),
+                        child: Padding(
+                          padding: const EdgeInsets.all(12),
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Text(
+                                credential.name,
+                                style: TextStyle(
+                                  fontSize: 14,
+                                  fontWeight: FontWeight.w600,
+                                  color: oc.text,
+                                ),
+                              ),
+                              const SizedBox(height: 6),
+                              Text(
+                                '$typeLabel  ${credential.host}$pathLabel',
+                                style: TextStyle(fontSize: 12, color: oc.muted),
+                              ),
+                              if (credential.username.trim().isNotEmpty) ...[
+                                const SizedBox(height: 4),
+                                Text(
+                                  '${l(context, '用户名', 'Username')}: ${credential.username}',
+                                  style: TextStyle(fontSize: 12, color: oc.muted),
+                                ),
+                              ],
+                              if (sshKey != null) ...[
+                                const SizedBox(height: 4),
+                                Text(
+                                  '${l(context, 'SSH Key', 'SSH key')}: ${sshKey.name}',
+                                  style: TextStyle(fontSize: 12, color: oc.muted),
+                                ),
+                              ],
+                              const SizedBox(height: 10),
+                              OutlinedButton(
+                                onPressed: () => _confirmDeleteRemoteCredential(credential),
+                                child: Text(l(context, '删除', 'Delete')),
+                              ),
+                            ],
+                          ),
+                        ),
+                      );
+                    },
+                  ),
+                ],
+                if (gitSettings.remoteCredentials.length > visibleCredentials.length)
+                  Align(
+                    alignment: Alignment.centerLeft,
+                    child: OutlinedButton.icon(
+                      onPressed: () {
+                        setState(() {
+                          _showAllRemoteCredentials = true;
+                        });
+                      },
+                      icon: const Icon(Icons.expand_more_rounded, size: 18),
+                      label: Text(
+                        l(
+                          context,
+                          '查看全部 ${gitSettings.remoteCredentials.length} 条认证',
+                          'Show all ${gitSettings.remoteCredentials.length} credentials',
+                        ),
+                      ),
+                    ),
+                  ),
+              ],
+            ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     return AnimatedBuilder(
@@ -1070,6 +2341,10 @@ class _AppSettingsSheetState extends State<_AppSettingsSheet> {
         final gitSettings =
             widget.controller.state.gitSettings ?? GitSettings.defaults();
         final workspace = widget.controller.state.workspace;
+        final mcpServers = widget.controller.state.mcpServers;
+        final connectedMcp = widget.controller.state.mcpStatuses.values
+            .where((item) => item.connected)
+            .length;
         final themeLabel = context.isDarkMode
             ? l(context, '夜间模式', 'Dark mode')
             : l(context, '日间模式', 'Light mode');
@@ -1094,687 +2369,89 @@ class _AppSettingsSheetState extends State<_AppSettingsSheet> {
                   ),
                 ],
               ),
-              child: SingleChildScrollView(
-                child: Padding(
-                  padding: const EdgeInsets.fromLTRB(14, 0, 14, 14),
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.stretch,
-                    children: [
-                      _compactPickerHandle(context),
-                      Row(
-                        children: [
-                          Expanded(
-                            child: Text(
-                              l(context, '设置', 'Settings'),
-                              style: TextStyle(
-                                fontSize: 16,
-                                fontWeight: FontWeight.w700,
-                                color: oc.text,
-                              ),
+              child: Padding(
+                padding: const EdgeInsets.fromLTRB(14, 0, 14, 14),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
+                  children: [
+                    _compactPickerHandle(context),
+                    Row(
+                      children: [
+                        Expanded(
+                          child: Text(
+                            l(context, '设置', 'Settings'),
+                            style: TextStyle(
+                              fontSize: 16,
+                              fontWeight: FontWeight.w700,
+                              color: oc.text,
                             ),
                           ),
-                          IconButton(
-                            onPressed: () => Navigator.of(context).pop(),
-                            icon: const Icon(Icons.close, size: 20),
-                            visualDensity: VisualDensity.compact,
-                          ),
-                        ],
-                      ),
-                      const SizedBox(height: 6),
-                      Text(
-                        l(
-                          context,
-                          '模型连接、Git 身份和远程认证集中在这里管理。',
-                          'Manage model connection, Git identity, and remote credentials here.',
                         ),
-                        style: TextStyle(
-                          fontSize: 12.5,
-                          height: 1.35,
-                          color: oc.muted,
+                        IconButton(
+                          onPressed: () => Navigator.of(context).pop(),
+                          icon: const Icon(Icons.close, size: 20),
+                          visualDensity: VisualDensity.compact,
                         ),
-                      ),
-                      const SizedBox(height: 12),
-                      Wrap(
-                        spacing: 8,
-                        runSpacing: 8,
-                        children: [
-                          _SettingsMetaChip(
-                            icon: context.isDarkMode
-                                ? Icons.dark_mode_outlined
-                                : Icons.light_mode_outlined,
-                            label: themeLabel,
-                          ),
-                          _SettingsMetaChip(
-                            icon: Icons.tune_rounded,
-                            label: current.model,
-                          ),
-                          if (connection != null)
-                            _SettingsMetaChip(
-                              icon: Icons.link_rounded,
-                              label: connection.name,
-                            ),
-                        ],
-                      ),
-                      const SizedBox(height: 16),
-                      _SettingsSectionCard(
-                        icon: Icons.auto_awesome_outlined,
-                        title: l(context, 'Skills', 'Skills'),
-                        subtitle: l(
-                          context,
-                          '浏览当前工作区内发现到的 skill 名称、位置、正文和采样文件。',
-                          'Browse discovered skill names, locations, content, and sampled files in the current workspace.',
-                        ),
-                        action: Align(
-                          alignment: Alignment.centerLeft,
-                          child: FilledButton.tonalIcon(
-                            onPressed:
-                                workspace == null ? null : _showSkillsBrowser,
-                            icon: const Icon(Icons.visibility_outlined, size: 18),
-                            label: Text(l(context, '浏览 Skills', 'Browse skills')),
-                          ),
-                        ),
-                        child: Text(
-                          workspace == null
-                              ? l(
-                                  context,
-                                  '当前还没有打开工作区，因此无法扫描 skills。',
-                                  'No workspace is open yet, so skills cannot be scanned.',
-                                )
-                              : l(
-                                  context,
-                                  '会扫描 `.claude/skills`、`.agents/skills`、`.opencode/skill`、`.opencode/skills`。',
-                                  'Scans `.claude/skills`, `.agents/skills`, `.opencode/skill`, and `.opencode/skills`.',
-                                ),
-                          style: TextStyle(fontSize: 12.5, color: oc.muted),
-                        ),
-                      ),
-                      const SizedBox(height: 14),
-                      _SettingsSectionCard(
-                        icon: Icons.extension_outlined,
-                        title: l(context, 'MCP Servers', 'MCP servers'),
-                        subtitle: l(
-                          context,
-                          '管理远程 MCP server，刷新 tools/resources/prompts 目录。',
-                          'Manage remote MCP servers and refresh tool/resource/prompt catalogs.',
-                        ),
-                        action: Wrap(
-                          spacing: 8,
-                          runSpacing: 8,
-                          children: [
-                            FilledButton.tonalIcon(
-                              onPressed: () => _showMcpServerDialog(),
-                              icon: const Icon(Icons.add_link_outlined, size: 18),
-                              label: Text(l(context, '添加 Server', 'Add server')),
-                            ),
-                            OutlinedButton.icon(
-                              onPressed: _showMcpResourcesBrowser,
-                              icon: const Icon(Icons.inventory_2_outlined, size: 18),
-                              label: Text(l(context, 'Resources', 'Resources')),
-                            ),
-                            OutlinedButton.icon(
-                              onPressed: _showMcpPromptsBrowser,
-                              icon: const Icon(Icons.text_snippet_outlined, size: 18),
-                              label: Text(l(context, 'Prompts', 'Prompts')),
-                            ),
-                          ],
-                        ),
-                        child: widget.controller.state.mcpServers.isEmpty
-                            ? Text(
-                                l(
-                                  context,
-                                  '还没有配置 MCP server。当前先支持远程 HTTP MCP，可选 Bearer Token。',
-                                  'No MCP servers configured yet. Remote HTTP MCP with optional bearer token is supported first.',
-                                ),
-                                style: TextStyle(fontSize: 12.5, color: oc.muted),
-                              )
-                            : Column(
-                                children: [
-                                  for (final server in widget.controller.state.mcpServers) ...[
-                                    Builder(
-                                      builder: (context) {
-                                        final status =
-                                            widget.controller.state.mcpStatuses[server.id];
-                                        final healthy = status?.connected ?? false;
-                                        final subtitle = [
-                                          server.url,
-                                          if (server.oauth != null)
-                                            l(
-                                              context,
-                                              'Auth: OAuth${server.hasAuth ? " (connected)" : " (not connected)"}',
-                                              'Auth: OAuth${server.hasAuth ? " (connected)" : " (not connected)"}',
-                                            )
-                                          else if (server.hasAuth)
-                                            l(context, 'Auth: Bearer token', 'Auth: Bearer token'),
-                                          if (status != null)
-                                            '${status.toolCount} tools / ${status.resourceCount} resources / ${status.promptCount} prompts',
-                                          if ((status?.error ?? '').isNotEmpty) status!.error!,
-                                        ].join('\n');
-                                        return Container(
-                                          margin: const EdgeInsets.only(bottom: 10),
-                                          padding: const EdgeInsets.all(12),
-                                          decoration: BoxDecoration(
-                                            color: oc.mutedPanel,
-                                            borderRadius: BorderRadius.circular(14),
-                                            border: Border.all(color: oc.border),
-                                          ),
-                                          child: Column(
-                                            crossAxisAlignment: CrossAxisAlignment.start,
-                                            children: [
-                                              Row(
-                                                children: [
-                                                  Expanded(
-                                                    child: Text(
-                                                      server.name,
-                                                      style: TextStyle(
-                                                        fontWeight: FontWeight.w700,
-                                                        color: oc.text,
-                                                      ),
-                                                    ),
-                                                  ),
-                                                  Icon(
-                                                    healthy
-                                                        ? Icons.check_circle_outline
-                                                        : Icons.radio_button_unchecked,
-                                                    size: 18,
-                                                    color: healthy ? Colors.green : oc.muted,
-                                                  ),
-                                                ],
-                                              ),
-                                              const SizedBox(height: 6),
-                                              Text(
-                                                subtitle,
-                                                style: TextStyle(
-                                                  fontSize: 12.5,
-                                                  height: 1.35,
-                                                  color: oc.muted,
-                                                ),
-                                              ),
-                                              const SizedBox(height: 10),
-                                              Wrap(
-                                                spacing: 8,
-                                                runSpacing: 8,
-                                                children: [
-                                                  OutlinedButton.icon(
-                                                    onPressed: () => _showMcpServerDialog(server),
-                                                    icon: const Icon(Icons.edit_outlined, size: 18),
-                                                    label: Text(l(context, '编辑', 'Edit')),
-                                                  ),
-                                                  OutlinedButton.icon(
-                                                    onPressed: () => _refreshMcpServer(server.id),
-                                                    icon: const Icon(Icons.refresh_rounded, size: 18),
-                                                    label: Text(l(context, '刷新', 'Refresh')),
-                                                  ),
-                                                  if (server.oauth != null)
-                                                    OutlinedButton.icon(
-                                                      onPressed: () => _showMcpOAuthSheet(server),
-                                                      icon: const Icon(Icons.lock_open_outlined, size: 18),
-                                                      label: Text(
-                                                        server.hasAuth
-                                                            ? l(context, '重连 OAuth', 'Reconnect OAuth')
-                                                            : l(context, '连接 OAuth', 'Connect OAuth'),
-                                                      ),
-                                                    ),
-                                                  OutlinedButton.icon(
-                                                    onPressed: () => _deleteMcpServer(server),
-                                                    icon: const Icon(Icons.delete_outline, size: 18),
-                                                    label: Text(l(context, '删除', 'Delete')),
-                                                  ),
-                                                ],
-                                              ),
-                                            ],
-                                          ),
-                                        );
-                                      },
-                                    ),
-                                  ],
-                                ],
-                              ),
-                      ),
-                      const SizedBox(height: 14),
-                      if (connection != null) ...[
-                        _SettingsSectionCard(
-                          icon: Icons.hub_outlined,
-                          title: l(context, '模型连接', 'Model connection'),
-                          subtitle: l(
-                            context,
-                            '当前 provider、接口地址和默认模型。',
-                            'Current provider, endpoint, and default model.',
-                          ),
-                          child: Column(
-                            crossAxisAlignment: CrossAxisAlignment.stretch,
-                            children: [
-                              TextField(
-                                controller: _baseUrlController,
-                                decoration: InputDecoration(
-                                  labelText: l(context, 'Base URL', 'Base URL'),
-                                ),
-                              ),
-                              const SizedBox(height: 12),
-                              TextField(
-                                controller: _apiKeyController,
-                                obscureText: true,
-                                decoration: InputDecoration(
-                                  labelText: l(context, 'API Key', 'API Key'),
-                                ),
-                              ),
-                              const SizedBox(height: 12),
-                              TextField(
-                                controller: _modelController,
-                                decoration: InputDecoration(
-                                  labelText: l(context, '模型', 'Model'),
-                                ),
-                              ),
-                              const SizedBox(height: 12),
-                              Row(
-                                mainAxisAlignment: MainAxisAlignment.end,
-                                children: [
-                                  OutlinedButton.icon(
-                                    onPressed: _disconnectCurrentProvider,
-                                    icon: const Icon(Icons.link_off_rounded),
-                                    label: Text(
-                                      l(context, '断开', 'Disconnect'),
-                                    ),
-                                  ),
-                                  const SizedBox(width: 8),
-                                  FilledButton(
-                                    onPressed: _saveProviderSettings,
-                                    child: Text(
-                                      l(context, '保存模型设置', 'Save model settings'),
-                                    ),
-                                  ),
-                                ],
-                              ),
-                            ],
-                          ),
-                        ),
-                        const SizedBox(height: 14),
                       ],
-                      _SettingsSectionCard(
-                        icon: Icons.badge_outlined,
-                        title: l(context, 'Git 身份', 'Git identity'),
-                        subtitle: l(
-                          context,
-                          '提交作者信息会用于本地 Git 操作。',
-                          'Commit author details used for local Git operations.',
-                        ),
-                        child: Column(
-                          crossAxisAlignment: CrossAxisAlignment.stretch,
-                          children: [
-                            TextField(
-                              controller: _gitNameController,
-                              decoration: InputDecoration(
-                                labelText:
-                                    l(context, 'Git 用户名', 'Git user name'),
-                              ),
-                            ),
-                            const SizedBox(height: 12),
-                            TextField(
-                              controller: _gitEmailController,
-                              decoration: InputDecoration(
-                                labelText: l(context, 'Git 邮箱', 'Git email'),
-                              ),
-                            ),
-                            const SizedBox(height: 12),
-                            Align(
-                              alignment: Alignment.centerRight,
-                              child: FilledButton(
-                                onPressed: _saveGitIdentity,
-                                child: Text(
-                                  l(context, '保存 Git 身份', 'Save Git identity'),
-                                ),
-                              ),
-                            ),
-                          ],
-                        ),
+                    ),
+                    const SizedBox(height: 6),
+                    Text(
+                      l(
+                        context,
+                        '把高频设置拆成更清晰的目的地，减少在一个长页面里滚动。',
+                        'Split high-frequency settings into clearer destinations so you scroll less.',
                       ),
-                      const SizedBox(height: 14),
-                      _SettingsSectionCard(
-                        icon: Icons.vpn_key_outlined,
-                        title: l(context, 'SSH Keys', 'SSH keys'),
-                        subtitle: l(
-                          context,
-                          '支持生成、导入和设置默认 SSH Key。',
-                          'Generate, import, and manage your default SSH key.',
-                        ),
-                        action: Wrap(
-                          spacing: 8,
-                          runSpacing: 8,
-                          children: [
-                            OutlinedButton.icon(
-                              onPressed: _showImportKeyDialog,
-                              icon: const Icon(Icons.file_upload_outlined,
-                                  size: 18),
-                              label: Text(l(context, '导入', 'Import')),
-                            ),
-                            FilledButton.tonalIcon(
-                              onPressed: _showGenerateKeyDialog,
-                              icon: const Icon(Icons.auto_awesome_outlined,
-                                  size: 18),
-                              label: Text(l(context, '生成', 'Generate')),
-                            ),
-                          ],
-                        ),
-                        child: gitSettings.sshKeys.isEmpty
-                            ? Text(
-                                l(
-                                  context,
-                                  '还没有 SSH Key。当前仅支持 Ed25519 OpenSSH，可直接生成或导入现有私钥。',
-                                  'No SSH keys yet. Only Ed25519 OpenSSH is supported now.',
-                                ),
-                                style:
-                                    TextStyle(fontSize: 12.5, color: oc.muted),
-                              )
-                            : Column(
-                                children: [
-                                  for (final key in gitSettings.sshKeys) ...[
-                                    Container(
-                                      width: double.infinity,
-                                      margin: const EdgeInsets.only(bottom: 10),
-                                      decoration: BoxDecoration(
-                                        border: Border.all(color: oc.border),
-                                        borderRadius: BorderRadius.circular(14),
-                                        color: oc.surface.withOpacity(0.55),
-                                      ),
-                                      child: Padding(
-                                        padding: const EdgeInsets.all(12),
-                                        child: Column(
-                                          crossAxisAlignment:
-                                              CrossAxisAlignment.start,
-                                          children: [
-                                            Row(
-                                              children: [
-                                                Expanded(
-                                                  child: Text(
-                                                    key.name,
-                                                    style: TextStyle(
-                                                      fontSize: 14,
-                                                      fontWeight:
-                                                          FontWeight.w600,
-                                                      color: oc.text,
-                                                    ),
-                                                  ),
-                                                ),
-                                                if (gitSettings
-                                                        .defaultSshKey?.id ==
-                                                    key.id)
-                                                  Container(
-                                                    padding: const EdgeInsets
-                                                        .symmetric(
-                                                      horizontal: 8,
-                                                      vertical: 4,
-                                                    ),
-                                                    decoration: BoxDecoration(
-                                                      color: oc.tagGreen
-                                                          .withOpacity(0.12),
-                                                      borderRadius:
-                                                          BorderRadius.circular(
-                                                              999),
-                                                    ),
-                                                    child: Text(
-                                                      l(context, '默认',
-                                                          'Default'),
-                                                      style: TextStyle(
-                                                        fontSize: 11,
-                                                        color: oc.tagGreen,
-                                                      ),
-                                                    ),
-                                                  ),
-                                              ],
-                                            ),
-                                            const SizedBox(height: 6),
-                                            Text(
-                                              '${key.algorithm}  ${key.fingerprint}',
-                                              style: TextStyle(
-                                                fontSize: 12,
-                                                color: oc.muted,
-                                              ),
-                                            ),
-                                            if (key.comment
-                                                .trim()
-                                                .isNotEmpty) ...[
-                                              const SizedBox(height: 4),
-                                              Text(
-                                                key.comment,
-                                                style: TextStyle(
-                                                  fontSize: 12,
-                                                  color: oc.muted,
-                                                ),
-                                              ),
-                                            ],
-                                            const SizedBox(height: 10),
-                                            Wrap(
-                                              spacing: 8,
-                                              runSpacing: 8,
-                                              children: [
-                                                OutlinedButton(
-                                                  onPressed: gitSettings
-                                                              .defaultSshKey
-                                                              ?.id ==
-                                                          key.id
-                                                      ? null
-                                                      : () => widget.controller
-                                                              .setDefaultGitSshKey(
-                                                            key.id,
-                                                          ),
-                                                  child: Text(
-                                                    l(
-                                                      context,
-                                                      '设为默认',
-                                                      'Set default',
-                                                    ),
-                                                  ),
-                                                ),
-                                                OutlinedButton(
-                                                  onPressed: () =>
-                                                      _showPublicKeyDialog(key),
-                                                  child: Text(
-                                                    l(
-                                                      context,
-                                                      '查看公钥',
-                                                      'View public key',
-                                                    ),
-                                                  ),
-                                                ),
-                                                OutlinedButton(
-                                                  onPressed: () =>
-                                                      _confirmDeleteKey(key),
-                                                  child: Text(
-                                                    l(context, '删除', 'Delete'),
-                                                  ),
-                                                ),
-                                              ],
-                                            ),
-                                          ],
-                                        ),
-                                      ),
-                                    ),
-                                  ],
-                                ],
-                              ),
+                      style: TextStyle(
+                        fontSize: 12.5,
+                        height: 1.35,
+                        color: oc.muted,
                       ),
-                      const SizedBox(height: 14),
-                      _SettingsSectionCard(
-                        icon: Icons.shield_outlined,
-                        title: l(context, '远程认证', 'Remote credentials'),
-                        subtitle: l(
-                          context,
-                          '按主机和路径前缀自动匹配远程仓库认证。',
-                          'Credentials are matched automatically by host and path prefix.',
+                    ),
+                    const SizedBox(height: 12),
+                    Wrap(
+                      spacing: 8,
+                      runSpacing: 8,
+                      children: [
+                        _SettingsMetaChip(
+                          icon: context.isDarkMode
+                              ? Icons.dark_mode_outlined
+                              : Icons.light_mode_outlined,
+                          label: themeLabel,
                         ),
-                        action: PopupMenuButton<String>(
-                          onSelected: _showRemoteCredentialDialog,
-                          itemBuilder: (context) => [
-                            PopupMenuItem<String>(
-                              value: 'httpsToken',
-                              child: Text(
-                                l(context, '新增 HTTPS Token', 'Add HTTPS token'),
-                              ),
-                            ),
-                            PopupMenuItem<String>(
-                              value: 'httpsBasic',
-                              child: Text(
-                                l(
-                                  context,
-                                  '新增 HTTPS 账号密码',
-                                  'Add HTTPS user/password',
-                                ),
-                              ),
-                            ),
-                            PopupMenuItem<String>(
-                              value: 'sshKey',
-                              child: Text(
-                                l(context, '新增 SSH 绑定', 'Add SSH binding'),
-                              ),
-                            ),
-                          ],
-                          child: Container(
-                            decoration: BoxDecoration(
-                              color: oc.surface.withOpacity(0.9),
-                              borderRadius: BorderRadius.circular(12),
-                              border: Border.all(color: oc.border),
-                            ),
-                            padding: const EdgeInsets.symmetric(
-                              horizontal: 12,
-                              vertical: 9,
-                            ),
-                            child: Row(
-                              mainAxisSize: MainAxisSize.min,
-                              children: [
-                                Icon(
-                                  Icons.add_circle_outline,
-                                  size: 18,
-                                  color: oc.text,
-                                ),
-                                const SizedBox(width: 8),
-                                Text(
-                                  l(context, '新增认证', 'Add credential'),
-                                  style: TextStyle(
-                                    fontSize: 13,
-                                    fontWeight: FontWeight.w600,
-                                    color: oc.text,
-                                  ),
-                                ),
-                              ],
-                            ),
+                        _SettingsMetaChip(
+                          icon: Icons.tune_rounded,
+                          label: current.model,
+                        ),
+                        if (connection != null)
+                          _SettingsMetaChip(
+                            icon: Icons.link_rounded,
+                            label: connection.name,
+                          ),
+                        _SettingsMetaChip(
+                          icon: Icons.extension_outlined,
+                          label: '$connectedMcp/${mcpServers.length} MCP',
+                        ),
+                      ],
+                    ),
+                    const SizedBox(height: 14),
+                    _buildDestinationTabs(context),
+                    const SizedBox(height: 14),
+                    Expanded(
+                      child: AnimatedSwitcher(
+                        duration: const Duration(milliseconds: 180),
+                        child: KeyedSubtree(
+                          key: ValueKey(_destination),
+                          child: _buildCurrentDestinationPage(
+                            context,
+                            current: current,
+                            connection: connection,
+                            gitSettings: gitSettings,
+                            workspace: workspace,
                           ),
                         ),
-                        child: gitSettings.remoteCredentials.isEmpty
-                            ? Text(
-                                l(
-                                  context,
-                                  'SSH 远程如果没有单独配置，会回退到默认 SSH Key。',
-                                  'SSH remotes fall back to the default SSH key when no explicit binding exists.',
-                                ),
-                                style:
-                                    TextStyle(fontSize: 12.5, color: oc.muted),
-                              )
-                            : Column(
-                                children: [
-                                  for (final credential
-                                      in gitSettings.remoteCredentials) ...[
-                                    Builder(
-                                      builder: (context) {
-                                        final sshKey =
-                                            credential.sshKeyId == null
-                                                ? null
-                                                : gitSettings.sshKeys
-                                                    .where(
-                                                      (item) =>
-                                                          item.id ==
-                                                          credential.sshKeyId,
-                                                    )
-                                                    .cast<GitSshKey?>()
-                                                    .firstWhere(
-                                                      (item) => item != null,
-                                                      orElse: () => null,
-                                                    );
-                                        final typeLabel = credential.type ==
-                                                'sshKey'
-                                            ? 'SSH'
-                                            : credential.type == 'httpsBasic'
-                                                ? 'HTTPS Password'
-                                                : 'HTTPS Token';
-                                        final pathLabel =
-                                            credential.pathPrefix.trim().isEmpty
-                                                ? '/'
-                                                : credential.pathPrefix;
-                                        return Container(
-                                          width: double.infinity,
-                                          margin:
-                                              const EdgeInsets.only(bottom: 10),
-                                          decoration: BoxDecoration(
-                                            border:
-                                                Border.all(color: oc.border),
-                                            borderRadius:
-                                                BorderRadius.circular(14),
-                                            color: oc.surface.withOpacity(0.55),
-                                          ),
-                                          child: Padding(
-                                            padding: const EdgeInsets.all(12),
-                                            child: Column(
-                                              crossAxisAlignment:
-                                                  CrossAxisAlignment.start,
-                                              children: [
-                                                Text(
-                                                  credential.name,
-                                                  style: TextStyle(
-                                                    fontSize: 14,
-                                                    fontWeight: FontWeight.w600,
-                                                    color: oc.text,
-                                                  ),
-                                                ),
-                                                const SizedBox(height: 6),
-                                                Text(
-                                                  '$typeLabel  ${credential.host}$pathLabel',
-                                                  style: TextStyle(
-                                                    fontSize: 12,
-                                                    color: oc.muted,
-                                                  ),
-                                                ),
-                                                if (credential.username
-                                                    .trim()
-                                                    .isNotEmpty) ...[
-                                                  const SizedBox(height: 4),
-                                                  Text(
-                                                    '${l(context, '用户名', 'Username')}: ${credential.username}',
-                                                    style: TextStyle(
-                                                      fontSize: 12,
-                                                      color: oc.muted,
-                                                    ),
-                                                  ),
-                                                ],
-                                                if (sshKey != null) ...[
-                                                  const SizedBox(height: 4),
-                                                  Text(
-                                                    '${l(context, 'SSH Key', 'SSH key')}: ${sshKey.name}',
-                                                    style: TextStyle(
-                                                      fontSize: 12,
-                                                      color: oc.muted,
-                                                    ),
-                                                  ),
-                                                ],
-                                                const SizedBox(height: 10),
-                                                OutlinedButton(
-                                                  onPressed: () =>
-                                                      _confirmDeleteRemoteCredential(
-                                                    credential,
-                                                  ),
-                                                  child: Text(
-                                                    l(context, '删除', 'Delete'),
-                                                  ),
-                                                ),
-                                              ],
-                                            ),
-                                          ),
-                                        );
-                                      },
-                                    ),
-                                  ],
-                                ],
-                              ),
                       ),
-                    ],
-                  ),
+                    ),
+                  ],
                 ),
               ),
             ),
@@ -1819,6 +2496,143 @@ class _SettingsMetaChip extends StatelessWidget {
               ),
             ),
           ],
+        ),
+      ),
+    );
+  }
+}
+
+class _SettingsNavChip extends StatelessWidget {
+  const _SettingsNavChip({
+    required this.icon,
+    required this.label,
+    required this.selected,
+    required this.onTap,
+  });
+
+  final IconData icon;
+  final String label;
+  final bool selected;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    final oc = context.oc;
+    return Material(
+      color: selected ? oc.selectedFill : oc.panelBackground,
+      borderRadius: BorderRadius.circular(999),
+      child: InkWell(
+        onTap: onTap,
+        borderRadius: BorderRadius.circular(999),
+        child: Container(
+          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 9),
+          decoration: BoxDecoration(
+            borderRadius: BorderRadius.circular(999),
+            border: Border.all(color: selected ? oc.accent : oc.border),
+          ),
+          child: Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Icon(icon, size: 16, color: selected ? oc.accent : oc.muted),
+              const SizedBox(width: 6),
+              Text(
+                label,
+                style: TextStyle(
+                  fontSize: 12.5,
+                  fontWeight: FontWeight.w600,
+                  color: selected ? oc.accent : oc.text,
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _SettingsDestinationCard extends StatelessWidget {
+  const _SettingsDestinationCard({
+    required this.icon,
+    required this.title,
+    required this.subtitle,
+    required this.onTap,
+    this.trailing,
+  });
+
+  final IconData icon;
+  final String title;
+  final String subtitle;
+  final String? trailing;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    final oc = context.oc;
+    return Material(
+      color: oc.mutedPanel,
+      borderRadius: BorderRadius.circular(14),
+      child: InkWell(
+        onTap: onTap,
+        borderRadius: BorderRadius.circular(14),
+        child: Container(
+          padding: const EdgeInsets.all(12),
+          decoration: BoxDecoration(
+            borderRadius: BorderRadius.circular(14),
+            border: Border.all(color: oc.border),
+          ),
+          child: Row(
+            children: [
+              Container(
+                width: 36,
+                height: 36,
+                decoration: BoxDecoration(
+                  color: oc.surface,
+                  borderRadius: BorderRadius.circular(10),
+                  border: Border.all(color: oc.border),
+                ),
+                child: Icon(icon, size: 18, color: oc.text),
+              ),
+              const SizedBox(width: 12),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      title,
+                      style: TextStyle(
+                        fontSize: 13.5,
+                        fontWeight: FontWeight.w700,
+                        color: oc.text,
+                      ),
+                    ),
+                    const SizedBox(height: 4),
+                    Text(
+                      subtitle,
+                      style: TextStyle(
+                        fontSize: 12,
+                        height: 1.3,
+                        color: oc.muted,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+              if ((trailing ?? '').isNotEmpty) ...[
+                const SizedBox(width: 12),
+                Text(
+                  trailing!,
+                  style: TextStyle(
+                    fontSize: 12,
+                    fontWeight: FontWeight.w600,
+                    color: oc.muted,
+                  ),
+                ),
+              ],
+              const SizedBox(width: 4),
+              Icon(Icons.chevron_right_rounded, color: oc.muted),
+            ],
+          ),
         ),
       ),
     );
@@ -1981,7 +2795,7 @@ class _RemoteCredentialDialogState extends State<_RemoteCredentialDialog> {
                 : l(context, '新增 HTTPS Token', 'Add HTTPS token'),
       ),
       content: SizedBox(
-        width: 520,
+        width: _dialogMaxWidth(context, maxWidth: 520),
         child: SingleChildScrollView(
           child: Column(
             mainAxisSize: MainAxisSize.min,
