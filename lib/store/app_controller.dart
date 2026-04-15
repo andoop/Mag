@@ -256,9 +256,6 @@ class AppController extends ChangeNotifier {
     final providerAuth = await _client!.listProviderAuth();
     final mcpServers = await _client!.listMcpServers();
     final mcpStatuses = await _client!.listMcpStatuses();
-    final mcpTools = await _client!.listMcpTools();
-    final mcpResources = await _client!.listMcpResources();
-    final mcpPrompts = await _client!.listMcpPrompts();
     final gitSettings = await _gitSettingsStore.load();
     final recentModelKeys = await _loadRecentModelKeys();
     state = state.copyWith(
@@ -269,13 +266,31 @@ class AppController extends ChangeNotifier {
       providerAuth: providerAuth,
       mcpServers: mcpServers,
       mcpStatuses: mcpStatuses,
-      mcpTools: mcpTools,
-      mcpResources: mcpResources,
-      mcpPrompts: mcpPrompts,
+      mcpTools: const [],
+      mcpResources: const [],
+      mcpPrompts: const [],
       agents: agents,
       recentModelKeys: recentModelKeys,
     );
     notifyListeners();
+    _scheduleMcpCatalogWarmup();
+  }
+
+  /// After first frame: load MCP tools in background (OpenCode-style), without blocking splash.
+  void _scheduleMcpCatalogWarmup() {
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      unawaited(_warmupMcpCatalog());
+    });
+  }
+
+  Future<void> _warmupMcpCatalog() async {
+    final client = _client;
+    if (client == null) return;
+    try {
+      await client.listMcpTools();
+    } catch (error) {
+      _debugLog('mcp', 'warmup failed: $error');
+    }
   }
 
   void _connectEventStream() {

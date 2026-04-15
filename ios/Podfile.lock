@@ -15,6 +15,8 @@ PODS:
     - FlutterMacOS
   - pdfx (1.0.0):
     - Flutter
+  - share_plus (0.0.1):
+    - Flutter
   - shared_preferences_foundation (0.0.1):
     - Flutter
     - FlutterMacOS
@@ -31,6 +33,7 @@ DEPENDENCIES:
   - libgit2iOS (~> 0.1.2.6)
   - path_provider_foundation (from `.symlinks/plugins/path_provider_foundation/ios`)
   - pdfx (from `.symlinks/plugins/pdfx/ios`)
+  - share_plus (from `.symlinks/plugins/share_plus/ios`)
   - shared_preferences_foundation (from `.symlinks/plugins/shared_preferences_foundation/ios`)
   - sqflite (from `.symlinks/plugins/sqflite/ios`)
   - webview_flutter_wkwebview (from `.symlinks/plugins/webview_flutter_wkwebview/ios`)
@@ -51,6 +54,8 @@ EXTERNAL SOURCES:
     :path: ".symlinks/plugins/path_provider_foundation/ios"
   pdfx:
     :path: ".symlinks/plugins/pdfx/ios"
+  share_plus:
+    :path: ".symlinks/plugins/share_plus/ios"
   shared_preferences_foundation:
     :path: ".symlinks/plugins/shared_preferences_foundation/ios"
   sqflite:
@@ -66,6 +71,7 @@ SPEC CHECKSUMS:
   libgit2iOS: 0bbbe4c9742f58ac12b24b570430c259c90ab91f
   path_provider_foundation: 2a68637f8a62df7f6e790a428d1bdf72cb4e2d59
   pdfx: 77f4dddc48361fbb01486fa2bdee4532cbb97ef3
+  share_plus: 4dfe6f47fc3248e89b3eea0be59a95d0433ebe1a
   shared_preferences_foundation: 4e65c567e7877037d328829a522222c938bf308c
   sqflite: 5b24d06a453c198c13b305ceea4b4286cc07cfe4
   webview_flutter_wkwebview: 75789e80e2ad25e78ac88a17e5c2f82019277c53

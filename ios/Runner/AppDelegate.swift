@@ -1317,7 +1317,7 @@ private final class IOSGitNetworkBridge {
           }
         }
         var mutableOid = oid
-        try check(git_object_lookup(&object, repository, &mutableOid, GIT_OBJECT_ANY), "Object not found: \(oidDescription(oid))")
+        try check(git_object_lookup(&object, repository, &mutableOid, GIT_OBJ_ANY), "Object not found: \(oidDescription(oid))")
         let resetMode: git_reset_t
         switch mode {
         case "soft":
@@ -1543,7 +1543,7 @@ private final class IOSGitNetworkBridge {
     return try withRepository(path: workDir) { repository in
       var names = git_strarray()
       defer {
-        git_strarray_dispose(&names)
+        git_strarray_free(&names)
       }
       try check(git_remote_list(&names, repository), "Failed to list remotes")
       var remotes: [[String: Any?]] = []
@@ -1618,7 +1618,7 @@ private final class IOSGitNetworkBridge {
     return try withRepository(path: workDir) { repository in
       var problems = git_strarray()
       defer {
-        git_strarray_dispose(&problems)
+        git_strarray_free(&problems)
       }
       try withGitCString(oldName) { oldNameCString in
         try withGitCString(newName) { newNameCString in
@@ -2150,7 +2150,7 @@ private final class IOSGitNetworkBridge {
     var mutableOid = oid
     try check(git_commit_lookup(&commit, repository, &mutableOid), "Object not found: \(oidDescription(oid))")
     var options = git_cherrypick_options()
-    try check(git_cherrypick_options_init(&options, UInt32(GIT_CHERRYPICK_OPTIONS_VERSION)), "Failed to initialize cherry-pick options")
+    try check(git_cherrypick_init_options(&options, UInt32(GIT_CHERRYPICK_OPTIONS_VERSION)), "Failed to initialize cherry-pick options")
     options.checkout_opts.checkout_strategy = UInt32(GIT_CHECKOUT_SAFE.rawValue)
     try check(git_cherrypick(repository, commit, &options), "Cherry-pick failed")
     try check(git_repository_index(&index, repository), "Cherry-pick failed")
@@ -2168,7 +2168,7 @@ private final class IOSGitNetworkBridge {
       if let signature { git_signature_free(signature) }
     }
     try signatureNow(repository: repository, name: nil, email: nil, output: &signature)
-    let oid = try createCommitFromIndex(
+    let newHeadOid = try createCommitFromIndex(
       repository: repository,
       message: message,
       signature: signature,
@@ -2179,8 +2179,8 @@ private final class IOSGitNetworkBridge {
       "success": true,
       "conflicts": [],
       "action": "start",
-      "newHead": oidDescription(oid),
-      "cherryPickCommit": oidDescription(oid),
+      "newHead": oidDescription(newHeadOid),
+      "cherryPickCommit": oidDescription(newHeadOid),
     ]
   }
 
@@ -2875,13 +2875,14 @@ private func withGitPathspec<T>(_ path: String, _ body: (UnsafePointer<git_strar
 }
 
 private func withGitPathspecs<T>(_ paths: [String], _ body: (UnsafePointer<git_strarray>) throws -> T) rethrows -> T {
-  let duplicates = paths.map(strdup)
+  let duplicates = paths.map { strdup($0) }
   defer {
     duplicates.forEach { free($0) }
   }
   var entries = duplicates
+  let entryCount = entries.count
   return try entries.withUnsafeMutableBufferPointer { buffer in
-    var array = git_strarray(strings: buffer.baseAddress, count: entries.count)
+    var array = git_strarray(strings: buffer.baseAddress, count: entryCount)
     return try body(&array)
   }
 }

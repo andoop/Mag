@@ -202,10 +202,19 @@ void main() {
             : Map<String, dynamic>.from(jsonDecode(body) as Map);
         final method = payload['method'] as String?;
         final id = payload['id'];
+        final serverMode = uri.host;
         Map<String, dynamic> jsonResponse(Map<String, dynamic> result) => {
               'jsonrpc': '2.0',
               'id': id,
               'result': result,
+            };
+        Map<String, dynamic> jsonError(int code, String message) => {
+              'jsonrpc': '2.0',
+              'id': id,
+              'error': {
+                'code': code,
+                'message': message,
+              },
             };
         if (method == 'initialize') {
           return _StubMcpResponseData(
@@ -216,7 +225,7 @@ void main() {
               'protocolVersion': '2025-11-25',
               'capabilities': {
                 'tools': {},
-                'resources': {},
+                if (serverMode != 'mcp-no-resources.example.test') 'resources': {},
                 'prompts': {},
               },
               'serverInfo': {
@@ -255,6 +264,13 @@ void main() {
           );
         }
         if (method == 'resources/list') {
+          if (serverMode == 'mcp-no-resources.example.test') {
+            return _StubMcpResponseData(
+              statusCode: 200,
+              contentType: 'application/json',
+              body: jsonEncode(jsonError(-32601, 'Method not found')),
+            );
+          }
           return _StubMcpResponseData(
             statusCode: 200,
             contentType: 'application/json',
@@ -375,6 +391,52 @@ void main() {
       emittedEvents.any((event) => event.type == 'mcp.catalog.changed'),
       isTrue,
     );
+  });
+
+  test('refresh tolerates unsupported resources/list and keeps prompts', () async {
+    const config = McpServerConfig(
+      id: 'demo-no-resources',
+      name: 'Demo no resources',
+      url: 'https://mcp-no-resources.example.test/mcp',
+    );
+
+    await service.saveServer(config);
+    final status = await service.refreshServer('demo-no-resources');
+    final tools = await service.listTools('demo-no-resources');
+    final resources = await service.listResources('demo-no-resources');
+    final prompts = await service.listPrompts('demo-no-resources');
+
+    expect(status.connected, isTrue);
+    expect(status.error, isNull);
+    expect(status.toolCount, 1);
+    expect(status.resourceCount, 0);
+    expect(status.promptCount, 1);
+    expect(tools.single.name, 'echo');
+    expect(resources, isEmpty);
+    expect(prompts.single.name, 'summarize');
+  });
+
+  test('tools-only refresh then extended catalog fills resources and prompts', () async {
+    const config = McpServerConfig(
+      id: 'demo-tools-only',
+      name: 'Demo tools-only',
+      url: 'https://mcp.example.test/mcp',
+    );
+    await service.saveServer(config);
+    final s1 = await service.refreshServerToolsOnly('demo-tools-only');
+    expect(s1.connected, isTrue);
+    expect(s1.toolCount, 1);
+    expect(s1.resourceCount, 0);
+    expect(s1.promptCount, 0);
+
+    final resources = await service.listResources('demo-tools-only');
+    final prompts = await service.listPrompts('demo-tools-only');
+    expect(resources.single.uri, 'demo://readme');
+    expect(prompts.single.name, 'summarize');
+
+    final statuses = await service.listStatuses();
+    expect(statuses['demo-tools-only']?.resourceCount, 1);
+    expect(statuses['demo-tools-only']?.promptCount, 1);
   });
 
   test('calls MCP tools and reads resources/prompts', () async {

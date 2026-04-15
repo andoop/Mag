@@ -51,14 +51,19 @@ extension AppControllerMcp on AppController {
 
   Future<void> refreshMcpServer(String serverId) async {
     final status = await _client!.refreshMcpServer(serverId);
+    final lists = await Future.wait([
+      _client!.listMcpTools(),
+      _client!.listMcpResources(),
+      _client!.listMcpPrompts(),
+    ]);
     state = state.copyWith(
       mcpStatuses: {
         ...state.mcpStatuses,
         serverId: status,
       },
-      mcpTools: await _client!.listMcpTools(),
-      mcpResources: await _client!.listMcpResources(),
-      mcpPrompts: await _client!.listMcpPrompts(),
+      mcpTools: lists[0] as List<McpToolDefinition>,
+      mcpResources: lists[1] as List<McpResourceDefinition>,
+      mcpPrompts: lists[2] as List<McpPromptDefinition>,
     );
     notifyListeners();
   }

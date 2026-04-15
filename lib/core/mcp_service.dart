@@ -18,6 +18,12 @@ const _kMcpProtocolVersions = [
 
 HttpClient Function() _mcpHttpClientFactory = HttpClient.new;
 
+void _logMcp(String tag, String message, [Map<String, dynamic>? data]) {
+  final suffix = data == null ? '' : ' ${jsonEncode(data)}';
+  // ignore: avoid_print
+  print('[mobile-agent][mcp][$tag] $message$suffix');
+}
+
 void debugSetMcpHttpClientFactoryForTests(HttpClient Function() factory) {
   _mcpHttpClientFactory = factory;
 }
@@ -77,7 +83,7 @@ class McpService {
     ];
     await _writeServers(next);
     if (server.enabled) {
-      unawaited(refreshServer(server.id));
+      unawaited(refreshServerToolsOnly(server.id));
     } else {
       await disconnect(server.id);
     }
@@ -192,13 +198,28 @@ class McpService {
 
   Future<void> refreshAll() async {
     final servers = await listServers();
-    for (final server in servers) {
-      if (!server.enabled) continue;
-      await refreshServer(server.id);
-    }
+    final enabledIds = [
+      for (final server in servers)
+        if (server.enabled) server.id,
+    ];
+    if (enabledIds.isEmpty) return;
+    await Future.wait(enabledIds.map((id) => refreshServerToolsOnly(id)));
   }
 
-  Future<McpServerStatus> refreshServer(String serverId) async {
+  /// OpenCode-style cold path: connect + [listTools] only. Resources/prompts load via [ensureExtendedCatalog].
+  Future<McpServerStatus> refreshServerToolsOnly(String serverId) {
+    return _refreshServerCatalog(serverId, extended: false);
+  }
+
+  /// Full catalog (tools, resources, prompts), e.g. manual refresh in settings.
+  Future<McpServerStatus> refreshServer(String serverId) {
+    return _refreshServerCatalog(serverId, extended: true);
+  }
+
+  Future<McpServerStatus> _refreshServerCatalog(
+    String serverId, {
+    required bool extended,
+  }) async {
     final server = await getServer(serverId);
     if (server == null) {
       throw StateError('Unknown MCP server: $serverId');
@@ -216,8 +237,6 @@ class McpService {
       final client = await _connect(server);
       final init = await client.ensureInitialized();
       final tools = await client.listTools();
-      final resources = await client.listResources();
-      final prompts = await client.listPrompts();
       _toolCache[serverId] = tools
           .map((item) => McpToolDefinition(
                 serverId: serverId,
@@ -229,29 +248,38 @@ class McpService {
                 annotations: item.annotations,
               ))
           .toList();
-      _resourceCache[serverId] = resources
-          .map((item) => McpResourceDefinition(
-                serverId: serverId,
-                uri: item.uri,
-                name: item.name,
-                description: item.description,
-                mimeType: item.mimeType,
-              ))
-          .toList();
-      _promptCache[serverId] = prompts
-          .map((item) => McpPromptDefinition(
-                serverId: serverId,
-                name: item.name,
-                description: item.description,
-                arguments: item.arguments
-                    .map((arg) => McpPromptArgument(
-                          name: arg.name,
-                          description: arg.description,
-                          required: arg.required,
-                        ))
-                    .toList(),
-              ))
-          .toList();
+
+      if (extended) {
+        final resources = await _listResourcesSafe(client, serverId);
+        final prompts = await _listPromptsSafe(client, serverId);
+        _resourceCache[serverId] = resources
+            .map((item) => McpResourceDefinition(
+                  serverId: serverId,
+                  uri: item.uri,
+                  name: item.name,
+                  description: item.description,
+                  mimeType: item.mimeType,
+                ))
+            .toList();
+        _promptCache[serverId] = prompts
+            .map((item) => McpPromptDefinition(
+                  serverId: serverId,
+                  name: item.name,
+                  description: item.description,
+                  arguments: item.arguments
+                      .map((arg) => McpPromptArgument(
+                            name: arg.name,
+                            description: arg.description,
+                            required: arg.required,
+                          ))
+                      .toList(),
+                ))
+            .toList();
+      } else {
+        _resourceCache.remove(serverId);
+        _promptCache.remove(serverId);
+      }
+
       final status = _statusFor(serverId).copyWith(
         connected: true,
         connecting: false,
@@ -261,14 +289,19 @@ class McpService {
         protocolVersion: init.protocolVersion,
         capabilities: init.capabilities,
         toolCount: _toolCache[serverId]!.length,
-        resourceCount: _resourceCache[serverId]!.length,
-        promptCount: _promptCache[serverId]!.length,
+        resourceCount: _resourceCache[serverId]?.length ?? 0,
+        promptCount: _promptCache[serverId]?.length ?? 0,
         lastSyncAtMs: DateTime.now().millisecondsSinceEpoch,
       );
       _setStatus(serverId, status);
       _emitCatalogChanged(serverId);
       return status;
     } catch (error) {
+      _logMcp('refresh.failed', 'Failed to refresh MCP catalog.', {
+        'serverId': serverId,
+        'extended': extended,
+        'error': error.toString(),
+      });
       await disconnect(serverId);
       final status = _statusFor(serverId).copyWith(
         connected: false,
@@ -277,6 +310,70 @@ class McpService {
       );
       _setStatus(serverId, status);
       return status;
+    }
+  }
+
+  /// Fetches resources/prompts when tools are already cached (after [refreshServerToolsOnly]).
+  Future<void> ensureExtendedCatalog(String serverId) async {
+    if (_resourceCache.containsKey(serverId) && _promptCache.containsKey(serverId)) {
+      return;
+    }
+    final server = await getServer(serverId);
+    if (server == null || !server.enabled) return;
+    if (!_toolCache.containsKey(serverId)) {
+      await _refreshServerCatalog(serverId, extended: true);
+      return;
+    }
+    try {
+      final client = await _connect(server);
+      await client.ensureInitialized();
+      if (!_resourceCache.containsKey(serverId)) {
+        final resources = await _listResourcesSafe(client, serverId);
+        _resourceCache[serverId] = resources
+            .map((item) => McpResourceDefinition(
+                  serverId: serverId,
+                  uri: item.uri,
+                  name: item.name,
+                  description: item.description,
+                  mimeType: item.mimeType,
+                ))
+            .toList();
+      }
+      if (!_promptCache.containsKey(serverId)) {
+        final prompts = await client.listPrompts();
+        _promptCache[serverId] = prompts
+            .map((item) => McpPromptDefinition(
+                  serverId: serverId,
+                  name: item.name,
+                  description: item.description,
+                  arguments: item.arguments
+                      .map((arg) => McpPromptArgument(
+                            name: arg.name,
+                            description: arg.description,
+                            required: arg.required,
+                          ))
+                      .toList(),
+                ))
+            .toList();
+      }
+      final prev = _statusFor(serverId);
+      _setStatus(
+        serverId,
+        prev.copyWith(
+          resourceCount: _resourceCache[serverId]!.length,
+          promptCount: _promptCache[serverId]!.length,
+          lastSyncAtMs: DateTime.now().millisecondsSinceEpoch,
+        ),
+      );
+      _emitCatalogChanged(serverId);
+    } catch (error) {
+      _logMcp('catalog.extend.failed', 'Failed to extend MCP catalog.', {
+        'serverId': serverId,
+        'error': error.toString(),
+      });
+      _resourceCache.putIfAbsent(serverId, () => const []);
+      _promptCache.putIfAbsent(serverId, () => const []);
+      _emitCatalogChanged(serverId);
     }
   }
 
@@ -295,14 +392,25 @@ class McpService {
   Future<List<McpToolDefinition>> listTools([String? serverId]) async {
     if (serverId != null) {
       if (_toolCache.containsKey(serverId)) return _toolCache[serverId]!;
-      await refreshServer(serverId);
+      await refreshServerToolsOnly(serverId);
       return _toolCache[serverId] ?? const [];
     }
     final servers = await listServers();
+    final enabledIds = [
+      for (final server in servers)
+        if (server.enabled) server.id,
+    ];
+    if (enabledIds.isEmpty) return const [];
+    await Future.wait(
+      enabledIds.map((id) async {
+        if (!_toolCache.containsKey(id)) {
+          await refreshServerToolsOnly(id);
+        }
+      }),
+    );
     final result = <McpToolDefinition>[];
-    for (final server in servers) {
-      if (!server.enabled) continue;
-      result.addAll(await listTools(server.id));
+    for (final id in enabledIds) {
+      result.addAll(_toolCache[id] ?? const []);
     }
     return result;
   }
@@ -310,14 +418,33 @@ class McpService {
   Future<List<McpResourceDefinition>> listResources([String? serverId]) async {
     if (serverId != null) {
       if (_resourceCache.containsKey(serverId)) return _resourceCache[serverId]!;
-      await refreshServer(serverId);
+      if (_toolCache.containsKey(serverId)) {
+        await ensureExtendedCatalog(serverId);
+      } else {
+        await refreshServer(serverId);
+      }
       return _resourceCache[serverId] ?? const [];
     }
     final servers = await listServers();
+    final enabledIds = [
+      for (final server in servers)
+        if (server.enabled) server.id,
+    ];
+    if (enabledIds.isEmpty) return const [];
+    await Future.wait(
+      enabledIds.map((id) async {
+        if (!_resourceCache.containsKey(id)) {
+          if (_toolCache.containsKey(id)) {
+            await ensureExtendedCatalog(id);
+          } else {
+            await refreshServer(id);
+          }
+        }
+      }),
+    );
     final result = <McpResourceDefinition>[];
-    for (final server in servers) {
-      if (!server.enabled) continue;
-      result.addAll(await listResources(server.id));
+    for (final id in enabledIds) {
+      result.addAll(_resourceCache[id] ?? const []);
     }
     return result;
   }
@@ -325,14 +452,33 @@ class McpService {
   Future<List<McpPromptDefinition>> listPrompts([String? serverId]) async {
     if (serverId != null) {
       if (_promptCache.containsKey(serverId)) return _promptCache[serverId]!;
-      await refreshServer(serverId);
+      if (_toolCache.containsKey(serverId)) {
+        await ensureExtendedCatalog(serverId);
+      } else {
+        await refreshServer(serverId);
+      }
       return _promptCache[serverId] ?? const [];
     }
     final servers = await listServers();
+    final enabledIds = [
+      for (final server in servers)
+        if (server.enabled) server.id,
+    ];
+    if (enabledIds.isEmpty) return const [];
+    await Future.wait(
+      enabledIds.map((id) async {
+        if (!_promptCache.containsKey(id)) {
+          if (_toolCache.containsKey(id)) {
+            await ensureExtendedCatalog(id);
+          } else {
+            await refreshServer(id);
+          }
+        }
+      }),
+    );
     final result = <McpPromptDefinition>[];
-    for (final server in servers) {
-      if (!server.enabled) continue;
-      result.addAll(await listPrompts(server.id));
+    for (final id in enabledIds) {
+      result.addAll(_promptCache[id] ?? const []);
     }
     return result;
   }
@@ -436,6 +582,42 @@ class McpService {
     final client = _McpRemoteClient(server);
     _clients[server.id] = client;
     return client;
+  }
+
+  Future<List<_McpRemoteResource>> _listResourcesSafe(
+    _McpRemoteClient client,
+    String serverId,
+  ) async {
+    try {
+      return await client.listResources();
+    } catch (error) {
+      if (_isOptionalMethodMissing(error, 'resources/list')) {
+        _logMcp('capability.missing', 'Server does not support resources/list.', {
+          'serverId': serverId,
+          'error': error.toString(),
+        });
+        return const [];
+      }
+      rethrow;
+    }
+  }
+
+  Future<List<_McpRemotePrompt>> _listPromptsSafe(
+    _McpRemoteClient client,
+    String serverId,
+  ) async {
+    try {
+      return await client.listPrompts();
+    } catch (error) {
+      if (_isOptionalMethodMissing(error, 'prompts/list')) {
+        _logMcp('capability.missing', 'Server does not support prompts/list.', {
+          'serverId': serverId,
+          'error': error.toString(),
+        });
+        return const [];
+      }
+      rethrow;
+    }
   }
 
   Future<JsonMap> _postForm(
@@ -658,7 +840,9 @@ class _McpRemoteClient {
     if (sessionId != null && sessionId.isNotEmpty) {
       _sessionId = sessionId;
     }
-    final body = await utf8.decodeStream(response);
+    final body = await utf8
+        .decodeStream(response)
+        .timeout(Duration(milliseconds: _config.timeoutMs));
     if (response.statusCode >= 400) {
       throw HttpException(
         'MCP HTTP ${response.statusCode}: ${body.trim().isEmpty ? response.reasonPhrase : body.trim()}',
@@ -724,6 +908,11 @@ bool _stringMapsEqual(Map<String, String> a, Map<String, String> b) {
     if (b[entry.key] != entry.value) return false;
   }
   return true;
+}
+
+bool _isOptionalMethodMissing(Object error, String method) {
+  final text = error.toString();
+  return text.contains('MCP $method failed (-32601)') && text.contains('Method not found');
 }
 
 class _McpInitializeResponse {
