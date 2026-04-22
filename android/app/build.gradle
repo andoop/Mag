@@ -6,9 +6,26 @@ if (localPropertiesFile.exists()) {
     }
 }
 
+def keyProperties = new Properties()
+def keyPropertiesFile = rootProject.file('key.properties')
+if (keyPropertiesFile.exists()) {
+    keyPropertiesFile.withReader('UTF-8') { reader ->
+        keyProperties.load(reader)
+    }
+}
+
+def releaseStoreFile = keyProperties.getProperty('storeFile')
+def hasReleaseSigning =
+        releaseStoreFile != null &&
+        !releaseStoreFile.trim().isEmpty() &&
+        rootProject.file(releaseStoreFile).exists() &&
+        keyProperties.getProperty('storePassword') != null &&
+        keyProperties.getProperty('keyAlias') != null &&
+        keyProperties.getProperty('keyPassword') != null
+
 def flutterRoot = localProperties.getProperty('flutter.sdk')
 if (flutterRoot == null) {
-    throw new GradleException("Flutter SDK not found. Define location with flutter.sdk in the local.properties file.")
+    throw new RuntimeException("Flutter SDK not found. Define location with flutter.sdk in the local.properties file.")
 }
 
 def flutterVersionCode = localProperties.getProperty('flutter.versionCode')
@@ -42,6 +59,17 @@ android {
         main.java.srcDirs += 'src/main/kotlin'
     }
 
+    signingConfigs {
+        if (hasReleaseSigning) {
+            release {
+                storeFile rootProject.file(releaseStoreFile)
+                storePassword keyProperties.getProperty('storePassword')
+                keyAlias keyProperties.getProperty('keyAlias')
+                keyPassword keyProperties.getProperty('keyPassword')
+            }
+        }
+    }
+
     defaultConfig {
         // TODO: Specify your own unique Application ID (https://developer.android.com/studio/build/application-id.html).
         applicationId "com.magent.mobile_agent"
@@ -63,9 +91,9 @@ android {
 
     buildTypes {
         release {
-            // TODO: Add your own signing config for the release build.
-            // Signing with the debug keys for now, so `flutter run --release` works.
-            signingConfig signingConfigs.debug
+            // Prefer a real release keystore when android/key.properties is present.
+            // Fallback to the debug key so local release builds still work on fresh clones.
+            signingConfig hasReleaseSigning ? signingConfigs.release : signingConfigs.debug
         }
     }
 }

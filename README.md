@@ -5,7 +5,7 @@
 
 **Mag** (Flutter package: `mobile_agent`) is an **open-source mobile AI coding agent**. It runs a full agent loop on your device: multi-turn **sessions**, **tool execution** with permissions, **workspace**-aware file operations, and **streaming** LLM calls. A small **loopback HTTP server** exposes events and APIs for debugging and integration.
 
-[Features](#features) · [Documentation](#documentation) · [Quick start](#quick-start) · [Security](#security--privacy) · [Contributing](#contributing) · [中文](#中文)
+[Features](#features) · [Documentation](#documentation) · [Quick start](#quick-start) · [Download](#download) · [Security](#security--privacy) · [Contributing](#contributing) · [中文](#中文)
 
 ---
 
@@ -29,6 +29,7 @@
 | [docs/user-guide.md](docs/user-guide.md) | How to use the app (projects, sessions, files) |
 | [docs/architecture.md](docs/architecture.md) | Layers, engine, server, bridge |
 | [docs/development.md](docs/development.md) | Setup, analyze, tests, native bridge |
+| [docs/release.md](docs/release.md) | Signed APK packaging and release notes |
 | [docs/ai-tools.md](docs/ai-tools.md) | Built-in tools and agent permissions |
 | [CONTRIBUTING.md](CONTRIBUTING.md) | Pull requests and style |
 | [CODE_OF_CONDUCT.md](CODE_OF_CONDUCT.md) | Community expectations |
@@ -49,6 +50,12 @@ Configure the model provider and keys in **Settings** inside the app.
 
 **Developers:** run `dart analyze lib/` before submitting changes (see [CONTRIBUTING.md](CONTRIBUTING.md)).
 
+## Download
+
+- **Latest APK:** publish signed Android builds on [GitHub Releases](https://github.com/andoop/Mag/releases).
+- **Recommended flow:** keep APK files out of git history and upload them as release assets instead.
+- **Local release build:** see [docs/development.md](docs/development.md) for signing and packaging steps.
+
 ## Repository layout
 
 | Path | Role |
@@ -63,7 +70,7 @@ Configure the model provider and keys in **Settings** inside the app.
 
 ## Security & privacy
 
-- **Do not commit** keystores, `key.properties`, API keys, or secrets. `.gitignore` covers common Android signing artifacts.
+- **Do not commit** keystores, `android/key.properties`, API keys, or secrets. `.gitignore` covers common Android signing artifacts.
 - You control how keys and workspace data are stored and transmitted to third-party LLM APIs.
 - See [SECURITY.md](SECURITY.md) for vulnerability reporting.
 
@@ -89,6 +96,7 @@ This project is licensed under the **MIT License** — see [LICENSE](LICENSE).
 | [docs/user-guide.md](docs/user-guide.md) | 使用说明（项目、会话、文件浏览器等） |
 | [docs/architecture.md](docs/architecture.md) | 架构与模块说明 |
 | [docs/development.md](docs/development.md) | 开发环境与分析/测试 |
+| [docs/release.md](docs/release.md) | APK 签名、打包与发布说明 |
 | [docs/ai-tools.md](docs/ai-tools.md) | 内置 AI 工具与权限 |
 | [CONTRIBUTING.md](CONTRIBUTING.md) | 贡献指南 |
 | [CODE_OF_CONDUCT.md](CODE_OF_CONDUCT.md) | 社区行为准则 |
@@ -105,9 +113,15 @@ flutter run
 
 在应用内 **设置** 中配置模型服务商与 API Key。参与开发前请阅读 [CONTRIBUTING.md](CONTRIBUTING.md)，并运行 **`dart analyze lib/`**。
 
+### 下载
+
+- **最新 APK：** 建议通过 [GitHub Releases](https://github.com/andoop/Mag/releases) 分发已签名安装包。
+- **推荐方式：** 不要把 APK 直接提交到 git 历史中，而是作为 Release asset 上传。
+- **本地打包：** 签名与打包步骤见 [docs/development.md](docs/development.md)。
+
 ### 安全与隐私
 
-勿将签名文件、密钥提交到仓库；第三方 API 与工作区数据的传输与保存由使用者自行负责。安全漏洞请按 [SECURITY.md](SECURITY.md) **私下**报告，勿发公开 Issue。
+勿将签名文件、`android/key.properties`、密钥提交到仓库；第三方 API 与工作区数据的传输与保存由使用者自行负责。安全漏洞请按 [SECURITY.md](SECURITY.md) **私下**报告，勿发公开 Issue。
 
 ### 许可证
 

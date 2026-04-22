@@ -36,7 +36,23 @@ Add tests alongside features when behavior is easy to pin down (parsers, pure lo
 ## Native workspace bridge
 
 - Android entry: `android/app/src/main/kotlin/.../MainActivity.kt` (MethodChannel `mobile_agent/workspace`).
-- When adding channel methods, update **`WorkspaceBridge`** in Dart and keep error codes (`not_found`, `not_file`, …) consistent.
+- iOS entry: `ios/Runner/AppDelegate.swift` (`IOSWorkspaceBridge` and `IOSGitNetworkBridge`).
+- When adding channel methods, update **`WorkspaceBridge`** in Dart and keep Android/iOS channel behavior and error codes (`not_found`, `not_file`, …) consistent.
+
+## Android release signing
+
+1. Copy `android/key.properties.example` to `android/key.properties`.
+2. Point `storeFile` at your local keystore path (relative to `android/`).
+3. Fill in `storePassword`, `keyAlias`, and `keyPassword`.
+4. Build a signed APK:
+
+```bash
+flutter build apk --release
+```
+
+- If `android/key.properties` is absent, Gradle falls back to the debug key so local release builds still work.
+- Keep `android/key.properties` and any `*.jks` / `*.keystore` files local only; they are git-ignored.
+- Prefer uploading the generated APK to GitHub Releases rather than committing APK files into the repository.
 
 ## Local server debugging
 
@@ -64,5 +80,7 @@ Add tests alongside features when behavior is easy to pin down (parsers, pure lo
 
 - 在克隆的 **Mag** 仓库根目录（含 `pubspec.yaml`）执行 `flutter pub get` / `flutter run`。
 - 提交前运行 **`dart analyze lib/`**，尽量通过全部检查。
-- 原生侧扩展工作区能力时，同步修改 Dart **`WorkspaceBridge`** 与 Kotlin **`MainActivity`** 的 channel 约定。
+- 原生侧扩展工作区能力时，同步修改 Dart **`WorkspaceBridge`**、Android Kotlin 桥接和 iOS `AppDelegate.swift` 中对应的 channel 实现。
+- Android 正式签名可从 `android/key.properties.example` 复制出本地 `android/key.properties`，填写 keystore 信息后运行 `flutter build apk --release`。
+- 若没有 `android/key.properties`，Gradle 会回退到 debug key，便于本地验证；对外分发请使用正式 release keystore。
 - 本地 HTTP 服务仅监听回环地址，勿在公网暴露。
