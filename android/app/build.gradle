@@ -105,6 +105,8 @@ flutter {
 dependencies {
     implementation "org.jetbrains.kotlin:kotlin-stdlib-jdk7:$kotlin_version"
     implementation "androidx.multidex:multidex:2.0.1"
+    implementation "io.noties.markwon:core:4.6.2"
+    implementation "io.noties.markwon:ext-tables:4.6.2"
     implementation "androidx.documentfile:documentfile:1.0.1"
     implementation "org.eclipse.jgit:org.eclipse.jgit:5.13.1.202206130422-r"
     implementation("org.eclipse.jgit:org.eclipse.jgit.ssh.apache:5.13.1.202206130422-r") {

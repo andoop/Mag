@@ -1,15 +1,25 @@
 package com.magent.mobile_agent
 
+import android.Manifest
+import android.app.Notification
+import android.app.NotificationChannel
+import android.app.NotificationManager
+import android.app.PendingIntent
 import android.content.Intent
+import android.content.pm.PackageManager
 import android.net.Uri
 import android.os.Build
 import android.provider.DocumentsContract
+import android.provider.Settings
 import android.webkit.MimeTypeMap
+import androidx.core.app.ActivityCompat
+import androidx.core.content.ContextCompat
 import androidx.documentfile.provider.DocumentFile
 import io.flutter.embedding.android.FlutterActivity
 import io.flutter.embedding.engine.FlutterEngine
 import io.flutter.plugin.common.MethodCall
 import io.flutter.plugin.common.MethodChannel
+import java.util.Locale
 import java.util.concurrent.ExecutorService
 import java.util.concurrent.Executors
 
@@ -18,6 +28,9 @@ class MainActivity : FlutterActivity() {
         private const val PICK_WORKSPACE_REQUEST = 4107
         private const val MAX_COPY_DEPTH = 32
         private const val MAX_COPY_FILES = 5000
+        private const val BG_NOTIF_CHANNEL_ID = "mag_background"
+        private const val FLOATING_NOTIF_CHANNEL_ID = "floating_agent"
+        private const val BG_NOTIF_ID = 1002
     }
 
     private class CopyStats(
@@ -36,12 +49,35 @@ class MainActivity : FlutterActivity() {
         super.configureFlutterEngine(flutterEngine)
         MethodChannel(flutterEngine.dartExecutor.binaryMessenger, "mobile_agent/workspace")
             .setMethodCallHandler(::handleWorkspaceCall)
+        MethodChannel(flutterEngine.dartExecutor.binaryMessenger, "mobile_agent/floating_window")
+            .setMethodCallHandler(::handleFloatingWindowCall)
         gitNetworkBridge.attach(flutterEngine)
     }
 
     override fun onDestroy() {
         workspaceExecutor.shutdownNow()
         super.onDestroy()
+    }
+
+    override fun onResume() {
+        super.onResume()
+        hideFloatingWindow()
+        cancelBackgroundNotification()
+    }
+
+    private fun requestNotificationPermIfNeeded() {
+        ensureNotificationChannels()
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU &&
+            !isFinishing && !isDestroyed &&
+            ContextCompat.checkSelfPermission(this, Manifest.permission.POST_NOTIFICATIONS)
+                != PackageManager.PERMISSION_GRANTED
+        ) {
+            ActivityCompat.requestPermissions(
+                this,
+                arrayOf(Manifest.permission.POST_NOTIFICATIONS),
+                9901,
+            )
+        }
     }
 
     private fun handleWorkspaceCall(call: MethodCall, result: MethodChannel.Result) {
@@ -66,6 +102,151 @@ class MainActivity : FlutterActivity() {
             "resolveFilesystemPath" -> runWorkspaceCall(result) { handleResolveFilesystemPath(call) }
             else -> result.notImplemented()
         }
+    }
+
+    private fun handleFloatingWindowCall(call: MethodCall, result: MethodChannel.Result) {
+        when (call.method) {
+            "hasPermission" -> result.success(canDrawOverlays())
+            "openPermissionSettings" -> {
+                val intent = Intent(
+                    Settings.ACTION_MANAGE_OVERLAY_PERMISSION,
+                    Uri.parse("package:$packageName"),
+                )
+                startActivity(intent)
+                result.success(null)
+            }
+            "show" -> {
+                if (!canDrawOverlays()) {
+                    result.success(false)
+                    return
+                }
+                val args = call.arguments as? Map<*, *> ?: emptyMap<Any, Any>()
+                val intent = Intent(this, FloatingWindowService::class.java).apply {
+                    action = FloatingWindowService.ACTION_SHOW
+                    putExtra(
+                        FloatingWindowService.EXTRA_SERVER_URI,
+                        args["serverUri"] as? String,
+                    )
+                    putExtra(
+                        FloatingWindowService.EXTRA_SESSION_ID,
+                        args["sessionId"] as? String,
+                    )
+                    putExtra(
+                        FloatingWindowService.EXTRA_SESSION_TITLE,
+                        args["sessionTitle"] as? String,
+                    )
+                    putExtra(
+                        FloatingWindowService.EXTRA_WORKSPACE_ID,
+                        args["workspaceId"] as? String,
+                    )
+                    putExtra(
+                        FloatingWindowService.EXTRA_WORKSPACE_NAME,
+                        args["workspaceName"] as? String,
+                    )
+                    putExtra(
+                        FloatingWindowService.EXTRA_WORKSPACE_DIRECTORY,
+                        args["workspaceDirectory"] as? String,
+                    )
+                    putExtra(
+                        FloatingWindowService.EXTRA_DARK_MODE,
+                        args["darkMode"] as? Boolean ?: false,
+                    )
+                }
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                    startForegroundService(intent)
+                } else {
+                    startService(intent)
+                }
+                result.success(true)
+            }
+            "hide" -> {
+                hideFloatingWindow()
+                result.success(null)
+            }
+            "moveToBackground" -> {
+                moveTaskToBack(true)
+                result.success(null)
+            }
+            "requestNotificationPermission" -> {
+                requestNotificationPermIfNeeded()
+                result.success(null)
+            }
+            "showBackgroundNotification" -> {
+                val args = call.arguments as? Map<*, *> ?: emptyMap<Any, Any>()
+                val title = args["title"] as? String ?: "Mag"
+                val body = args["body"] as? String ?: ""
+                showBackgroundNotification(title, body)
+                result.success(null)
+            }
+            "hideBackgroundNotification" -> {
+                cancelBackgroundNotification()
+                result.success(null)
+            }
+            else -> result.notImplemented()
+        }
+    }
+
+    private fun canDrawOverlays(): Boolean {
+        return Build.VERSION.SDK_INT < Build.VERSION_CODES.M || Settings.canDrawOverlays(this)
+    }
+
+    private fun hideFloatingWindow() {
+        val intent = Intent(this, FloatingWindowService::class.java).apply {
+            action = FloatingWindowService.ACTION_HIDE
+        }
+        startService(intent)
+    }
+
+    private fun ensureNotificationChannels() {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.O) return
+        val nm = getSystemService(NotificationManager::class.java)
+        val isChinese = Locale.getDefault().language == "zh"
+        nm.createNotificationChannel(
+            NotificationChannel(
+                BG_NOTIF_CHANNEL_ID,
+                if (isChinese) "后台运行" else "Background",
+                NotificationManager.IMPORTANCE_LOW,
+            )
+        )
+        nm.createNotificationChannel(
+            NotificationChannel(
+                FLOATING_NOTIF_CHANNEL_ID,
+                if (isChinese) "Mag 小窗" else "Mag floating window",
+                NotificationManager.IMPORTANCE_LOW,
+            )
+        )
+    }
+
+    private fun showBackgroundNotification(title: String, body: String) {
+        ensureNotificationChannels()
+        val nm = getSystemService(NotificationManager::class.java)
+        val flags =
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M)
+                PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT
+            else PendingIntent.FLAG_UPDATE_CURRENT
+        val pi = PendingIntent.getActivity(
+            this, 0,
+            Intent(this, MainActivity::class.java).apply {
+                addFlags(Intent.FLAG_ACTIVITY_SINGLE_TOP)
+            },
+            flags,
+        )
+        val builder =
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O)
+                Notification.Builder(this, BG_NOTIF_CHANNEL_ID)
+            else @Suppress("DEPRECATION") Notification.Builder(this)
+        val notification = builder
+            .setSmallIcon(applicationInfo.icon)
+            .setContentTitle(title)
+            .setContentText(body)
+            .setContentIntent(pi)
+            .setAutoCancel(false)
+            .build()
+        nm.notify(BG_NOTIF_ID, notification)
+    }
+
+    private fun cancelBackgroundNotification() {
+        getSystemService(NotificationManager::class.java).cancel(BG_NOTIF_ID)
     }
 
     private fun runWorkspaceCall(

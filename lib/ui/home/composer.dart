@@ -915,6 +915,7 @@ extension _HomePageComposer on _HomePageState {
                                           text: text,
                                         );
                                         _promptController.clear();
+                                        _promptFocusNode.unfocus();
                                         setState(() {
                                           _promptAttachments = const [];
                                         });

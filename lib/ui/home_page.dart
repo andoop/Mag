@@ -19,6 +19,7 @@ import 'package:webview_flutter/webview_flutter.dart';
 import '../core/models.dart';
 import '../core/skill_registry.dart';
 import '../core/workspace_bridge.dart';
+import '../platform/floating_window_bridge.dart';
 import '../sdk/local_server_client.dart';
 import '../store/app_controller.dart';
 import 'i18n.dart';
@@ -79,7 +80,7 @@ class _PromptMentionMatch {
   final String query;
 }
 
-class _HomePageState extends State<HomePage> {
+class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
   final GlobalKey<ScaffoldState> _scaffoldKey = GlobalKey<ScaffoldState>();
 
   final TextEditingController _promptController = TextEditingController();
@@ -140,6 +141,7 @@ class _HomePageState extends State<HomePage> {
   @override
   void initState() {
     super.initState();
+    WidgetsBinding.instance.addObserver(this);
     _timelineController.addListener(_handleTimelineScroll);
     _promptController.addListener(_handlePromptComposerChanged);
     _promptFocusNode.addListener(_handlePromptComposerChanged);
@@ -149,7 +151,24 @@ class _HomePageState extends State<HomePage> {
   }
 
   @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (!FloatingWindowBridge.isSupported) return;
+    if (state == AppLifecycleState.paused) {
+      final session = widget.controller.state.session;
+      if (session != null) {
+        FloatingWindowBridge.showBackgroundNotification(
+          title: l(context, 'Mag 正在后台运行', 'Mag is running in the background'),
+          body: l(context, '点击通知返回查看会话', 'Tap to return to your session'),
+        );
+      }
+    } else if (state == AppLifecycleState.resumed) {
+      FloatingWindowBridge.hideBackgroundNotification();
+    }
+  }
+
+  @override
   void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
     widget.controller.removeListener(_onStateChanged);
     _stickToBottom.removeListener(_handleStickToBottomChanged);
     _timelineController
@@ -415,6 +434,62 @@ class _HomePageState extends State<HomePage> {
     );
     if (!mounted) return;
     _showInfo(context, l(context, '已作为下一条消息发送', 'Sent as the next message.'));
+  }
+
+  Future<void> _openFloatingWindow() async {
+    final state = widget.controller.state;
+    final session = state.session;
+    final workspace = state.workspace;
+    final serverUri = state.serverUri;
+    if (session == null || workspace == null || serverUri == null) {
+      _showInfo(
+          context, l(context, '当前没有可显示的会话', 'No active session to show.'));
+      return;
+    }
+    if (!FloatingWindowBridge.isSupported) {
+      _showInfo(
+        context,
+        l(
+          context,
+          '当前平台不支持小窗功能。',
+          'Floating window is not supported on this platform.',
+        ),
+      );
+      return;
+    }
+    final allowed = await FloatingWindowBridge.hasPermission();
+    if (!mounted) return;
+    if (!allowed) {
+      await FloatingWindowBridge.openPermissionSettings();
+      if (!mounted) return;
+      _showInfo(
+        context,
+        l(
+          context,
+          '请开启“显示在其他应用上层”权限后再点一次小窗。',
+          'Enable display-over-other-apps permission, then tap floating window again.',
+        ),
+      );
+      return;
+    }
+    final opened = await FloatingWindowBridge.show(
+      FloatingWindowConfig(
+        serverUri: serverUri,
+        session: session,
+        workspace: workspace,
+        darkMode: context.isDarkMode,
+      ),
+    );
+    if (!mounted) return;
+    if (opened) {
+      // Window launched — move app to background so the overlay is visible.
+      await FloatingWindowBridge.moveToBackground();
+    } else {
+      _showInfo(
+        context,
+        l(context, '无法打开小窗，请检查悬浮窗权限。', 'Unable to open floating window.'),
+      );
+    }
   }
 
   Future<void> _selectModel(_ModelChoice model) async {
@@ -690,6 +765,14 @@ class _HomePageState extends State<HomePage> {
           running: state.isBusy,
         ),
         actions: [
+          if (FloatingWindowBridge.isSupported)
+            _buildAppBarAction(
+              tooltip: l(context, '小窗', 'Floating window'),
+              onPressed: (state.session == null || state.messages.isEmpty)
+                  ? null
+                  : _openFloatingWindow,
+              icon: Icons.picture_in_picture_alt_outlined,
+            ),
           _buildAppBarAction(
             tooltip: l(context, '切换主题', 'Toggle theme'),
             onPressed: () => widget.controller.toggleThemeMode(),

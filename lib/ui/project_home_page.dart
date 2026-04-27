@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 
 import '../core/models.dart';
+import '../platform/floating_window_bridge.dart';
 import '../store/app_controller.dart';
 import '../store/project_recents_store.dart';
 import 'i18n.dart';
@@ -51,6 +52,14 @@ class _ProjectHomePageState extends State<ProjectHomePage> {
       return;
     }
     await widget.controller.createAndOpenProject(result);
+    await _requestNotificationPermissionAfterProjectEnter();
+  }
+
+  Future<void> _requestNotificationPermissionAfterProjectEnter() async {
+    // Delay until the navigation from the project list to the agent page has
+    // settled; native side already creates notification channels up front.
+    await Future<void>.delayed(const Duration(milliseconds: 800));
+    await FloatingWindowBridge.requestNotificationPermission();
   }
 
   Future<void> _refreshProjects() async {
@@ -253,8 +262,10 @@ class _ProjectHomePageState extends State<ProjectHomePage> {
                                 borderRadius: BorderRadius.circular(14),
                                 child: InkWell(
                                   borderRadius: BorderRadius.circular(14),
-                                  onTap: () =>
-                                      widget.controller.openSavedProject(w),
+                                  onTap: () async {
+                                    await widget.controller.openSavedProject(w);
+                                    await _requestNotificationPermissionAfterProjectEnter();
+                                  },
                                   child: Padding(
                                     padding: const EdgeInsets.symmetric(
                                       horizontal: 14,

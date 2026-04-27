@@ -6,6 +6,8 @@ import UniformTypeIdentifiers
 @objc class AppDelegate: FlutterAppDelegate {
   private var workspaceBridge: IOSWorkspaceBridge?
   private var gitBridge: IOSGitNetworkBridge?
+  // Kept alive for the lifetime of the app so PiP state persists.
+  private var floatingWindowPlugin: AnyObject?
 
   override func application(
     _ application: UIApplication,
@@ -20,6 +22,22 @@ import UniformTypeIdentifiers
       let gitBridge = IOSGitNetworkBridge()
       gitBridge.attach(binaryMessenger: controller.binaryMessenger)
       self.gitBridge = gitBridge
+
+      // Floating window — native PiP on iOS 15+, no-op stub on earlier versions.
+      // The plugin object is kept alive in floatingWindowPlugin for PiP state to persist.
+      if #available(iOS 15.0, *) {
+        let plugin = FloatingWindowPlugin(rootViewController: controller)
+        plugin.attach(binaryMessenger: controller.binaryMessenger)
+        floatingWindowPlugin = plugin
+      } else {
+        let ch = FlutterMethodChannel(
+          name: "mobile_agent/floating_window",
+          binaryMessenger: controller.binaryMessenger
+        )
+        ch.setMethodCallHandler { _, result in
+          result(nil)   // feature not available on this OS version
+        }
+      }
     }
     return super.application(application, didFinishLaunchingWithOptions: launchOptions)
   }
