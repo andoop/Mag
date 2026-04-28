@@ -56,10 +56,21 @@ When no session is active, the page stays on a blank landing state. The first me
 ### Models and providers
 
 - Open **Settings** to connect a model provider and configure API keys.
-- Built-in provider presets include Anthropic, DeepSeek, Google/Gemini, Mag, OpenRouter, Groq, Mistral, Ollama, OpenAI, GitHub Models, Vercel AI Gateway, xAI, and custom OpenAI-compatible endpoints.
+- For the current provider/model ecosystem, see [models.dev](https://models.dev).
 - When supported, Mag can discover available models from the provider.
 - Recent models and current model context usage are shown in the UI.
 - Some tool behavior is adapted to model/provider capabilities.
+- Custom OpenAI-compatible endpoints can be used for gateways, proxies, local models, or self-hosted services.
+
+### Git
+
+Git is part of the project workflow, not a separate desktop-only step.
+
+- Configure Git identity, SSH keys, and remote credentials in **Settings**.
+- Use Git features to inspect status and diffs before committing.
+- Stage paths, commit, amend, manage branches, and sync with remotes.
+- Advanced operations include restore, reset, merge, rebase, and cherry-pick.
+- Android uses a native JGit bridge; iOS uses a native libgit2 bridge.
 
 ### While the agent runs
 
@@ -76,17 +87,19 @@ When no session is active, the page stays on a blank landing state. The first me
 - Workspace skill locations include `.opencode/skill`, `.opencode/skills`, `.claude/skills`, and `.agents/skills`.
 - Loading a Skill adds instructions and references to the conversation; it does not secretly execute scripts.
 
-### Android floating window
+### Mobile mini-window
 
-Mag includes a native Android floating window for monitoring an active session while using other apps.
+Mag includes native mobile mini-window behavior for monitoring an active session while using other apps.
 
-- The floating window button is available only on supported mobile platforms.
+- The mini-window button is available only on supported mobile platforms.
 - It is disabled until there is an active session with messages.
 - Android requires **Display over other apps** permission before the overlay can appear.
-- The window supports **mini**, **line**, and **full** modes.
+- Android uses a system overlay and foreground service.
+- iOS uses a Picture-in-Picture style foundation on supported systems.
+- Android supports **mini**, **line**, and **full** display modes.
 - The full mode can show status, assistant content, Markdown tables, reasoning text, and tool call summaries.
-- The window can be dragged, closed, scrolled, and tapped to return to Mag.
-- When the floating window starts successfully, Mag can move to the background so the overlay is visible.
+- The window can be dragged/closed/scrolled where the platform allows, and tapped to return to Mag.
+- When the mini-window starts successfully, Mag can move to the background so the overlay/PiP remains visible.
 
 ### Permissions
 
@@ -153,10 +166,21 @@ Mag includes a native Android floating window for monitoring an active session w
 ### 模型与供应商
 
 - 在**设置**中连接模型供应商并配置 API Key。
-- 内置供应商预设包括 Anthropic、DeepSeek、Google/Gemini、Mag、OpenRouter、Groq、Mistral、Ollama、OpenAI、GitHub Models、Vercel AI Gateway、xAI，以及自定义 OpenAI-compatible endpoint。
+- 当前模型和供应商生态可参考 [models.dev](https://models.dev)。
 - 在供应商支持时，Mag 可以发现可用模型。
 - UI 会展示最近使用模型和当前模型上下文用量。
 - 部分工具行为会根据模型/供应商能力做适配。
+- 自定义 OpenAI-compatible endpoint 可用于接入网关、代理、本地模型或自托管服务。
+
+### Git
+
+Git 是项目工作流的一部分，不是必须回到桌面端才能做的事情。
+
+- 在**设置**中配置 Git identity、SSH key 和 remote credential。
+- 提交前可以查看 status 和 diff。
+- 支持暂存路径、提交、amend、管理分支、与远程同步。
+- 高级操作包括 restore、reset、merge、rebase、cherry-pick。
+- Android 使用原生 JGit 桥接；iOS 使用原生 libgit2 桥接。
 
 ### Agent 运行时
 
@@ -173,17 +197,19 @@ Mag includes a native Android floating window for monitoring an active session w
 - 工作区 Skill 目录包括 `.opencode/skill`、`.opencode/skills`、`.claude/skills`、`.agents/skills`。
 - 加载 Skill 只会把说明和参考资料加入上下文，不会偷偷执行脚本。
 
-### Android 小窗
+### 移动端小窗
 
-Mag 提供 Android 原生小窗，用于在切换到其他应用时继续观察活跃会话。
+Mag 提供原生移动端小窗能力，用于在切换到其他应用时继续观察活跃会话。
 
 - 小窗按钮只在支持的平台显示。
 - 没有活跃会话或没有消息时，小窗按钮不可用。
 - Android 需要授予**显示在其他应用上层**权限。
-- 小窗支持**迷你**、**单行**、**完整**三种模式。
+- Android 使用系统悬浮窗和前台服务。
+- iOS 在支持的系统上使用 Picture-in-Picture 风格基础能力。
+- Android 小窗支持**迷你**、**单行**、**完整**三种模式。
 - 完整模式可展示状态、助手内容、Markdown 表格、推理文本和工具调用摘要。
-- 小窗支持拖拽、关闭、滚动、点击回到 Mag。
-- 小窗成功打开后，Mag 可自动退到后台，让悬浮窗显示在前台。
+- 平台允许时，小窗支持拖拽、关闭、滚动、点击回到 Mag。
+- 小窗成功打开后，Mag 可自动退到后台，让悬浮窗/PiP 保持可见。
 
 ### 权限说明
 

@@ -6,7 +6,7 @@
 
 **Mag** (`mobile_agent`) is an open-source **mobile AI coding agent**: a pocket-sized agent workspace for reading, understanding, editing, and shipping code from your phone.
 
-It is not "chat with a model on mobile." Mag combines projects, sessions, model providers, tool execution, permissions, workspace files, MCP resources, Skills, local persistence, and native Android floating windows into one mobile-first agent experience.
+It is not "chat with a model on mobile." Mag combines projects, sessions, model providers, Git, tool execution, permissions, workspace files, MCP resources, Skills, local persistence, and native mobile background/mini-window experiences into one mobile-first agent workflow.
 
 **Languages:** [English](#english) | [中文](#中文)  
 **Docs:** [User Guide](docs/user-guide.md) · [Capabilities](docs/capabilities.md) · [Architecture](docs/architecture.md) · [AI Tools](docs/ai-tools.md)
@@ -17,10 +17,12 @@ It is not "chat with a model on mobile." Mag combines projects, sessions, model 
 
 ### What Makes It Different
 
+Mag's product thinking and agent architecture are inspired by **OpenCode**: sessions are workspace-centered, tools are explicit, permissions are visible, and the agent loop is treated as a real development workflow instead of a decorative chat feature.
+
 Mag is built around a simple loop:
 
 ```text
-Open a project -> choose a model -> ask the agent -> approve tools -> inspect changes -> keep going
+Open a project -> choose a model -> ask the agent -> approve tools -> inspect code/Git -> keep going
 ```
 
 The important part is not only that a model can answer. The important part is that Mag gives the model a real workspace, shows what it is doing, asks before sensitive actions, remembers sessions locally, and stays useful even when you leave the app.
@@ -28,10 +30,11 @@ The important part is not only that a model can answer. The important part is th
 ### Highlights
 
 - **Pocket agent workspace**: project home, recent projects, session history, file browser, model settings, and agent timeline in one mobile UI.
-- **Bring your own model**: built-in presets for Anthropic, DeepSeek, Google/Gemini, Mag, OpenRouter, Groq, Mistral, Ollama, OpenAI, GitHub Models, Vercel AI Gateway, xAI, plus custom OpenAI-compatible endpoints.
+- **Bring your own model**: provider/model metadata follows the ecosystem tracked by [models.dev](https://models.dev), with custom OpenAI-compatible endpoints for your own gateway.
 - **Agent tools with guardrails**: read, search, edit, patch, move, copy, delete, download, web fetch, todos, questions, MCP resources/prompts, and Skills with explicit permissions.
+- **Git on mobile**: initialize, clone, inspect status/diff/log, stage, commit/amend, branch, checkout, restore, reset, merge, fetch, pull, push, rebase, cherry-pick, and manage remotes/credentials from the mobile app.
 - **MCP and Skills ready**: connect remote MCP resources/prompts, and load workspace-local or built-in Skills for repeatable expert workflows.
-- **Native mobile presence**: Android floating window, background running notification, mini/line/full display modes, and tap-to-return interaction.
+- **Native mobile presence**: Android system overlay and iOS Picture-in-Picture style mini-window foundation, plus background running status where the platform allows it.
 - **Local-first memory**: projects, sessions, messages, tool parts, permissions, questions, todos, and settings persist locally.
 - **Observable by design**: loopback HTTP APIs and SSE-style events make the agent engine easier to debug, integrate, and extend.
 - **Bilingual from the start**: Chinese and English UI/docs are maintained together.
@@ -40,38 +43,23 @@ The important part is not only that a model can answer. The important part is th
 
 | Capability | What Mag Provides |
 |------------|-------------------|
-| **Model Providers** | Presets for major hosted providers, local Ollama, OpenRouter aggregation, GitHub Models, and custom OpenAI-compatible APIs. |
+| **Models** | Provider/model ecosystem reference via [models.dev](https://models.dev), plus app-side connection, discovery, context usage, and custom compatible endpoints. |
 | **Model UX** | Provider connection, model discovery, recent models, free/latest tags, context usage, model-specific tool routing. |
 | **Projects** | Sandbox projects, recent project home, create/open/rename/delete, workspace-scoped sessions and files. |
+| **Git** | Native Git bridge for repository discovery, clone/init, status/diff/log, staging, commits, branches, remotes, sync, rebase, cherry-pick, reset/restore. |
 | **Sessions** | Blank landing, create/switch/rename/delete, auto-title after first user message, busy/cancel/compact flow. |
 | **Timeline** | Streaming content, Markdown, code highlighting, reasoning/tool summaries, permission cards, questions, scroll controls. |
 | **Workspace Files** | Browse folders, preview Markdown/HTML/PDF/images/text/code, attach files, reference files with `@`. |
 | **Agent Tools** | Read/list/stat, write/edit/apply patch, glob/grep, move/copy/delete/rename, web fetch/download, todos, questions. |
 | **MCP** | List/read MCP resources, list/resolve MCP prompts, remote MCP OAuth flow foundation. |
 | **Skills** | Load built-in and workspace-local Skills from `.opencode`, `.claude`, and `.agents` directories. |
-| **Mobile Runtime** | Android system overlay, foreground service, background notification, localized notification text. |
+| **Mobile Runtime** | Android overlay, iOS PiP foundation, foreground/background status, localized notification text. |
 | **Storage** | SQLite for agent data, shared preferences for recents, secure/local settings where appropriate. |
 | **Extensibility** | Local HTTP server, typed SDK client, MethodChannel workspace bridge, clear docs for tools and architecture. |
 
-### Supported Model Providers
+### Models
 
-Mag is provider-agnostic. Use a hosted model, a local model, or your own compatible gateway.
-
-| Provider | Notes |
-|----------|-------|
-| **Anthropic** | Claude models through the official Anthropic API. |
-| **DeepSeek** | Official DeepSeek API. |
-| **Google / Gemini** | Gemini models through the Google Generative AI OpenAI-compatible endpoint. |
-| **Mag** | Mag Zen entry with optional public-token fallback. |
-| **OpenRouter** | Aggregated model access, including free and popular models. |
-| **Groq** | Fast OpenAI-compatible inference. |
-| **Mistral** | Official Mistral API. |
-| **Ollama** | Local models through an OpenAI-compatible Ollama endpoint. |
-| **OpenAI** | Official OpenAI API. |
-| **GitHub Models** | GitHub-hosted model inference with a GitHub token. |
-| **Vercel AI Gateway** | Vercel gateway in OpenAI-compatible mode. |
-| **xAI** | Grok models through the xAI API. |
-| **OpenAI Compatible** | Custom endpoint for self-hosted gateways, LiteLLM, proxies, and compatible providers. |
+Mag does not try to hard-code the whole model universe into this README. For the current provider/model landscape, see [models.dev](https://models.dev). In the app, Mag focuses on the workflow around models: provider connection, model discovery where supported, recent models, context usage, and compatibility handling for OpenAI-compatible gateways.
 
 ### MCP And Skills
 
@@ -82,6 +70,18 @@ Mag treats tools as part of the product, not hidden magic.
 - **Skills**: load domain-specific instructions and reference files from built-in Skills or workspace folders.
 - **Workspace locations**: `.opencode/skill`, `.opencode/skills`, `.claude/skills`, and `.agents/skills`.
 - **Permission-aware**: Skills load instructions into context; they do not secretly execute scripts.
+
+### Git
+
+Mag treats Git as a first-class mobile development capability. The app includes native Git bridges on Android and iOS so a mobile project can still behave like a real repository.
+
+- **Repository basics**: discover, initialize, clone, inspect current branch, read status.
+- **Review changes**: staged/unstaged diff, commit log, show commit details.
+- **Stage and commit**: add paths, add all, unstage, commit, amend.
+- **Branch work**: list/create/delete branches, checkout existing target, checkout new branch.
+- **History operations**: restore files, reset, merge, rebase, cherry-pick.
+- **Remote sync**: list/add/set/remove/rename remotes, fetch, pull, push.
+- **Credentials**: Git identity, SSH keys, and remote credentials are managed from settings.
 
 ### Architecture At A Glance
 
@@ -155,12 +155,14 @@ Mag is released under the **MIT License**. See [LICENSE](LICENSE).
 
 **Mag**（Flutter 包名 `mobile_agent`）是一个开源的**移动端 AI 编程 Agent**：一个装进口袋里的 Agent 工作区，用来在手机上阅读、理解、修改和维护代码。
 
-它不是“手机上的模型聊天框”。Mag 把项目、会话、模型供应商、工具执行、权限确认、工作区文件、MCP 资源、Skills、本地持久化，以及 Android 原生小窗组合成一个移动端优先的 Agent 体验。
+它不是“手机上的模型聊天框”。Mag 把项目、会话、模型供应商、Git、工具执行、权限确认、工作区文件、MCP 资源、Skills、本地持久化，以及原生移动端后台/小窗体验组合成一个移动端优先的 Agent 工作流。
 
 ### Mag 的工作方式
 
+Mag 的整体思想和 Agent 架构参考 **OpenCode**：会话围绕工作区组织，工具显式可见，权限明确交给用户确认，Agent 循环被当成真实开发流程，而不是聊天框装饰。
+
 ```text
-打开项目 -> 选择模型 -> 提问给 Agent -> 审批工具 -> 查看改动 -> 继续迭代
+打开项目 -> 选择模型 -> 提问给 Agent -> 审批工具 -> 查看代码/Git -> 继续迭代
 ```
 
 关键不只是“模型能回答”，而是 Mag 给模型一个真实工作区，把 Agent 正在做什么展示出来，在敏感操作前询问你，把会话和状态保存在本机，并且在你离开应用时仍能继续观察任务。
@@ -168,10 +170,11 @@ Mag is released under the **MIT License**. See [LICENSE](LICENSE).
 ### 核心亮点
 
 - **口袋里的 Agent 工作台**：项目首页、最近项目、会话历史、文件浏览器、模型设置和 Agent 时间线整合在一个移动端 UI 中。
-- **自带多模型供应商支持**：Anthropic、DeepSeek、Google/Gemini、Mag、OpenRouter、Groq、Mistral、Ollama、OpenAI、GitHub Models、Vercel AI Gateway、xAI，以及自定义 OpenAI-compatible endpoint。
+- **自带多模型生态支持**：供应商/模型元信息参考 [models.dev](https://models.dev)，同时支持自定义 OpenAI-compatible endpoint。
 - **有护栏的 Agent 工具系统**：读文件、搜索、编辑、补丁、移动、复制、删除、下载、网页获取、待办、提问、MCP 资源/Prompt、Skills，均纳入权限体系。
+- **手机上的 Git 工作流**：初始化、克隆、status/diff/log、暂存、提交/amend、分支、checkout、restore、reset、merge、fetch、pull、push、rebase、cherry-pick、remote/credential 管理。
 - **MCP 与 Skills 原生融入**：连接远程 MCP 资源/Prompt，加载工作区或内置 Skills，让常见任务变成可复用的专家流程。
-- **移动端存在感**：Android 小窗、后台运行通知、迷你/单行/完整模式，以及点击回到主应用。
+- **移动端存在感**：Android 系统悬浮窗、iOS Picture-in-Picture 风格小窗基础，以及平台允许范围内的后台运行状态。
 - **本地优先记忆**：项目、会话、消息、工具片段、权限、问题、待办和设置都持久化在本机。
 - **可观测、可扩展**：本机 HTTP API 与 SSE 风格事件让 Agent 引擎更容易调试、集成和扩展。
 - **双语维护**：中文和英文 UI/文档同步维护，方便用户使用，也方便贡献者参与。
@@ -180,38 +183,23 @@ Mag is released under the **MIT License**. See [LICENSE](LICENSE).
 
 | 能力 | Mag 提供什么 |
 |------|--------------|
-| **模型供应商** | 内置主流云端供应商、本地 Ollama、OpenRouter 聚合、GitHub Models、自定义 OpenAI-compatible API。 |
+| **模型** | 通过 [models.dev](https://models.dev) 作为模型/供应商生态参考，应用侧负责连接、发现、上下文用量和自定义兼容 endpoint。 |
 | **模型体验** | 供应商连接、模型发现、最近模型、免费/最新标记、上下文用量、按模型能力路由工具。 |
 | **项目** | 沙盒项目、最近项目首页、创建/打开/重命名/删除、按工作区隔离会话和文件。 |
+| **Git** | 原生 Git 桥接，支持仓库发现、clone/init、status/diff/log、暂存、提交、分支、remote、同步、rebase、cherry-pick、reset/restore。 |
 | **会话** | 空白落地页、创建/切换/重命名/删除、首条用户消息后自动标题、运行/取消/压缩。 |
 | **消息流** | 流式内容、Markdown、代码高亮、推理/工具摘要、权限卡片、问题卡片、滚动控制。 |
 | **工作区文件** | 浏览目录、预览 Markdown/HTML/PDF/图片/文本/代码、选择附件、用 `@` 引用文件。 |
 | **Agent 工具** | read/list/stat、write/edit/apply_patch、glob/grep、move/copy/delete/rename、webfetch/download、todos、question。 |
 | **MCP** | 列出/读取 MCP 资源，列出/解析 MCP Prompt，远程 MCP OAuth 流程基础。 |
 | **Skills** | 从内置 Skills 和 `.opencode`、`.claude`、`.agents` 目录加载专家工作流。 |
-| **移动运行时** | Android 系统悬浮窗、前台服务、后台通知、本地化通知文案。 |
+| **移动运行时** | Android 悬浮窗、iOS PiP 基础、前台/后台状态、本地化通知文案。 |
 | **存储** | SQLite 保存 Agent 数据，SharedPreferences 保存最近项目，敏感配置按平台能力处理。 |
 | **扩展性** | 本地 HTTP 服务、类型化 SDK 客户端、MethodChannel 工作区桥接、清晰的工具和架构文档。 |
 
-### 支持的模型供应商
+### 模型
 
-Mag 不绑定某一家模型。你可以用云端模型、本地模型，也可以接入自己的兼容网关。
-
-| 供应商 | 说明 |
-|--------|------|
-| **Anthropic** | 通过官方 Anthropic API 使用 Claude 系列模型。 |
-| **DeepSeek** | 官方 DeepSeek API。 |
-| **Google / Gemini** | 通过 Google Generative AI 的 OpenAI-compatible endpoint 使用 Gemini 模型。 |
-| **Mag** | Mag Zen 入口，支持可选 public token fallback。 |
-| **OpenRouter** | 聚合模型入口，包含免费模型和热门模型。 |
-| **Groq** | 高速 OpenAI-compatible 推理。 |
-| **Mistral** | 官方 Mistral API。 |
-| **Ollama** | 通过 OpenAI-compatible Ollama endpoint 使用本地模型。 |
-| **OpenAI** | 官方 OpenAI API。 |
-| **GitHub Models** | 通过 GitHub token 使用 GitHub Models。 |
-| **Vercel AI Gateway** | Vercel AI Gateway 的 OpenAI-compatible 模式。 |
-| **xAI** | 通过 xAI API 使用 Grok 模型。 |
-| **OpenAI Compatible** | 自定义 endpoint，可接入自托管网关、LiteLLM、代理或兼容供应商。 |
+Mag 不把模型宇宙硬编码进 README。当前模型和供应商生态可直接参考 [models.dev](https://models.dev)。在应用内，Mag 更关注模型周边的工作流：供应商连接、支持时的模型发现、最近模型、上下文用量，以及对 OpenAI-compatible 网关的兼容处理。
 
 ### MCP 与 Skills
 
@@ -222,6 +210,18 @@ Mag 把工具能力当成产品核心，而不是藏在模型背后的黑盒。
 - **Skills**：加载领域专用说明和参考文件，形成可复用工作流。
 - **工作区目录**：支持 `.opencode/skill`、`.opencode/skills`、`.claude/skills`、`.agents/skills`。
 - **权限感知**：Skill 只把说明和参考资料加载进上下文，不会偷偷执行脚本。
+
+### Git
+
+Mag 把 Git 当成移动端开发的核心能力，而不是附属功能。Android 和 iOS 都有原生 Git 桥接，让手机里的项目仍然像一个真正的代码仓库。
+
+- **仓库基础**：发现仓库、初始化、克隆、查看当前分支和 status。
+- **查看改动**：staged/unstaged diff、commit log、commit 详情。
+- **暂存与提交**：add paths、add all、unstage、commit、amend。
+- **分支工作流**：列出/创建/删除分支，checkout 目标，创建并 checkout 新分支。
+- **历史操作**：restore 文件、reset、merge、rebase、cherry-pick。
+- **远程同步**：列出/添加/设置/删除/重命名 remote，fetch、pull、push。
+- **凭据管理**：在设置中维护 Git identity、SSH key 和远程认证信息。
 
 ### 架构概览
 
