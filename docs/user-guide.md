@@ -53,6 +53,14 @@ When no session is active, the page stays on a blank landing state. The first me
 - Add attachments from workspace files when the action is enabled.
 - After sending a message, the keyboard is dismissed so the timeline stays visible.
 
+### Models and providers
+
+- Open **Settings** to connect a model provider and configure API keys.
+- Built-in provider presets include Anthropic, DeepSeek, Google/Gemini, Mag, OpenRouter, Groq, Mistral, Ollama, OpenAI, GitHub Models, Vercel AI Gateway, xAI, and custom OpenAI-compatible endpoints.
+- When supported, Mag can discover available models from the provider.
+- Recent models and current model context usage are shown in the UI.
+- Some tool behavior is adapted to model/provider capabilities.
+
 ### While the agent runs
 
 - **Stop / cancel** follows the session lifecycle (busy state in the title area).
@@ -60,6 +68,13 @@ When no session is active, the page stays on a blank landing state. The first me
 - **Tool calls** appear in the message stream so you can see what the agent is doing.
 - **Reasoning / text / tool summaries** are displayed in chronological order where the UI supports it.
 - **Background notification** appears when an active session keeps running while the app goes to the background.
+
+### MCP and Skills
+
+- MCP tools let the agent list/read remote resources and list/resolve prompt templates from configured MCP servers.
+- Skills let the agent load reusable task instructions from built-in or workspace-local skill directories.
+- Workspace skill locations include `.opencode/skill`, `.opencode/skills`, `.claude/skills`, and `.agents/skills`.
+- Loading a Skill adds instructions and references to the conversation; it does not secretly execute scripts.
 
 ### Android floating window
 
@@ -135,6 +150,14 @@ Mag includes a native Android floating window for monitoring an active session w
 - 在入口可用时，可以从工作区选择附件。
 - 消息发送后会自动收起软键盘，方便继续查看消息流。
 
+### 模型与供应商
+
+- 在**设置**中连接模型供应商并配置 API Key。
+- 内置供应商预设包括 Anthropic、DeepSeek、Google/Gemini、Mag、OpenRouter、Groq、Mistral、Ollama、OpenAI、GitHub Models、Vercel AI Gateway、xAI，以及自定义 OpenAI-compatible endpoint。
+- 在供应商支持时，Mag 可以发现可用模型。
+- UI 会展示最近使用模型和当前模型上下文用量。
+- 部分工具行为会根据模型/供应商能力做适配。
+
 ### Agent 运行时
 
 - 标题区域会显示运行状态，可按会话生命周期停止/取消。
@@ -142,6 +165,13 @@ Mag includes a native Android floating window for monitoring an active session w
 - 工具调用会出现在消息流中，便于观察 Agent 正在做什么。
 - 在支持的 UI 中，推理、正文和工具摘要会按原始顺序展示。
 - 有活跃会话时进入后台，会显示后台运行通知。
+
+### MCP 与 Skills
+
+- MCP 工具让 Agent 可以从配置的 MCP Server 列出/读取远程资源，并列出/解析 Prompt 模板。
+- Skills 让 Agent 加载可复用的任务说明，来源可以是内置 Skill 或工作区本地 Skill。
+- 工作区 Skill 目录包括 `.opencode/skill`、`.opencode/skills`、`.claude/skills`、`.agents/skills`。
+- 加载 Skill 只会把说明和参考资料加入上下文，不会偷偷执行脚本。
 
 ### Android 小窗
 
