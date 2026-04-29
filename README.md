@@ -11,6 +11,21 @@ It is not "chat with a model on mobile." Mag combines projects, sessions, model 
 **Languages:** [English](#english) | [中文](#中文)  
 **Docs:** [User Guide](docs/user-guide.md) · [Capabilities](docs/capabilities.md) · [Architecture](docs/architecture.md) · [AI Tools](docs/ai-tools.md)
 
+## Screenshots
+
+<p align="center">
+  <img src="images/home.jpg" alt="Project home" width="180" />
+  <img src="images/newsession.jpg" alt="New session landing" width="180" />
+  <img src="images/messages.jpg" alt="Agent message timeline" width="180" />
+  <img src="images/workspace.jpg" alt="Workspace file browser" width="180" />
+</p>
+
+<p align="center">
+  <img src="images/provider.jpg" alt="Provider settings" width="180" />
+  <img src="images/model.jpg" alt="Model selection" width="180" />
+  <img src="images/setting.jpg" alt="App settings" width="180" />
+</p>
+
 ---
 
 ## English
