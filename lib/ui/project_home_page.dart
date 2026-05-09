@@ -49,6 +49,18 @@ class _ProjectHomePageState extends State<ProjectHomePage> {
     return begin + (end - begin) * t;
   }
 
+  double _ease(double t) {
+    return Curves.easeInOutCubic.transform(t.clamp(0.0, 1.0));
+  }
+
+  double _fadeIn(double start, double end) {
+    return _ease((_homeCollapseT - start) / (end - start));
+  }
+
+  double _fadeOut(double start, double end) {
+    return 1 - _fadeIn(start, end);
+  }
+
   void _syncHomeCollapse() {
     if (!_projectListController.hasClients) return;
     final position = _projectListController.position;
@@ -173,7 +185,7 @@ class _ProjectHomePageState extends State<ProjectHomePage> {
                   clipBehavior: Clip.none,
                   children: [
                     Positioned(
-                      top: _lerp(48, 8, _homeCollapseT),
+                      top: _lerp(48, 2, _homeCollapseT),
                       right: 0,
                       child: AnimatedOpacity(
                         opacity: _lerp(1, 0.92, _homeCollapseT),
@@ -184,7 +196,7 @@ class _ProjectHomePageState extends State<ProjectHomePage> {
                             IgnorePointer(
                               ignoring: _homeCollapseT < 0.45,
                               child: Opacity(
-                                opacity: _homeCollapseT.clamp(0.0, 1.0),
+                                opacity: _fadeIn(0.42, 0.86),
                                 child: IconButton(
                                   tooltip: l(context, '新建项目', 'New project'),
                                   onPressed: _showCreateProjectDialog,
@@ -220,7 +232,28 @@ class _ProjectHomePageState extends State<ProjectHomePage> {
                       ),
                     ),
                     Positioned(
-                      top: _lerp(96, 34, _homeCollapseT),
+                      top: 10,
+                      left: 0,
+                      right: 148,
+                      child: IgnorePointer(
+                        ignoring: _homeCollapseT < 0.45,
+                        child: Opacity(
+                          opacity: _fadeIn(0.42, 0.86),
+                          child: Text(
+                            l(context, '项目列表', 'Projects'),
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                            style: TextStyle(
+                              fontSize: 15,
+                              fontWeight: FontWeight.w700,
+                              color: oc.text,
+                            ),
+                          ),
+                        ),
+                      ),
+                    ),
+                    Positioned(
+                      top: _lerp(96, 28, _homeCollapseT),
                       left: 0,
                       right: 0,
                       child: IgnorePointer(
@@ -258,7 +291,7 @@ class _ProjectHomePageState extends State<ProjectHomePage> {
                       ),
                     ),
                     Positioned(
-                      top: _lerp(202, 8, _homeCollapseT),
+                      top: _lerp(202, 46, _homeCollapseT),
                       left: 0,
                       right: 0,
                       bottom: 0,
@@ -298,48 +331,65 @@ class _ProjectHomePageState extends State<ProjectHomePage> {
                             return Column(
                               crossAxisAlignment: CrossAxisAlignment.stretch,
                               children: [
-                                Row(
-                                  children: [
-                                    Expanded(
-                                      child: Text(
-                                        l(context, '项目列表', 'Projects'),
-                                        style: TextStyle(
-                                          fontSize: 14,
-                                          fontWeight: FontWeight.w600,
-                                          color: oc.text,
-                                        ),
-                                      ),
-                                    ),
-                                    IgnorePointer(
-                                      ignoring: _homeCollapseT > 0.55,
-                                      child: Opacity(
-                                        opacity: (1 - _homeCollapseT)
-                                            .clamp(0.0, 1.0),
-                                        child: FilledButton.icon(
-                                          onPressed: _showCreateProjectDialog,
-                                          icon: const Icon(
-                                            Icons.create_new_folder_rounded,
-                                            size: 17,
-                                          ),
-                                          label: Text(l(context, '新建', 'New')),
-                                          style: FilledButton.styleFrom(
-                                            backgroundColor: oc.sendButtonBg,
-                                            foregroundColor: oc.sendButtonFg,
-                                            visualDensity:
-                                                VisualDensity.compact,
-                                            tapTargetSize: MaterialTapTargetSize
-                                                .shrinkWrap,
-                                            padding: const EdgeInsets.symmetric(
-                                              horizontal: 11,
-                                              vertical: 7,
+                                ClipRect(
+                                  child: Align(
+                                    alignment: Alignment.topCenter,
+                                    heightFactor: _fadeOut(0.06, 0.42),
+                                    child: Padding(
+                                      padding: const EdgeInsets.only(bottom: 8),
+                                      child: Row(
+                                        children: [
+                                          Expanded(
+                                            child: Opacity(
+                                              opacity: _fadeOut(0.06, 0.42),
+                                              child: Text(
+                                                l(context, '项目列表', 'Projects'),
+                                                style: TextStyle(
+                                                  fontSize: 14,
+                                                  fontWeight: FontWeight.w600,
+                                                  color: oc.text,
+                                                ),
+                                              ),
                                             ),
                                           ),
-                                        ),
+                                          IgnorePointer(
+                                            ignoring: _homeCollapseT > 0.3,
+                                            child: Opacity(
+                                              opacity: _fadeOut(0.0, 0.3),
+                                              child: FilledButton.icon(
+                                                onPressed:
+                                                    _showCreateProjectDialog,
+                                                icon: const Icon(
+                                                  Icons
+                                                      .create_new_folder_rounded,
+                                                  size: 17,
+                                                ),
+                                                label: Text(
+                                                    l(context, '新建', 'New')),
+                                                style: FilledButton.styleFrom(
+                                                  backgroundColor:
+                                                      oc.sendButtonBg,
+                                                  foregroundColor:
+                                                      oc.sendButtonFg,
+                                                  visualDensity:
+                                                      VisualDensity.compact,
+                                                  tapTargetSize:
+                                                      MaterialTapTargetSize
+                                                          .shrinkWrap,
+                                                  padding: const EdgeInsets
+                                                      .symmetric(
+                                                    horizontal: 11,
+                                                    vertical: 7,
+                                                  ),
+                                                ),
+                                              ),
+                                            ),
+                                          ),
+                                        ],
                                       ),
                                     ),
-                                  ],
+                                  ),
                                 ),
-                                const SizedBox(height: 8),
                                 Expanded(
                                   child: ListView.separated(
                                     controller: _projectListController,
