@@ -225,7 +225,8 @@ void _invalidatePreviewAfterRename(
   if (before.isDirectory || after.isDirectory) {
     controller.invalidateWorkspacePreview(treeUri: t, relativePath: '');
   } else {
-    controller.invalidateWorkspacePreview(treeUri: t, relativePath: before.path);
+    controller.invalidateWorkspacePreview(
+        treeUri: t, relativePath: before.path);
     controller.invalidateWorkspacePreview(treeUri: t, relativePath: after.path);
   }
   controller.invalidateWorkspaceSearchIndex(treeUri: t);
@@ -235,8 +236,7 @@ Future<void> _copyWorkspaceEntryRelativePath(
   BuildContext context,
   WorkspaceEntry entry,
 ) async {
-  final copiedLabel =
-      l(context, '相对路径已复制', 'Relative path copied');
+  final copiedLabel = l(context, '相对路径已复制', 'Relative path copied');
   final messenger = ScaffoldMessenger.maybeOf(context);
   await Clipboard.setData(ClipboardData(text: entry.path));
   messenger?.hideCurrentSnackBar();
@@ -272,8 +272,7 @@ Future<void> _shareWorkspaceEntry(
     if (abs != null && entry.isDirectory) {
       final dir = Directory(abs);
       if (await dir.exists()) {
-        final folderText =
-            langIsZh ? '文件夹路径:\n$abs' : 'Folder path:\n$abs';
+        final folderText = langIsZh ? '文件夹路径:\n$abs' : 'Folder path:\n$abs';
         await Share.share(
           folderText,
           subject: entry.name,
@@ -290,6 +289,50 @@ Future<void> _shareWorkspaceEntry(
     messenger?.showSnackBar(
       SnackBar(content: Text('$shareFailedPrefix: $e')),
     );
+  }
+}
+
+Future<void> _createWorkspaceWebShortcut(
+  BuildContext context,
+  WorkspaceInfo workspace,
+  WorkspaceEntry entry,
+) async {
+  final messenger = ScaffoldMessenger.maybeOf(context);
+  final createdLabel = l(context, '已请求创建桌面快捷方式', 'Shortcut creation requested');
+  final iosSharedLabel =
+      l(context, '已生成快捷方式链接，请用快捷指令添加到主屏幕', 'Shortcut link created');
+  final failedPrefix = l(context, '创建快捷方式失败', 'Failed to create shortcut');
+  final unsupportedLabel = l(context, '当前启动器不支持创建快捷方式',
+      'The current launcher does not support shortcuts');
+  final shortcut = WorkspaceWebShortcut(
+    workspace: workspace,
+    path: entry.path,
+    title: workspace.name,
+  );
+  try {
+    if (Platform.isIOS) {
+      await Share.share(
+        shortcut.launchUri.toString(),
+        subject: workspace.name,
+      );
+      messenger?.hideCurrentSnackBar();
+      messenger?.showSnackBar(SnackBar(content: Text(iosSharedLabel)));
+      return;
+    }
+
+    final ok =
+        await ShortcutBridge.instance.createWorkspaceWebShortcut(shortcut);
+    messenger?.hideCurrentSnackBar();
+    messenger?.showSnackBar(
+      SnackBar(
+        content: Text(
+          ok ? createdLabel : unsupportedLabel,
+        ),
+      ),
+    );
+  } catch (e) {
+    messenger?.hideCurrentSnackBar();
+    messenger?.showSnackBar(SnackBar(content: Text('$failedPrefix: $e')));
   }
 }
 
@@ -435,7 +478,8 @@ void _showWorkspaceEntryMoreMenu(
               ),
             ),
             ListTile(
-              leading: Icon(Icons.drive_file_rename_outline, color: ctx.oc.accent),
+              leading:
+                  Icon(Icons.drive_file_rename_outline, color: ctx.oc.accent),
               title: Text(l(ctx, '重命名', 'Rename')),
               onTap: () {
                 Navigator.pop(ctx);
@@ -460,6 +504,22 @@ void _showWorkspaceEntryMoreMenu(
                 unawaited(_shareWorkspaceEntry(context, workspace, entry));
               },
             ),
+            if (!entry.isDirectory && _pathLooksHtmlFile(entry.path))
+              ListTile(
+                leading: Icon(Icons.add_to_home_screen, color: ctx.oc.accent),
+                title: Text(l(ctx, '创建桌面快捷方式', 'Create home shortcut')),
+                subtitle: Text(
+                  l(ctx, '从桌面直接打开该网页预览',
+                      'Open this web preview directly from the launcher'),
+                  style: Theme.of(ctx).textTheme.bodySmall,
+                ),
+                onTap: () {
+                  Navigator.pop(ctx);
+                  unawaited(
+                    _createWorkspaceWebShortcut(context, workspace, entry),
+                  );
+                },
+              ),
             ListTile(
               leading: Icon(Icons.link, color: ctx.oc.accent),
               title: Text(l(ctx, '复制相对路径', 'Copy relative path')),
@@ -525,7 +585,9 @@ class _WorkspaceImagePreviewPage extends StatelessWidget {
           if (snapshot.connectionState != ConnectionState.done) {
             return const Center(child: CircularProgressIndicator());
           }
-          if (snapshot.hasError || !snapshot.hasData || snapshot.data!.isEmpty) {
+          if (snapshot.hasError ||
+              !snapshot.hasData ||
+              snapshot.data!.isEmpty) {
             return Center(
               child: Padding(
                 padding: const EdgeInsets.all(24),
@@ -603,9 +665,8 @@ class _WorkspaceFileBrowserPageState extends State<_WorkspaceFileBrowserPage> {
   List<WorkspaceEntry> _sorted(List<WorkspaceEntry> raw) {
     final dirs = raw.where((e) => e.isDirectory).toList();
     final files = raw.where((e) => !e.isDirectory).toList();
-    int byName(WorkspaceEntry a, WorkspaceEntry b) => a.name
-        .toLowerCase()
-        .compareTo(b.name.toLowerCase());
+    int byName(WorkspaceEntry a, WorkspaceEntry b) =>
+        a.name.toLowerCase().compareTo(b.name.toLowerCase());
     dirs.sort(byName);
     files.sort(byName);
     return [...dirs, ...files];
@@ -663,8 +724,7 @@ class _WorkspaceFileBrowserPageState extends State<_WorkspaceFileBrowserPage> {
                 ),
               ),
             ),
-          if (_relativePath.isNotEmpty)
-            Divider(height: 1, color: oc.border),
+          if (_relativePath.isNotEmpty) Divider(height: 1, color: oc.border),
           Expanded(
             child: FutureBuilder<List<WorkspaceEntry>>(
               future: _future,
@@ -687,8 +747,7 @@ class _WorkspaceFileBrowserPageState extends State<_WorkspaceFileBrowserPage> {
                           const SizedBox(height: 8),
                           Text(
                             '${snapshot.error}',
-                            style: TextStyle(
-                                fontSize: 12, color: oc.muted),
+                            style: TextStyle(fontSize: 12, color: oc.muted),
                             textAlign: TextAlign.center,
                           ),
                           const SizedBox(height: 16),

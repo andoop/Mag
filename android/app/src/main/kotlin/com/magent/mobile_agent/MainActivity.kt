@@ -7,6 +7,9 @@ import android.app.NotificationManager
 import android.app.PendingIntent
 import android.content.Intent
 import android.content.pm.PackageManager
+import android.content.pm.ShortcutInfo
+import android.content.pm.ShortcutManager
+import android.graphics.drawable.Icon
 import android.net.Uri
 import android.os.Build
 import android.provider.DocumentsContract
@@ -31,6 +34,14 @@ class MainActivity : FlutterActivity() {
         private const val BG_NOTIF_CHANNEL_ID = "mag_background"
         private const val FLOATING_NOTIF_CHANNEL_ID = "floating_agent"
         private const val BG_NOTIF_ID = 1002
+        private const val ACTION_WORKSPACE_WEB_SHORTCUT =
+            "com.magent.mobile_agent.OPEN_WORKSPACE_WEB_SHORTCUT"
+        private const val EXTRA_WORKSPACE_ID = "workspaceId"
+        private const val EXTRA_WORKSPACE_NAME = "workspaceName"
+        private const val EXTRA_WORKSPACE_TREE_URI = "workspaceTreeUri"
+        private const val EXTRA_WORKSPACE_CREATED_AT = "workspaceCreatedAt"
+        private const val EXTRA_SHORTCUT_PATH = "path"
+        private const val EXTRA_SHORTCUT_TITLE = "title"
     }
 
     private class CopyStats(
@@ -44,6 +55,8 @@ class MainActivity : FlutterActivity() {
     private val gitNetworkBridge: GitNetworkBridge by lazy {
         GitNetworkBridge(this, workspaceExecutor)
     }
+    private var shortcutChannel: MethodChannel? = null
+    private var pendingShortcutLaunch: Map<String, Any?>? = null
 
     override fun configureFlutterEngine(flutterEngine: FlutterEngine) {
         super.configureFlutterEngine(flutterEngine)
@@ -51,7 +64,18 @@ class MainActivity : FlutterActivity() {
             .setMethodCallHandler(::handleWorkspaceCall)
         MethodChannel(flutterEngine.dartExecutor.binaryMessenger, "mobile_agent/floating_window")
             .setMethodCallHandler(::handleFloatingWindowCall)
+        shortcutChannel = MethodChannel(flutterEngine.dartExecutor.binaryMessenger, "mobile_agent/shortcuts")
+            .also { it.setMethodCallHandler(::handleShortcutCall) }
+        pendingShortcutLaunch = shortcutPayloadFromIntent(intent)
         gitNetworkBridge.attach(flutterEngine)
+    }
+
+    override fun onNewIntent(intent: Intent) {
+        super.onNewIntent(intent)
+        setIntent(intent)
+        val payload = shortcutPayloadFromIntent(intent) ?: return
+        pendingShortcutLaunch = payload
+        shortcutChannel?.invokeMethod("workspaceWebShortcutLaunched", payload)
     }
 
     override fun onDestroy() {
@@ -184,6 +208,66 @@ class MainActivity : FlutterActivity() {
             }
             else -> result.notImplemented()
         }
+    }
+
+    private fun handleShortcutCall(call: MethodCall, result: MethodChannel.Result) {
+        when (call.method) {
+            "createWorkspaceWebShortcut" -> result.success(createWorkspaceWebShortcut(call))
+            "takeInitialWorkspaceWebShortcut" -> {
+                val payload = pendingShortcutLaunch
+                pendingShortcutLaunch = null
+                result.success(payload)
+            }
+            else -> result.notImplemented()
+        }
+    }
+
+    private fun createWorkspaceWebShortcut(call: MethodCall): Boolean {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.O) return false
+        val manager = getSystemService(ShortcutManager::class.java) ?: return false
+        if (!manager.isRequestPinShortcutSupported) return false
+        val args = call.arguments as? Map<*, *> ?: return false
+        val workspaceId = args["workspaceId"] as? String ?: return false
+        val workspaceName = args["workspaceName"] as? String ?: return false
+        val workspaceTreeUri = args["workspaceTreeUri"] as? String ?: return false
+        val path = args["path"] as? String ?: return false
+        val title = (args["title"] as? String)?.takeIf { it.isNotBlank() } ?: path
+        val createdAt = (args["workspaceCreatedAt"] as? Number)?.toLong() ?: 0L
+        val shortcutId = "workspace_web_${workspaceId}_${path.hashCode()}"
+        val launchIntent = Intent(this, MainActivity::class.java).apply {
+            action = ACTION_WORKSPACE_WEB_SHORTCUT
+            addFlags(Intent.FLAG_ACTIVITY_SINGLE_TOP or Intent.FLAG_ACTIVITY_CLEAR_TOP)
+            putExtra(EXTRA_WORKSPACE_ID, workspaceId)
+            putExtra(EXTRA_WORKSPACE_NAME, workspaceName)
+            putExtra(EXTRA_WORKSPACE_TREE_URI, workspaceTreeUri)
+            putExtra(EXTRA_WORKSPACE_CREATED_AT, createdAt)
+            putExtra(EXTRA_SHORTCUT_PATH, path)
+            putExtra(EXTRA_SHORTCUT_TITLE, title)
+        }
+        val shortcut = ShortcutInfo.Builder(this, shortcutId)
+            .setShortLabel(title.take(18))
+            .setLongLabel(title)
+            .setIcon(Icon.createWithResource(this, applicationInfo.icon))
+            .setIntent(launchIntent)
+            .build()
+        return manager.requestPinShortcut(shortcut, null)
+    }
+
+    private fun shortcutPayloadFromIntent(intent: Intent?): Map<String, Any?>? {
+        if (intent?.action != ACTION_WORKSPACE_WEB_SHORTCUT) return null
+        val workspaceId = intent.getStringExtra(EXTRA_WORKSPACE_ID) ?: return null
+        val workspaceName = intent.getStringExtra(EXTRA_WORKSPACE_NAME) ?: return null
+        val workspaceTreeUri = intent.getStringExtra(EXTRA_WORKSPACE_TREE_URI) ?: return null
+        val path = intent.getStringExtra(EXTRA_SHORTCUT_PATH) ?: return null
+        val title = intent.getStringExtra(EXTRA_SHORTCUT_TITLE) ?: path
+        return mapOf(
+            "workspaceId" to workspaceId,
+            "workspaceName" to workspaceName,
+            "workspaceTreeUri" to workspaceTreeUri,
+            "workspaceCreatedAt" to intent.getLongExtra(EXTRA_WORKSPACE_CREATED_AT, 0L),
+            "path" to path,
+            "title" to title,
+        )
     }
 
     private fun canDrawOverlays(): Boolean {

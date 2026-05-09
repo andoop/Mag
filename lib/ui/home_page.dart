@@ -21,6 +21,7 @@ import '../core/debug_trace.dart';
 import '../core/skill_registry.dart';
 import '../core/workspace_bridge.dart';
 import '../platform/floating_window_bridge.dart';
+import '../platform/shortcut_bridge.dart';
 import '../sdk/local_server_client.dart';
 import '../store/app_controller.dart';
 import 'i18n.dart';

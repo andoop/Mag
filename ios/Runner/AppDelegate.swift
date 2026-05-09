@@ -6,6 +6,7 @@ import UniformTypeIdentifiers
 @objc class AppDelegate: FlutterAppDelegate {
   private var workspaceBridge: IOSWorkspaceBridge?
   private var gitBridge: IOSGitNetworkBridge?
+  private var shortcutBridge: IOSShortcutBridge?
   // Kept alive for the lifetime of the app so PiP state persists.
   private var floatingWindowPlugin: AnyObject?
 
@@ -23,6 +24,10 @@ import UniformTypeIdentifiers
       gitBridge.attach(binaryMessenger: controller.binaryMessenger)
       self.gitBridge = gitBridge
 
+      let shortcutBridge = IOSShortcutBridge()
+      shortcutBridge.attach(binaryMessenger: controller.binaryMessenger)
+      self.shortcutBridge = shortcutBridge
+
       // Floating window — native PiP on iOS 15+, no-op stub on earlier versions.
       // The plugin object is kept alive in floatingWindowPlugin for PiP state to persist.
       if #available(iOS 15.0, *) {
@@ -38,8 +43,109 @@ import UniformTypeIdentifiers
           result(nil)   // feature not available on this OS version
         }
       }
+
+      if let launchUrl = launchOptions?[UIApplication.LaunchOptionsKey.url] as? URL {
+        shortcutBridge.queueInitial(url: launchUrl)
+      }
     }
     return super.application(application, didFinishLaunchingWithOptions: launchOptions)
+  }
+
+  override func application(
+    _ app: UIApplication,
+    open url: URL,
+    options: [UIApplication.OpenURLOptionsKey : Any] = [:]
+  ) -> Bool {
+    if shortcutBridge?.handle(url: url) == true {
+      return true
+    }
+    return super.application(app, open: url, options: options)
+  }
+}
+
+private final class IOSShortcutBridge {
+  private var channel: FlutterMethodChannel?
+  private var pendingShortcutLaunch: [String: Any]?
+
+  func attach(binaryMessenger: FlutterBinaryMessenger) {
+    let channel = FlutterMethodChannel(
+      name: "mobile_agent/shortcuts",
+      binaryMessenger: binaryMessenger
+    )
+    self.channel = channel
+    channel.setMethodCallHandler { [weak self] call, result in
+      guard let self else {
+        result(FlutterError(code: "shortcut_error", message: "Shortcut bridge unavailable", details: nil))
+        return
+      }
+      switch call.method {
+      case "takeInitialWorkspaceWebShortcut":
+        result(self.takeInitialWorkspaceWebShortcut())
+      case "createWorkspaceWebShortcut":
+        result(false)
+      default:
+        result(FlutterMethodNotImplemented)
+      }
+    }
+  }
+
+  @discardableResult
+  func handle(url: URL) -> Bool {
+    guard let payload = Self.shortcutPayload(from: url) else {
+      return false
+    }
+    if channel == nil {
+      pendingShortcutLaunch = payload
+      return true
+    }
+    channel?.invokeMethod("workspaceWebShortcutLaunched", arguments: payload)
+    return true
+  }
+
+  @discardableResult
+  func queueInitial(url: URL) -> Bool {
+    guard let payload = Self.shortcutPayload(from: url) else {
+      return false
+    }
+    pendingShortcutLaunch = payload
+    return true
+  }
+
+  private func takeInitialWorkspaceWebShortcut() -> [String: Any]? {
+    let payload = pendingShortcutLaunch
+    pendingShortcutLaunch = nil
+    return payload
+  }
+
+  private static func shortcutPayload(from url: URL) -> [String: Any]? {
+    guard url.scheme == "mag", url.host == "workspace-web" else {
+      return nil
+    }
+    guard let components = URLComponents(url: url, resolvingAgainstBaseURL: false) else {
+      return nil
+    }
+    var values: [String: String] = [:]
+    for item in components.queryItems ?? [] {
+      if let value = item.value {
+        values[item.name] = value
+      }
+    }
+    guard
+      let workspaceId = values["workspaceId"],
+      let workspaceName = values["workspaceName"],
+      let workspaceTreeUri = values["workspaceTreeUri"],
+      let path = values["path"]
+    else {
+      return nil
+    }
+    return [
+      "workspaceId": workspaceId,
+      "workspaceName": workspaceName,
+      "workspaceTreeUri": workspaceTreeUri,
+      "workspaceCreatedAt": Int(values["workspaceCreatedAt"] ?? "") ?? Int(Date().timeIntervalSince1970 * 1000),
+      "path": path,
+      "title": values["title"] ?? workspaceName
+    ]
   }
 }
 
