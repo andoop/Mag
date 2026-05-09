@@ -169,6 +169,39 @@ class _ProjectHomePageState extends State<ProjectHomePage> {
                       child: Row(
                         mainAxisSize: MainAxisSize.min,
                         children: [
+                          IgnorePointer(
+                            ignoring: _homeCollapseT < 0.35,
+                            child: ClipRect(
+                              child: Align(
+                                widthFactor: _homeCollapseT.clamp(0.0, 1.0),
+                                child: Opacity(
+                                  opacity: _homeCollapseT.clamp(0.0, 1.0),
+                                  child: Transform.translate(
+                                    offset:
+                                        Offset(14 * (1 - _homeCollapseT), 0),
+                                    child: IconButton(
+                                      tooltip:
+                                          l(context, '新建项目', 'New project'),
+                                      onPressed: _showCreateProjectDialog,
+                                      icon: const Icon(
+                                        Icons.create_new_folder_rounded,
+                                      ),
+                                      style: IconButton.styleFrom(
+                                        fixedSize: const Size(36, 36),
+                                        tapTargetSize:
+                                            MaterialTapTargetSize.shrinkWrap,
+                                        backgroundColor: oc.sendButtonBg
+                                            .withOpacity(context.isDarkMode
+                                                ? 0.82
+                                                : 0.9),
+                                        foregroundColor: oc.sendButtonFg,
+                                      ),
+                                    ),
+                                  ),
+                                ),
+                              ),
+                            ),
+                          ),
                           IconButton(
                             tooltip: l(context, '设置', 'Settings'),
                             onPressed: () => openAppSettingsSheet(
@@ -283,22 +316,46 @@ class _ProjectHomePageState extends State<ProjectHomePage> {
                                       ),
                                     ),
                                   ),
-                                  FilledButton.icon(
-                                    onPressed: _showCreateProjectDialog,
-                                    icon: const Icon(
-                                      Icons.create_new_folder_rounded,
-                                      size: 17,
-                                    ),
-                                    label: Text(l(context, '新建', 'New')),
-                                    style: FilledButton.styleFrom(
-                                      backgroundColor: oc.sendButtonBg,
-                                      foregroundColor: oc.sendButtonFg,
-                                      visualDensity: VisualDensity.compact,
-                                      tapTargetSize:
-                                          MaterialTapTargetSize.shrinkWrap,
-                                      padding: const EdgeInsets.symmetric(
-                                        horizontal: 11,
-                                        vertical: 7,
+                                  IgnorePointer(
+                                    ignoring: _homeCollapseT > 0.65,
+                                    child: ClipRect(
+                                      child: Align(
+                                        widthFactor: (1 - _homeCollapseT)
+                                            .clamp(0.0, 1.0),
+                                        child: Opacity(
+                                          opacity: (1 - _homeCollapseT)
+                                              .clamp(0.0, 1.0),
+                                          child: Transform.translate(
+                                            offset:
+                                                Offset(12 * _homeCollapseT, 0),
+                                            child: FilledButton.icon(
+                                              onPressed:
+                                                  _showCreateProjectDialog,
+                                              icon: const Icon(
+                                                Icons.create_new_folder_rounded,
+                                                size: 17,
+                                              ),
+                                              label:
+                                                  Text(l(context, '新建', 'New')),
+                                              style: FilledButton.styleFrom(
+                                                backgroundColor:
+                                                    oc.sendButtonBg,
+                                                foregroundColor:
+                                                    oc.sendButtonFg,
+                                                visualDensity:
+                                                    VisualDensity.compact,
+                                                tapTargetSize:
+                                                    MaterialTapTargetSize
+                                                        .shrinkWrap,
+                                                padding:
+                                                    const EdgeInsets.symmetric(
+                                                  horizontal: 11,
+                                                  vertical: 7,
+                                                ),
+                                              ),
+                                            ),
+                                          ),
+                                        ),
                                       ),
                                     ),
                                   ),
