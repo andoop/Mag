@@ -500,36 +500,17 @@ class _ToolPartTile extends StatefulWidget {
 
 class _ToolPartTileState extends State<_ToolPartTile> {
   late bool _expanded;
-  bool _userToggled = false;
 
   @override
   void initState() {
     super.initState();
-    _expanded = _defaultExpanded();
+    _expanded = false;
   }
 
   @override
   void didUpdateWidget(covariant _ToolPartTile oldWidget) {
     super.didUpdateWidget(oldWidget);
-    if (_userToggled) return;
-    final becameError = oldWidget.status != 'error' && widget.status == 'error';
-    if (becameError) {
-      _expanded = true;
-      return;
-    }
-    final becameRunning =
-        oldWidget.status != widget.status && _defaultExpanded();
-    if (becameRunning) {
-      _expanded = true;
-    }
-  }
-
-  bool _defaultExpanded() {
-    final isRunning = widget.status == 'running' || widget.status == 'pending';
-    final isError = widget.status == 'error';
-    final isLivePreviewTool =
-        widget.toolName == 'write' || widget.toolName == 'edit';
-    return isError || (isRunning && isLivePreviewTool);
+    // 工具卡只有关闭/展开两种形态，运行和完成状态不再主动改变用户选择。
   }
 
   String? _diffStatSuffix() {
@@ -1321,7 +1302,6 @@ class _ToolPartTileState extends State<_ToolPartTile> {
             expanded: expanded,
             onToggle: model.hasDetails
                 ? () => setState(() {
-                      _userToggled = true;
                       _expanded = !expanded;
                     })
                 : null,
@@ -1390,7 +1370,7 @@ class _ToolHeader extends StatelessWidget {
                         style: TextStyle(
                           fontFamily: 'monospace',
                           fontWeight: FontWeight.w600,
-                          fontSize: 11.5,
+                          fontSize: 11,
                           color: oc.foreground,
                         ),
                         overflow: TextOverflow.ellipsis,
@@ -1413,10 +1393,11 @@ class _ToolHeader extends StatelessWidget {
                 const SizedBox(height: 2),
                 Text(
                   model.summary,
-                  style: Theme.of(context)
-                      .textTheme
-                      .labelSmall
-                      ?.copyWith(color: oc.foregroundHint, height: 1.2),
+                  style: Theme.of(context).textTheme.labelSmall?.copyWith(
+                        color: oc.foregroundHint,
+                        fontSize: 10.5,
+                        height: 1.15,
+                      ),
                   overflow: TextOverflow.ellipsis,
                 ),
               ],
@@ -1452,17 +1433,17 @@ class _ToolStatusGlyph extends StatelessWidget {
   Widget build(BuildContext context) {
     if (model.isRunning) {
       return const SizedBox(
-        width: 12,
-        height: 12,
-        child: CircularProgressIndicator(strokeWidth: 1.5),
+        width: 11,
+        height: 11,
+        child: CircularProgressIndicator(strokeWidth: 1.4),
       );
     }
     if (model.isError) {
-      return Icon(Icons.error_outline, size: 14, color: Colors.red.shade700);
+      return Icon(Icons.error_outline, size: 13, color: Colors.red.shade700);
     }
     return Icon(
       Icons.check_circle_outline,
-      size: 14,
+      size: 13,
       color: context.oc.foregroundHint,
     );
   }
@@ -1484,7 +1465,7 @@ class _ToolStatusPill extends StatelessWidget {
     final Color background =
         foreground.withOpacity(context.isDarkMode ? 0.14 : 0.1);
     return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+      padding: const EdgeInsets.symmetric(horizontal: 5, vertical: 1.5),
       decoration: BoxDecoration(
         color: background,
         borderRadius: BorderRadius.circular(999),
@@ -1493,6 +1474,7 @@ class _ToolStatusPill extends StatelessWidget {
         model.statusLabel,
         style: Theme.of(context).textTheme.labelSmall?.copyWith(
               color: foreground,
+              fontSize: 9.5,
               fontWeight: FontWeight.w700,
               height: 1.05,
             ),

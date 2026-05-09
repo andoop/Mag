@@ -935,8 +935,8 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
     final nextStick =
         _computeStickToBottom(distance, current: _stickToBottom.value);
     if (_timelineUserInteracting) {
-      if (nextStick != _stickToBottom.value) {
-        _stickToBottom.value = nextStick;
+      if (_stickToBottom.value) {
+        _stickToBottom.value = false;
       }
       return;
     }
@@ -949,9 +949,11 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
     if (notification is ScrollStartNotification &&
         notification.dragDetails != null) {
       _timelineUserInteracting = true;
+      _pendingTimelineSync = false;
       if (_stickToBottom.value) {
         _stickToBottom.value = false;
       }
+      _scheduleScrollToBottomButtonVisibility(true, immediate: true);
       return false;
     }
     if (_isRecentProgrammaticTimelineScroll(notification.metrics)) return false;
@@ -964,8 +966,10 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
       if (_timelineUserInteracting ||
           (notification is ScrollUpdateNotification &&
               notification.dragDetails != null)) {
-        if (nextStick != _stickToBottom.value) {
-          _stickToBottom.value = nextStick;
+        // Deer-flow 的思路是用户一旦脱离底部，就进入 detached 状态；
+        // 拖动过程中不因为仍靠近底部而重新吸底，避免流式输出把用户拉回去。
+        if (_stickToBottom.value) {
+          _stickToBottom.value = false;
         }
       } else if (!_stickToBottom.value && nextStick) {
         _stickToBottom.value = true;
@@ -979,6 +983,10 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
         }
       }
       if (notification is ScrollEndNotification) {
+        final atBottom = distance < 10;
+        if (_stickToBottom.value != atBottom) {
+          _stickToBottom.value = atBottom;
+        }
         _timelineUserInteracting = false;
       }
     }

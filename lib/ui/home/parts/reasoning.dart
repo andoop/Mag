@@ -349,24 +349,96 @@ class _ReasoningPartTileState extends State<_ReasoningPartTile> {
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           _buildReasoningTrigger(context, hasReasoning),
-          AnimatedSize(
-            duration: const Duration(milliseconds: 180),
-            curve: Curves.easeOutCubic,
-            alignment: Alignment.topLeft,
-            child: _detailsOpen && hasReasoning
-                ? Padding(
-                    padding: const EdgeInsets.only(top: 12),
-                    child: _ReasoningDetailsPanel(
-                      onCollapse: () => setState(() => _detailsOpen = false),
-                      child: widget.streaming
-                          ? _buildReasoningStreaming(context)
-                          : _reasoningMarkdown(context, _displayed),
-                    ),
-                  )
-                : const SizedBox.shrink(),
+          _ReasoningDetailsHost(
+            open: _detailsOpen && hasReasoning,
+            child: Padding(
+              padding: const EdgeInsets.only(top: 12),
+              child: _ReasoningDetailsPanel(
+                onCollapse: () => setState(() => _detailsOpen = false),
+                child: widget.streaming
+                    ? _buildReasoningStreaming(context)
+                    : _reasoningMarkdown(context, _displayed),
+              ),
+            ),
           ),
         ],
       ),
+    );
+  }
+}
+
+class _ReasoningDetailsHost extends StatefulWidget {
+  const _ReasoningDetailsHost({
+    required this.open,
+    required this.child,
+  });
+
+  final bool open;
+  final Widget child;
+
+  @override
+  State<_ReasoningDetailsHost> createState() => _ReasoningDetailsHostState();
+}
+
+class _ReasoningDetailsHostState extends State<_ReasoningDetailsHost> {
+  static const _duration = Duration(milliseconds: 180);
+
+  bool _renderChild = false;
+  Timer? _removeTimer;
+
+  @override
+  void initState() {
+    super.initState();
+    _renderChild = widget.open;
+  }
+
+  @override
+  void didUpdateWidget(covariant _ReasoningDetailsHost oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (widget.open) {
+      _removeTimer?.cancel();
+      _removeTimer = null;
+      if (!_renderChild) setState(() => _renderChild = true);
+      return;
+    }
+    if (oldWidget.open && !widget.open) {
+      _removeTimer?.cancel();
+      _removeTimer = Timer(_duration, () {
+        if (!mounted || widget.open) return;
+        setState(() => _renderChild = false);
+      });
+    }
+  }
+
+  @override
+  void dispose() {
+    _removeTimer?.cancel();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    if (!_renderChild && !widget.open) return const SizedBox.shrink();
+    return TweenAnimationBuilder<double>(
+      tween: Tween<double>(end: widget.open ? 1 : 0),
+      duration: _duration,
+      curve: Curves.easeOutCubic,
+      builder: (context, value, child) {
+        return ClipRect(
+          child: Align(
+            alignment: Alignment.topLeft,
+            heightFactor: value.clamp(0.0, 1.0),
+            child: IgnorePointer(
+              ignoring: !widget.open,
+              child: Opacity(
+                opacity: value.clamp(0.0, 1.0),
+                child: child,
+              ),
+            ),
+          ),
+        );
+      },
+      child: widget.child,
     );
   }
 }
