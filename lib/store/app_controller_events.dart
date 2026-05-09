@@ -56,15 +56,50 @@ extension AppControllerEvents on AppController {
       merged['delta'] = _mergeDelta(existingDelta, nextDelta);
       _pendingPartDeltas[partId] = merged;
     }
-    _partDeltaFlushTimer ??= Timer(
-      Duration(milliseconds: _adaptiveFlushIntervalMs()),
+    _streamPerf.recordDelta(partId);
+    _schedulePartDeltaFlush();
+  }
+
+  void _dropPendingPartDelta(String partId) {
+    _pendingPartDeltas.remove(partId);
+    if (_pendingPartDeltas.isEmpty) {
+      _partDeltaFlushTimer?.cancel();
+      _partDeltaFlushTimer = null;
+      _partDeltaMaxLatencyTimer?.cancel();
+      _partDeltaMaxLatencyTimer = null;
+    }
+  }
+
+  void _schedulePartDeltaFlush() {
+    if (_pendingPartDeltas.isEmpty) return;
+    _partDeltaMaxLatencyTimer ??= Timer(
+      const Duration(milliseconds: AppController._kDeltaMaxLatencyMs),
       _flushPendingPartDeltas,
     );
+    if (_partDeltaFrameScheduled || _partDeltaFlushTimer != null) return;
+    _partDeltaFrameScheduled = true;
+    SchedulerBinding.instance.scheduleFrameCallback((_) {
+      _partDeltaFrameScheduled = false;
+      if (_pendingPartDeltas.isEmpty) return;
+      final now = DateTime.now().millisecondsSinceEpoch;
+      final minInterval = _adaptiveFlushIntervalMs();
+      final elapsed = now - _lastDeltaFlushStartedAtMs;
+      if (elapsed >= minInterval) {
+        _flushPendingPartDeltas();
+        return;
+      }
+      _partDeltaFlushTimer ??= Timer(
+        Duration(milliseconds: minInterval - elapsed),
+        _flushPendingPartDeltas,
+      );
+    });
   }
 
   int _adaptiveFlushIntervalMs() {
     if (_lastFlushDurationMs > 16) {
-      return (AppController._kBaseFlushIntervalMs * 2).clamp(AppController._kBaseFlushIntervalMs, AppController._kMaxFlushIntervalMs);
+      return (AppController._kBaseFlushIntervalMs * 2).clamp(
+          AppController._kBaseFlushIntervalMs,
+          AppController._kMaxFlushIntervalMs);
     }
     return AppController._kBaseFlushIntervalMs;
   }
@@ -72,8 +107,11 @@ extension AppControllerEvents on AppController {
   void _flushPendingPartDeltas() {
     final pendingCount = _pendingPartDeltas.length;
     final startedAt = DateTime.now().millisecondsSinceEpoch;
+    _lastDeltaFlushStartedAtMs = startedAt;
     _partDeltaFlushTimer?.cancel();
     _partDeltaFlushTimer = null;
+    _partDeltaMaxLatencyTimer?.cancel();
+    _partDeltaMaxLatencyTimer = null;
     if (_pendingPartDeltas.isEmpty) return;
     var messages = state.messages;
     for (final payload in _pendingPartDeltas.values) {
@@ -87,6 +125,11 @@ extension AppControllerEvents on AppController {
     state = state.copyWith(messages: messages);
     notifyListeners();
     _lastFlushDurationMs = DateTime.now().millisecondsSinceEpoch - startedAt;
+    _streamPerf.recordFlush(
+      pendingCount: pendingCount,
+      elapsedMs: _lastFlushDurationMs,
+      messageCount: messages.length,
+    );
     // #region agent log
     debugTrace(
       runId: 'delta-flush',

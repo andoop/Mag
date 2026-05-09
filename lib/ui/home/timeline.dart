@@ -98,6 +98,29 @@ String _formatTimelineTimestamp(int ms) {
   return '$hh:$mm';
 }
 
+const Duration _kStreamingBubbleResizeDuration = Duration(milliseconds: 160);
+
+class _StreamingBubbleSize extends StatelessWidget {
+  const _StreamingBubbleSize({
+    required this.enabled,
+    required this.child,
+  });
+
+  final bool enabled;
+  final Widget child;
+
+  @override
+  Widget build(BuildContext context) {
+    if (!enabled) return child;
+    return AnimatedSize(
+      duration: _kStreamingBubbleResizeDuration,
+      curve: Curves.easeOutCubic,
+      alignment: Alignment.topLeft,
+      child: child,
+    );
+  }
+}
+
 bool _isContextToolPart(MessagePart part) {
   if (part.type != PartType.tool) return false;
   const names = {'read', 'glob', 'grep', 'list'};
@@ -245,8 +268,6 @@ extension _HomePageTimeline on _HomePageState {
           renderedMessages: renderedMessages,
           state: state,
           streamingAssistantMessageId: streamingAssistantMessageId,
-          showRunningIndicator:
-              state.isBusy && entryIndex == renderedEntries.length - 1,
           controller: widget.controller,
           onInsertPromptReference: _appendPromptReference,
           onSendPromptReference: _sendPromptReference,
@@ -298,7 +319,6 @@ class _TimelineTurnGroup extends StatefulWidget {
     required this.renderedMessages,
     required this.state,
     required this.streamingAssistantMessageId,
-    required this.showRunningIndicator,
     required this.controller,
     required this.onInsertPromptReference,
     required this.onSendPromptReference,
@@ -308,7 +328,6 @@ class _TimelineTurnGroup extends StatefulWidget {
   final List<SessionMessageBundle> renderedMessages;
   final AppState state;
   final String? streamingAssistantMessageId;
-  final bool showRunningIndicator;
   final AppController controller;
   final ValueChanged<String> onInsertPromptReference;
   final PromptReferenceAction onSendPromptReference;
@@ -322,7 +341,6 @@ class _TimelineTurnGroupState extends State<_TimelineTurnGroup> {
   int? _lastThemeKey;
   int? _lastEntrySignature;
   String? _lastStreamingAssistantMessageId;
-  bool? _lastShowRunningIndicator;
 
   @override
   Widget build(BuildContext context) {
@@ -333,14 +351,12 @@ class _TimelineTurnGroupState extends State<_TimelineTurnGroup> {
         _lastThemeKey == themeKey &&
         _lastEntrySignature == entrySignature &&
         _lastStreamingAssistantMessageId ==
-            widget.streamingAssistantMessageId &&
-        _lastShowRunningIndicator == widget.showRunningIndicator) {
+            widget.streamingAssistantMessageId) {
       return _cached!;
     }
     _lastThemeKey = themeKey;
     _lastEntrySignature = entrySignature;
     _lastStreamingAssistantMessageId = widget.streamingAssistantMessageId;
-    _lastShowRunningIndicator = widget.showRunningIndicator;
     _cached = _buildContent(context);
     return _cached!;
   }
@@ -380,10 +396,6 @@ class _TimelineTurnGroupState extends State<_TimelineTurnGroup> {
               onInsertPromptReference: widget.onInsertPromptReference,
               onSendPromptReference: widget.onSendPromptReference,
             ),
-          if (widget.showRunningIndicator) ...[
-            const SizedBox(height: 6),
-            const _RunningIndicator(),
-          ],
         ],
       ),
     );
@@ -474,13 +486,15 @@ class _AssistantTurnBubble extends StatelessWidget {
     final compactionOnly = visibleEntries.length == 1 &&
         visibleEntries.first.part.type == PartType.compaction &&
         firstBundle.message.text.isEmpty;
+    final isStreamingTurn = bundles
+        .any((bundle) => bundle.message.id == streamingAssistantMessageId);
 
     if (compactionOnly) {
       final entry = visibleEntries.first;
       return Center(
         child: ConstrainedBox(
           constraints: const BoxConstraints(maxWidth: 560),
-          child: _PartTile(
+          child: _CachedPartTile(
             key: ValueKey<String>('assistant-compaction-${entry.part.id}'),
             part: entry.part,
             message: entry.bundle.message,
@@ -502,70 +516,73 @@ class _AssistantTurnBubble extends StatelessWidget {
         alignment: Alignment.centerLeft,
         child: ConstrainedBox(
           constraints: const BoxConstraints(maxWidth: 720),
-          child: Container(
-            padding: const EdgeInsets.fromLTRB(13, 11, 13, 12),
-            decoration: BoxDecoration(
-              color: oc.agentBubble,
-              borderRadius: BorderRadius.circular(20),
-              border: Border.all(color: oc.softBorderColor),
-            ),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Row(
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    Text(
-                      firstBundle.message.agent,
-                      style: Theme.of(context).textTheme.labelSmall?.copyWith(
-                            fontWeight: FontWeight.w600,
-                            color: oc.foregroundMuted,
-                            letterSpacing: 0.1,
-                          ),
-                    ),
-                    const SizedBox(width: 6),
-                    Text(
-                      _formatTimelineTimestamp(firstBundle.message.createdAt),
-                      style: Theme.of(context)
-                          .textTheme
-                          .labelSmall
-                          ?.copyWith(color: oc.foregroundFaint),
-                    ),
-                  ],
-                ),
-                for (final item in displayItems) ...[
-                  const SizedBox(height: 10),
-                  if (item.isContextGroup)
-                    _ContextToolGroupTile(
-                      key: ValueKey<String>(
-                        'context-${item.entries.first.part.id}-${item.entries.last.part.id}',
+          child: _StreamingBubbleSize(
+            enabled: isStreamingTurn,
+            child: Container(
+              padding: const EdgeInsets.fromLTRB(13, 11, 13, 12),
+              decoration: BoxDecoration(
+                color: oc.agentBubble,
+                borderRadius: BorderRadius.circular(20),
+                border: Border.all(color: oc.softBorderColor),
+              ),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Text(
+                        firstBundle.message.agent,
+                        style: Theme.of(context).textTheme.labelSmall?.copyWith(
+                              fontWeight: FontWeight.w600,
+                              color: oc.foregroundMuted,
+                              letterSpacing: 0.1,
+                            ),
                       ),
-                      entries: item.entries,
-                      controller: controller,
-                      workspace: controller.state.workspace,
-                      serverUri: controller.state.serverUri,
-                      onInsertPromptReference: onInsertPromptReference,
-                      onSendPromptReference: onSendPromptReference,
-                    )
-                  else
-                    _PartTile(
-                      key: ValueKey<String>(
-                          'assistant-part-${item.entry!.part.id}'),
-                      part: item.entry!.part,
-                      message: item.entry!.bundle.message,
-                      controller: controller,
-                      workspace: controller.state.workspace,
-                      serverUri: controller.state.serverUri,
-                      streamAssistantContent:
-                          item.entry!.streamAssistantContent,
-                      turnDurationMs: turnDurationMs,
-                      showAssistantTextMeta:
-                          identical(item.entry, lastPlainTextEntry),
-                      onInsertPromptReference: onInsertPromptReference,
-                      onSendPromptReference: onSendPromptReference,
-                    ),
+                      const SizedBox(width: 6),
+                      Text(
+                        _formatTimelineTimestamp(firstBundle.message.createdAt),
+                        style: Theme.of(context)
+                            .textTheme
+                            .labelSmall
+                            ?.copyWith(color: oc.foregroundFaint),
+                      ),
+                    ],
+                  ),
+                  for (final item in displayItems) ...[
+                    const SizedBox(height: 10),
+                    if (item.isContextGroup)
+                      _ContextToolGroupTile(
+                        key: ValueKey<String>(
+                          'context-${item.entries.first.part.id}-${item.entries.last.part.id}',
+                        ),
+                        entries: item.entries,
+                        controller: controller,
+                        workspace: controller.state.workspace,
+                        serverUri: controller.state.serverUri,
+                        onInsertPromptReference: onInsertPromptReference,
+                        onSendPromptReference: onSendPromptReference,
+                      )
+                    else
+                      _CachedPartTile(
+                        key: ValueKey<String>(
+                            'assistant-part-${item.entry!.part.id}'),
+                        part: item.entry!.part,
+                        message: item.entry!.bundle.message,
+                        controller: controller,
+                        workspace: controller.state.workspace,
+                        serverUri: controller.state.serverUri,
+                        streamAssistantContent:
+                            item.entry!.streamAssistantContent,
+                        turnDurationMs: turnDurationMs,
+                        showAssistantTextMeta:
+                            identical(item.entry, lastPlainTextEntry),
+                        onInsertPromptReference: onInsertPromptReference,
+                        onSendPromptReference: onSendPromptReference,
+                      ),
+                  ],
                 ],
-              ],
+              ),
             ),
           ),
         ),
@@ -711,36 +728,56 @@ class _ContextToolGroupTileState extends State<_ContextToolGroupTile> {
               ),
             ),
           ),
-          if (_expanded) ...[
-            Divider(height: 1, thickness: 1, color: oc.softBorderColor),
-            Padding(
-              padding: const EdgeInsets.fromLTRB(12, 10, 12, 12),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.stretch,
-                children: [
-                  for (var i = 0; i < widget.entries.length; i++) ...[
-                    if (i > 0) const SizedBox(height: 8),
-                    _PartTile(
-                      key: ValueKey<String>(
-                        'context-part-${widget.entries[i].part.id}',
+          AnimatedSize(
+            duration: const Duration(milliseconds: 180),
+            curve: Curves.easeOutCubic,
+            alignment: Alignment.topCenter,
+            child: _expanded
+                ? Column(
+                    crossAxisAlignment: CrossAxisAlignment.stretch,
+                    children: [
+                      Divider(
+                          height: 1, thickness: 1, color: oc.softBorderColor),
+                      Padding(
+                        padding: const EdgeInsets.fromLTRB(12, 10, 12, 12),
+                        child: _DeferredHeavyContent(
+                          cacheKey: widget.entries
+                              .map((entry) => entry.part.id)
+                              .join('|'),
+                          builder: (context) => Column(
+                            crossAxisAlignment: CrossAxisAlignment.stretch,
+                            children: [
+                              for (var i = 0;
+                                  i < widget.entries.length;
+                                  i++) ...[
+                                if (i > 0) const SizedBox(height: 8),
+                                _CachedPartTile(
+                                  key: ValueKey<String>(
+                                    'context-part-${widget.entries[i].part.id}',
+                                  ),
+                                  part: widget.entries[i].part,
+                                  message: widget.entries[i].bundle.message,
+                                  controller: widget.controller,
+                                  workspace: widget.workspace,
+                                  serverUri: widget.serverUri,
+                                  streamAssistantContent:
+                                      widget.entries[i].streamAssistantContent,
+                                  turnDurationMs: null,
+                                  showAssistantTextMeta: false,
+                                  onInsertPromptReference:
+                                      widget.onInsertPromptReference,
+                                  onSendPromptReference:
+                                      widget.onSendPromptReference,
+                                ),
+                              ],
+                            ],
+                          ),
+                        ),
                       ),
-                      part: widget.entries[i].part,
-                      message: widget.entries[i].bundle.message,
-                      controller: widget.controller,
-                      workspace: widget.workspace,
-                      serverUri: widget.serverUri,
-                      streamAssistantContent:
-                          widget.entries[i].streamAssistantContent,
-                      turnDurationMs: null,
-                      showAssistantTextMeta: false,
-                      onInsertPromptReference: widget.onInsertPromptReference,
-                      onSendPromptReference: widget.onSendPromptReference,
-                    ),
-                  ],
-                ],
-              ),
-            ),
-          ],
+                    ],
+                  )
+                : const SizedBox.shrink(),
+          ),
         ],
       ),
     );
@@ -893,7 +930,7 @@ class _MessageBubbleState extends State<_MessageBubble> {
           child: Center(
             child: ConstrainedBox(
               constraints: const BoxConstraints(maxWidth: 560),
-              child: _PartTile(
+              child: _CachedPartTile(
                 key: ValueKey<String>(
                     'message-compaction-${primaryParts.first.id}'),
                 part: primaryParts.first,
@@ -919,78 +956,51 @@ class _MessageBubbleState extends State<_MessageBubble> {
           alignment: isUser ? Alignment.centerRight : Alignment.centerLeft,
           child: ConstrainedBox(
             constraints: const BoxConstraints(maxWidth: 720),
-            child: Container(
-              padding: const EdgeInsets.fromLTRB(13, 11, 13, 12),
-              decoration: BoxDecoration(
-                color: bubbleColor,
-                borderRadius: BorderRadius.circular(20),
-                border: Border.all(color: oc.softBorderColor),
-              ),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Row(
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
-                      Text(
-                        label,
-                        style: Theme.of(context).textTheme.labelSmall?.copyWith(
-                              fontWeight: FontWeight.w600,
-                              color: oc.foregroundMuted,
-                              letterSpacing: 0.1,
-                            ),
-                      ),
-                      const SizedBox(width: 6),
-                      Text(
-                        _formatTimelineTimestamp(bundle.message.createdAt),
-                        style: Theme.of(context)
-                            .textTheme
-                            .labelSmall
-                            ?.copyWith(color: oc.foregroundFaint),
+            child: _StreamingBubbleSize(
+              enabled: widget.isStreamingAssistantMessage && !isUser,
+              child: Container(
+                padding: const EdgeInsets.fromLTRB(13, 11, 13, 12),
+                decoration: BoxDecoration(
+                  color: bubbleColor,
+                  borderRadius: BorderRadius.circular(20),
+                  border: Border.all(color: oc.softBorderColor),
+                ),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        Text(
+                          label,
+                          style:
+                              Theme.of(context).textTheme.labelSmall?.copyWith(
+                                    fontWeight: FontWeight.w600,
+                                    color: oc.foregroundMuted,
+                                    letterSpacing: 0.1,
+                                  ),
+                        ),
+                        const SizedBox(width: 6),
+                        Text(
+                          _formatTimelineTimestamp(bundle.message.createdAt),
+                          style: Theme.of(context)
+                              .textTheme
+                              .labelSmall
+                              ?.copyWith(color: oc.foregroundFaint),
+                        ),
+                      ],
+                    ),
+                    if (!hasCompaction && userText.isNotEmpty) ...[
+                      const SizedBox(height: 8),
+                      SelectableText(
+                        userText,
+                        style: const TextStyle(fontSize: 15, height: 1.45),
                       ),
                     ],
-                  ),
-                  if (!hasCompaction && userText.isNotEmpty) ...[
-                    const SizedBox(height: 8),
-                    SelectableText(
-                      userText,
-                      style: const TextStyle(fontSize: 15, height: 1.45),
-                    ),
-                  ],
-                  for (final part in primaryParts) ...[
-                    const SizedBox(height: 10),
-                    _PartTile(
-                      key: ValueKey<String>('message-part-${part.id}'),
-                      part: part,
-                      message: bundle.message,
-                      controller: widget.controller,
-                      workspace: widget.controller.state.workspace,
-                      serverUri: widget.controller.state.serverUri,
-                      streamAssistantContent:
-                          widget.isStreamingAssistantMessage,
-                      turnDurationMs: turnDurationMs,
-                      showAssistantTextMeta: !isUser &&
-                          lastPlainTextPart != null &&
-                          identical(part, lastPlainTextPart),
-                      onInsertPromptReference: widget.onInsertPromptReference,
-                      onSendPromptReference: widget.onSendPromptReference,
-                    ),
-                  ],
-                  if (footerParts.isNotEmpty) ...[
-                    const SizedBox(height: 10),
-                    Divider(height: 1, thickness: 1, color: oc.softBorderColor),
-                    const SizedBox(height: 8),
-                    Text(
-                      l(context, '文件引用', 'File references'),
-                      style: Theme.of(context).textTheme.labelSmall?.copyWith(
-                            color: oc.foregroundHint,
-                            fontWeight: FontWeight.w600,
-                          ),
-                    ),
-                    for (final part in footerParts) ...[
+                    for (final part in primaryParts) ...[
                       const SizedBox(height: 10),
-                      _PartTile(
-                        key: ValueKey<String>('message-footer-${part.id}'),
+                      _CachedPartTile(
+                        key: ValueKey<String>('message-part-${part.id}'),
                         part: part,
                         message: bundle.message,
                         controller: widget.controller,
@@ -999,13 +1009,46 @@ class _MessageBubbleState extends State<_MessageBubble> {
                         streamAssistantContent:
                             widget.isStreamingAssistantMessage,
                         turnDurationMs: turnDurationMs,
-                        showAssistantTextMeta: false,
+                        showAssistantTextMeta: !isUser &&
+                            lastPlainTextPart != null &&
+                            identical(part, lastPlainTextPart),
                         onInsertPromptReference: widget.onInsertPromptReference,
                         onSendPromptReference: widget.onSendPromptReference,
                       ),
                     ],
+                    if (footerParts.isNotEmpty) ...[
+                      const SizedBox(height: 10),
+                      Divider(
+                          height: 1, thickness: 1, color: oc.softBorderColor),
+                      const SizedBox(height: 8),
+                      Text(
+                        l(context, '文件引用', 'File references'),
+                        style: Theme.of(context).textTheme.labelSmall?.copyWith(
+                              color: oc.foregroundHint,
+                              fontWeight: FontWeight.w600,
+                            ),
+                      ),
+                      for (final part in footerParts) ...[
+                        const SizedBox(height: 10),
+                        _CachedPartTile(
+                          key: ValueKey<String>('message-footer-${part.id}'),
+                          part: part,
+                          message: bundle.message,
+                          controller: widget.controller,
+                          workspace: widget.controller.state.workspace,
+                          serverUri: widget.controller.state.serverUri,
+                          streamAssistantContent:
+                              widget.isStreamingAssistantMessage,
+                          turnDurationMs: turnDurationMs,
+                          showAssistantTextMeta: false,
+                          onInsertPromptReference:
+                              widget.onInsertPromptReference,
+                          onSendPromptReference: widget.onSendPromptReference,
+                        ),
+                      ],
+                    ],
                   ],
-                ],
+                ),
               ),
             ),
           ),

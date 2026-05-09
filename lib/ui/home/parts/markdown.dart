@@ -1,6 +1,6 @@
 part of '../../home_page.dart';
 
-const int _kStreamingTextRenderPaceMs = 24;
+const int _kStreamingTextRenderPaceMs = 96;
 final RegExp _kStreamingTextSnap = RegExp(r'[\s\.,!\?;:\)\]]');
 
 int _streamingTextStep(int remaining) {
@@ -48,15 +48,132 @@ Future<void> _handleMarkdownLinkTap(BuildContext context, String? href) async {
   );
 }
 
+const int _kStreamingFadeInMs = 650;
+
+class _FadeToken {
+  const _FadeToken({
+    required this.key,
+    required this.text,
+  });
+
+  final String key;
+  final String text;
+}
+
+bool _isCjkRune(int rune) {
+  return (rune >= 0x4E00 && rune <= 0x9FFF) ||
+      (rune >= 0x3040 && rune <= 0x30FF) ||
+      (rune >= 0xAC00 && rune <= 0xD7AF);
+}
+
+bool _isWhitespaceRune(int rune) {
+  return rune == 0x20 || rune == 0x09 || rune == 0x0A || rune == 0x0D;
+}
+
+List<_FadeToken> _fadeTokens(String raw) {
+  final text = raw.replaceAll('\t', '  ');
+  final runes = text.runes.toList(growable: false);
+  final tokens = <_FadeToken>[];
+  var i = 0;
+  while (i < runes.length) {
+    final rune = runes[i];
+    final start = i;
+    if (_isWhitespaceRune(rune) || _isCjkRune(rune)) {
+      final value = String.fromCharCode(rune);
+      tokens.add(_FadeToken(key: '$start:$value', text: value));
+      i += 1;
+      continue;
+    }
+    final buffer = StringBuffer();
+    while (i < runes.length &&
+        !_isWhitespaceRune(runes[i]) &&
+        !_isCjkRune(runes[i])) {
+      buffer.write(String.fromCharCode(runes[i]));
+      i += 1;
+    }
+    final value = buffer.toString();
+    tokens.add(_FadeToken(key: '$start:$value', text: value));
+  }
+  return tokens;
+}
+
+class _StreamingFadeText extends StatefulWidget {
+  const _StreamingFadeText({
+    required this.text,
+    required this.color,
+  });
+
+  final String text;
+  final Color color;
+
+  @override
+  State<_StreamingFadeText> createState() => _StreamingFadeTextState();
+}
+
+class _StreamingFadeTextState extends State<_StreamingFadeText>
+    with SingleTickerProviderStateMixin {
+  late final AnimationController _controller = AnimationController(
+    vsync: this,
+    duration: const Duration(milliseconds: _kStreamingFadeInMs),
+  )..forward();
+  final Map<String, int> _firstSeenAtMs = {};
+
+  @override
+  void didUpdateWidget(covariant _StreamingFadeText oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.text != widget.text) {
+      _controller.forward(from: 0);
+    }
+  }
+
+  @override
+  void dispose() {
+    _controller.dispose();
+    super.dispose();
+  }
+
+  double _opacityFor(String key, int now) {
+    final firstSeen = _firstSeenAtMs.putIfAbsent(key, () => now);
+    final age = (now - firstSeen).clamp(0, _kStreamingFadeInMs);
+    final progress = age / _kStreamingFadeInMs;
+    return Curves.easeOutCubic.transform(progress).clamp(0.0, 1.0);
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return AnimatedBuilder(
+      animation: _controller,
+      builder: (context, _) {
+        final tokens = _fadeTokens(widget.text);
+        final activeKeys = tokens.map((token) => token.key).toSet();
+        _firstSeenAtMs.removeWhere((key, _) => !activeKeys.contains(key));
+        final now = DateTime.now().millisecondsSinceEpoch;
+        return Text.rich(
+          TextSpan(
+            children: [
+              for (final token in tokens)
+                TextSpan(
+                  text: token.text,
+                  style: TextStyle(
+                    color:
+                        widget.color.withOpacity(_opacityFor(token.key, now)),
+                  ),
+                ),
+            ],
+          ),
+          style: const TextStyle(fontSize: 15, height: 1.5),
+        );
+      },
+    );
+  }
+}
+
 Widget _streamingTextTail(
   BuildContext context,
   String text, {
   required Color color,
 }) {
-  return Text(
-    text.replaceAll('\t', '  '),
-    style: TextStyle(fontSize: 15, height: 1.5, color: color),
-  );
+  return _StreamingFadeText(text: text, color: color);
 }
 
 class _StreamingMarkdownText extends StatefulWidget {
@@ -256,9 +373,8 @@ class _StreamingMarkdownTextState extends State<_StreamingMarkdownText> {
       children: [
         _stableWidget ?? const SizedBox.shrink(),
         if (activeText.isNotEmpty)
-          _streamingTextTail(
-            context,
-            _normalize(activeText),
+          _StreamingFadeText(
+            text: _normalize(activeText),
             color: context.oc.foreground,
           ),
       ],

@@ -1,5 +1,100 @@
 part of '../../home_page.dart';
 
+const int _kWriteStreamRenderThrottleMs = 100;
+const int _kWriteStreamPreviewMaxChars = 60000;
+const int _kWriteStreamPreviewMaxLines = 900;
+
+class _TailTextWindow {
+  const _TailTextWindow({
+    required this.text,
+    required this.omittedLines,
+    required this.omittedChars,
+  });
+
+  final String text;
+  final int omittedLines;
+  final int omittedChars;
+
+  bool get isTruncated => omittedLines > 0 || omittedChars > 0;
+}
+
+class _PreviewRenderPerfStats {
+  int _renderCount = 0;
+  int _lastReportAtMs = 0;
+  int _maxContentChars = 0;
+  int _maxWindowChars = 0;
+
+  void record({
+    required String path,
+    required String mode,
+    required int contentChars,
+    required int windowChars,
+    required bool truncated,
+  }) {
+    _renderCount += 1;
+    if (contentChars > _maxContentChars) _maxContentChars = contentChars;
+    if (windowChars > _maxWindowChars) _maxWindowChars = windowChars;
+    final now = DateTime.now().millisecondsSinceEpoch;
+    if (_lastReportAtMs != 0 && now - _lastReportAtMs < 1000) return;
+    final windowMs = _lastReportAtMs == 0 ? 1000 : now - _lastReportAtMs;
+    _lastReportAtMs = now;
+    debugTrace(
+      runId: 'stream-preview-render',
+      hypothesisId: 'smooth-ui',
+      location: 'ui/home/previews/file_preview.dart:_PreviewRenderPerfStats',
+      message: 'preview render window',
+      data: {
+        'path': path,
+        'mode': mode,
+        'windowMs': windowMs,
+        'renderCount': _renderCount,
+        'maxContentChars': _maxContentChars,
+        'maxWindowChars': _maxWindowChars,
+        'truncated': truncated,
+      },
+    );
+    _renderCount = 0;
+    _maxContentChars = 0;
+    _maxWindowChars = 0;
+  }
+}
+
+_TailTextWindow _tailTextWindow(
+  String text, {
+  int maxChars = _kWriteStreamPreviewMaxChars,
+  int maxLines = _kWriteStreamPreviewMaxLines,
+}) {
+  if (text.length <= maxChars) {
+    final lines =
+        text.isEmpty ? const <String>[] : const LineSplitter().convert(text);
+    if (lines.length <= maxLines) {
+      return _TailTextWindow(text: text, omittedLines: 0, omittedChars: 0);
+    }
+    final visible = lines.sublist(lines.length - maxLines).join('\n');
+    return _TailTextWindow(
+      text: visible,
+      omittedLines: lines.length - maxLines,
+      omittedChars: text.length - visible.length,
+    );
+  }
+
+  final tail = text.substring(text.length - maxChars);
+  final lines = const LineSplitter().convert(tail);
+  if (lines.length <= maxLines) {
+    return _TailTextWindow(
+      text: tail,
+      omittedLines: 0,
+      omittedChars: text.length - tail.length,
+    );
+  }
+  final visible = lines.sublist(lines.length - maxLines).join('\n');
+  return _TailTextWindow(
+    text: visible,
+    omittedLines: lines.length - maxLines,
+    omittedChars: text.length - visible.length,
+  );
+}
+
 Future<void> _openWriteStreamPreview(
   BuildContext context, {
   required AppController controller,
@@ -250,13 +345,19 @@ class _WriteStreamPreviewBody extends StatefulWidget {
 
 class _WriteStreamPreviewBodyState extends State<_WriteStreamPreviewBody> {
   final ScrollController _scrollController = ScrollController();
+  final _PreviewRenderPerfStats _renderPerf = _PreviewRenderPerfStats();
+  Timer? _renderTimer;
+  String _renderedContent = '';
+  int _lastRenderFlushMs = 0;
   bool _followTail = true;
   bool _showJumpToBottom = false;
   bool _programmaticScroll = false;
+  DateTime? _programmaticUntil;
 
   @override
   void initState() {
     super.initState();
+    _renderedContent = widget.content;
     _scrollController.addListener(_handleScroll);
     WidgetsBinding.instance
         .addPostFrameCallback((_) => _scrollToBottom(jump: true));
@@ -265,20 +366,58 @@ class _WriteStreamPreviewBodyState extends State<_WriteStreamPreviewBody> {
   @override
   void didUpdateWidget(covariant _WriteStreamPreviewBody oldWidget) {
     super.didUpdateWidget(oldWidget);
-    if (oldWidget.content != widget.content && _followTail) {
-      WidgetsBinding.instance.addPostFrameCallback((_) => _scrollToBottom());
+    if (oldWidget.content != widget.content) {
+      _scheduleContentRender();
     }
   }
 
   @override
   void dispose() {
+    _renderTimer?.cancel();
     _scrollController.removeListener(_handleScroll);
     _scrollController.dispose();
     super.dispose();
   }
 
+  void _scheduleContentRender() {
+    if (!widget.streaming) {
+      _renderTimer?.cancel();
+      _renderTimer = null;
+      _setRenderedContent(widget.content);
+      return;
+    }
+    final now = DateTime.now().millisecondsSinceEpoch;
+    final remaining =
+        _kWriteStreamRenderThrottleMs - (now - _lastRenderFlushMs);
+    if (remaining <= 0) {
+      _renderTimer?.cancel();
+      _renderTimer = null;
+      _setRenderedContent(widget.content);
+      return;
+    }
+    _renderTimer ??= Timer(Duration(milliseconds: remaining), () {
+      if (!mounted) return;
+      _renderTimer = null;
+      _setRenderedContent(widget.content);
+    });
+  }
+
+  void _setRenderedContent(String content) {
+    if (_renderedContent == content) return;
+    _lastRenderFlushMs = DateTime.now().millisecondsSinceEpoch;
+    setState(() => _renderedContent = content);
+    if (_followTail) {
+      WidgetsBinding.instance.addPostFrameCallback((_) => _scrollToBottom());
+    }
+  }
+
   void _handleScroll() {
-    if (!_scrollController.hasClients || _programmaticScroll) return;
+    if (!_scrollController.hasClients) return;
+    final now = DateTime.now();
+    if (_programmaticScroll ||
+        (_programmaticUntil != null && now.isBefore(_programmaticUntil!))) {
+      return;
+    }
     final position = _scrollController.position;
     final distanceToBottom = position.maxScrollExtent - position.pixels;
     final shouldFollow = distanceToBottom <= 24;
@@ -295,6 +434,9 @@ class _WriteStreamPreviewBodyState extends State<_WriteStreamPreviewBody> {
     if (!_scrollController.hasClients) return;
     final target = _scrollController.position.maxScrollExtent;
     _programmaticScroll = true;
+    _programmaticUntil = DateTime.now().add(
+      const Duration(milliseconds: 260),
+    );
     if (jump) {
       _scrollController.jumpTo(target);
       _finishProgrammaticScroll();
@@ -317,6 +459,9 @@ class _WriteStreamPreviewBodyState extends State<_WriteStreamPreviewBody> {
 
   void _finishProgrammaticScroll() {
     _programmaticScroll = false;
+    _programmaticUntil = DateTime.now().add(
+      const Duration(milliseconds: 120),
+    );
     if (!mounted) return;
     if (!_followTail || _showJumpToBottom) {
       setState(() {
@@ -348,13 +493,15 @@ class _WriteStreamPreviewBodyState extends State<_WriteStreamPreviewBody> {
             ),
           ),
         ),
-        if (_showJumpToBottom)
-          Positioned(
-            right: 8,
-            bottom: 8,
+        Positioned(
+          right: 8,
+          bottom: 8,
+          child: IgnorePointer(
+            ignoring: !_showJumpToBottom,
             child: AnimatedOpacity(
               opacity: _showJumpToBottom ? 1 : 0,
-              duration: const Duration(milliseconds: 120),
+              duration: const Duration(milliseconds: 140),
+              curve: Curves.easeOutCubic,
               child: DecoratedBox(
                 decoration: BoxDecoration(
                   color: context.oc.panelBackground.withOpacity(0.92),
@@ -385,6 +532,7 @@ class _WriteStreamPreviewBodyState extends State<_WriteStreamPreviewBody> {
               ),
             ),
           ),
+        ),
       ],
     );
   }
@@ -393,16 +541,42 @@ class _WriteStreamPreviewBodyState extends State<_WriteStreamPreviewBody> {
   Widget build(BuildContext context) {
     final isMarkdown = _pathLooksMarkdownFile(widget.path);
     final isHtml = _pathLooksHtmlFile(widget.path);
+    final window = isHtml && !widget.sourceOnly
+        ? _TailTextWindow(
+            text: _renderedContent,
+            omittedLines: 0,
+            omittedChars: 0,
+          )
+        : _tailTextWindow(_renderedContent);
+    _renderPerf.record(
+      path: widget.path,
+      mode: widget.sourceOnly
+          ? 'source'
+          : isHtml
+              ? 'html'
+              : isMarkdown
+                  ? 'markdown'
+                  : 'source',
+      contentChars: _renderedContent.length,
+      windowChars: window.text.length,
+      truncated: window.isTruncated,
+    );
     if (isMarkdown && !widget.sourceOnly) {
       return _scrollingPreview(
         context,
-        _StreamingMarkdownText(
-          text: widget.content,
-          streaming: widget.streaming,
-          workspace: widget.workspace,
-          controller: widget.controller,
-          onInsertPromptReference: widget.onInsertPromptReference,
-          onSendPromptReference: widget.onSendPromptReference,
+        Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            if (window.isTruncated) _PreviewWindowNotice(window: window),
+            _StreamingMarkdownText(
+              text: window.text,
+              streaming: widget.streaming,
+              workspace: widget.workspace,
+              controller: widget.controller,
+              onInsertPromptReference: widget.onInsertPromptReference,
+              onSendPromptReference: widget.onSendPromptReference,
+            ),
+          ],
         ),
         background: context.oc.panelBackground,
       );
@@ -418,14 +592,47 @@ class _WriteStreamPreviewBodyState extends State<_WriteStreamPreviewBody> {
             radius: 12,
             elevated: false,
           ),
-          child: _WorkspaceHtmlPreview(html: widget.content),
+          child: _WorkspaceHtmlPreview(html: _renderedContent),
         ),
       );
     }
     return _scrollingPreview(
       context,
-      _WriteStreamSourcePreview(path: widget.path, content: widget.content),
+      _WriteStreamSourcePreview(
+        path: widget.path,
+        content: window.text,
+        window: window,
+      ),
       background: context.oc.shadow,
+    );
+  }
+}
+
+class _PreviewWindowNotice extends StatelessWidget {
+  const _PreviewWindowNotice({required this.window});
+
+  final _TailTextWindow window;
+
+  @override
+  Widget build(BuildContext context) {
+    final parts = <String>[
+      if (window.omittedLines > 0)
+        l(context, '省略 ${window.omittedLines} 行',
+            '${window.omittedLines} line(s) omitted'),
+      if (window.omittedChars > 0)
+        l(context, '省略 ${window.omittedChars} 字符',
+            '${window.omittedChars} chars omitted'),
+    ];
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 8),
+      child: Text(
+        l(context, '仅渲染尾部窗口 · ${parts.join(' · ')}',
+            'Rendering tail window · ${parts.join(' · ')}'),
+        style: Theme.of(context)
+            .textTheme
+            .labelSmall
+            ?.copyWith(color: context.oc.foregroundMuted),
+      ),
     );
   }
 }
@@ -434,10 +641,12 @@ class _WriteStreamSourcePreview extends StatelessWidget {
   const _WriteStreamSourcePreview({
     required this.path,
     required this.content,
+    required this.window,
   });
 
   final String path;
   final String content;
+  final _TailTextWindow window;
 
   @override
   Widget build(BuildContext context) {
@@ -448,26 +657,32 @@ class _WriteStreamSourcePreview extends StatelessWidget {
         constraints: BoxConstraints(
           minWidth: MediaQuery.of(context).size.width - 72,
         ),
-        child: language == null
-            ? SelectableText(
-                content,
-                style: const TextStyle(
-                  fontFamily: 'monospace',
-                  fontSize: 12,
-                  height: 1.4,
-                ),
-              )
-            : HighlightView(
-                content,
-                language: language,
-                theme: _codeHighlightTheme(context),
-                padding: EdgeInsets.zero,
-                textStyle: const TextStyle(
-                  fontFamily: 'monospace',
-                  fontSize: 12,
-                  height: 1.4,
-                ),
-              ),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            if (window.isTruncated) _PreviewWindowNotice(window: window),
+            language == null
+                ? SelectableText(
+                    content,
+                    style: const TextStyle(
+                      fontFamily: 'monospace',
+                      fontSize: 12,
+                      height: 1.4,
+                    ),
+                  )
+                : HighlightView(
+                    content,
+                    language: language,
+                    theme: _codeHighlightTheme(context),
+                    padding: EdgeInsets.zero,
+                    textStyle: const TextStyle(
+                      fontFamily: 'monospace',
+                      fontSize: 12,
+                      height: 1.4,
+                    ),
+                  ),
+          ],
+        ),
       ),
     );
   }

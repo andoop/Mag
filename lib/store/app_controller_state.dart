@@ -2,6 +2,15 @@
 part of 'app_controller.dart';
 
 extension AppControllerState on AppController {
+  static const Set<String> _appendDeltaFields = {
+    'text',
+    'reasoning',
+    'summary',
+    'writeContentPreview',
+    'editContentPreview',
+    'editOldContentPreview',
+  };
+
   int _nextBundleRevision([SessionMessageBundle? previous]) {
     final base = previous?.revision ?? 0;
     return base + 1;
@@ -186,7 +195,9 @@ extension AppControllerState on AppController {
     for (final entry in delta.entries) {
       final previous = merged[entry.key];
       final next = entry.value;
-      if (previous is String && next is String) {
+      if (_appendDeltaFields.contains(entry.key) &&
+          previous is String &&
+          next is String) {
         merged[entry.key] = '$previous$next';
       } else {
         merged[entry.key] = next;

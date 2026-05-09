@@ -17,6 +17,7 @@ import 'package:share_plus/share_plus.dart';
 import 'package:webview_flutter/webview_flutter.dart';
 
 import '../core/models.dart';
+import '../core/debug_trace.dart';
 import '../core/skill_registry.dart';
 import '../core/workspace_bridge.dart';
 import '../platform/floating_window_bridge.dart';
@@ -131,6 +132,7 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
   Timer? _scrollToBottomButtonDebounce;
   // ignore: prefer_final_fields
   int _promptMentionRequestId = 0;
+  // ignore: prefer_final_fields
   List<WorkspaceEntry> _promptAttachments = const [];
   bool _pendingScrollToBottomButtonVisible = false;
 
@@ -591,6 +593,7 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
     );
   }
 
+  // ignore: unused_element
   List<_ModelChoice> _visibleModelChoices(AppState state) {
     final config = state.modelConfig ?? ModelConfig.defaults();
     return _connectedModelChoices(config, state: state)
@@ -654,6 +657,7 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
         providerLabel.contains(query);
   }
 
+  // ignore: unused_element
   int _compareModelChoices(_ModelChoice a, _ModelChoice b, AppState state) {
     final current = state.modelConfig ?? ModelConfig.defaults();
     final recentOrder = <String, int>{};

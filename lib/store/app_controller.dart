@@ -6,6 +6,7 @@ import 'dart:io';
 
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/scheduler.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 import '../core/database.dart';
@@ -204,13 +205,18 @@ class AppController extends ChangeNotifier {
   final Map<String, Future<Uint8List>> _workspaceBytesCache = {};
   final Map<String, Future<String>> _workspaceTextCache = {};
   final Map<String, List<WorkspaceEntry>> _workspaceSearchIndexCache = {};
-  final Map<String, Future<List<WorkspaceEntry>>> _workspaceSearchIndexInflight =
-      {};
+  final Map<String, Future<List<WorkspaceEntry>>>
+      _workspaceSearchIndexInflight = {};
   final Map<String, JsonMap> _pendingPartDeltas = {};
+  final _StreamPerfStats _streamPerf = _StreamPerfStats();
   Timer? _partDeltaFlushTimer;
+  Timer? _partDeltaMaxLatencyTimer;
+  bool _partDeltaFrameScheduled = false; // ignore: prefer_final_fields
   int _lastFlushDurationMs = 0; // ignore: prefer_final_fields
-  static const int _kBaseFlushIntervalMs = 80;
-  static const int _kMaxFlushIntervalMs = 160;
+  int _lastDeltaFlushStartedAtMs = 0; // ignore: prefer_final_fields
+  static const int _kBaseFlushIntervalMs = 32;
+  static const int _kMaxFlushIntervalMs = 140;
+  static const int _kDeltaMaxLatencyMs = 180;
 
   AppState state = const AppState();
   ThemeMode _themeMode = ThemeMode.system;
@@ -313,7 +319,8 @@ class AppController extends ChangeNotifier {
         !_sessionLifecycleEventForCurrentSession(event)) {
       return;
     }
-    if (event.type != 'message.part.delta') {
+    if (event.type != 'message.part.delta' &&
+        event.type != 'message.part.updated') {
       _flushPendingPartDeltas();
     }
     if (event.type == 'session.status' || event.type == 'session.error') {
@@ -390,6 +397,7 @@ class AppController extends ChangeNotifier {
         final part =
             MessagePart.fromJson(Map<String, dynamic>.from(event.properties));
         if (!_isCurrentSession(part.sessionId)) return;
+        _dropPendingPartDelta(part.id);
         _invalidatePreviewCacheForPart(part);
         state = state.copyWith(messages: _upsertPart(state.messages, part));
         notifyListeners();
@@ -450,8 +458,8 @@ class AppController extends ChangeNotifier {
         notifyListeners();
         return;
       case 'mcp.status.changed':
-        final status =
-            McpServerStatus.fromJson(Map<String, dynamic>.from(event.properties));
+        final status = McpServerStatus.fromJson(
+            Map<String, dynamic>.from(event.properties));
         state = state.copyWith(
           mcpStatuses: {
             ...state.mcpStatuses,
@@ -463,14 +471,16 @@ class AppController extends ChangeNotifier {
       case 'mcp.catalog.changed':
         final serverId = event.properties['serverId'] as String? ?? '';
         final tools = (event.properties['tools'] as List? ?? const [])
-            .map((item) => McpToolDefinition.fromJson(Map<String, dynamic>.from(item as Map)))
+            .map((item) => McpToolDefinition.fromJson(
+                Map<String, dynamic>.from(item as Map)))
             .toList();
         final resources = (event.properties['resources'] as List? ?? const [])
-            .map((item) =>
-                McpResourceDefinition.fromJson(Map<String, dynamic>.from(item as Map)))
+            .map((item) => McpResourceDefinition.fromJson(
+                Map<String, dynamic>.from(item as Map)))
             .toList();
         final prompts = (event.properties['prompts'] as List? ?? const [])
-            .map((item) => McpPromptDefinition.fromJson(Map<String, dynamic>.from(item as Map)))
+            .map((item) => McpPromptDefinition.fromJson(
+                Map<String, dynamic>.from(item as Map)))
             .toList();
         state = state.copyWith(
           mcpTools: [
@@ -498,8 +508,68 @@ class AppController extends ChangeNotifier {
 
   Future<void> disposeController() async {
     _partDeltaFlushTimer?.cancel();
+    _partDeltaMaxLatencyTimer?.cancel();
     await _subscription?.cancel();
     await _events.close();
     await _server.stop();
+  }
+}
+
+class _StreamPerfStats {
+  int _deltaCount = 0;
+  int _flushCount = 0;
+  int _lastReportAtMs = 0;
+  int _maxFlushElapsedMs = 0;
+  int _lastMessageCount = 0;
+  final Set<String> _partIds = <String>{};
+
+  void recordDelta(String partId) {
+    _deltaCount += 1;
+    _partIds.add(partId);
+    _maybeReport('delta');
+  }
+
+  void recordFlush({
+    required int pendingCount,
+    required int elapsedMs,
+    required int messageCount,
+  }) {
+    _flushCount += 1;
+    _lastMessageCount = messageCount;
+    if (elapsedMs > _maxFlushElapsedMs) {
+      _maxFlushElapsedMs = elapsedMs;
+    }
+    _maybeReport('flush', extra: {
+      'pendingCount': pendingCount,
+      'lastFlushElapsedMs': elapsedMs,
+    });
+  }
+
+  void _maybeReport(String reason, {Map<String, dynamic>? extra}) {
+    final now = DateTime.now().millisecondsSinceEpoch;
+    if (_lastReportAtMs != 0 && now - _lastReportAtMs < 1000) return;
+    final windowMs = _lastReportAtMs == 0 ? 1000 : now - _lastReportAtMs;
+    _lastReportAtMs = now;
+    final data = <String, dynamic>{
+      'reason': reason,
+      'windowMs': windowMs,
+      'deltaCount': _deltaCount,
+      'flushCount': _flushCount,
+      'activePartCount': _partIds.length,
+      'maxFlushElapsedMs': _maxFlushElapsedMs,
+      'messageCount': _lastMessageCount,
+      if (extra != null) ...extra,
+    };
+    debugTrace(
+      runId: 'stream-ui-perf',
+      hypothesisId: 'smooth-ui',
+      location: 'store/app_controller.dart:_StreamPerfStats',
+      message: 'stream perf window',
+      data: data,
+    );
+    _deltaCount = 0;
+    _flushCount = 0;
+    _maxFlushElapsedMs = 0;
+    _partIds.clear();
   }
 }

@@ -5,6 +5,8 @@ String _sanitizeReasoningText(String raw) {
   return raw.replaceAll('[REDACTED]', '').trim();
 }
 
+const double _kReasoningDetailsMaxHeight = 340;
+
 /// 桌面弱色 Markdown + 分享页式「思考」标题与 `ResultsButton` 折叠详情；`TEXT_RENDER_THROTTLE_MS = 100`。
 class _ReasoningPartTile extends StatefulWidget {
   const _ReasoningPartTile({
@@ -32,6 +34,8 @@ class _ReasoningPartTileState extends State<_ReasoningPartTile> {
   Timer? _pending;
   int _lastFlush = 0;
   bool _detailsOpen = false;
+  int? _thinkingStartedAtMs;
+  int? _thinkingDurationSeconds;
   int? _cachedThemeKey;
   MarkdownStyleSheet? _cachedReasoningStyle;
 
@@ -46,7 +50,7 @@ class _ReasoningPartTileState extends State<_ReasoningPartTile> {
     _lastFlush = 0;
     _displayed = _sanitizeReasoningText(widget.text);
     if (widget.streaming) {
-      _detailsOpen = true;
+      _thinkingStartedAtMs = DateTime.now().millisecondsSinceEpoch;
     }
   }
 
@@ -104,12 +108,19 @@ class _ReasoningPartTileState extends State<_ReasoningPartTile> {
   void didUpdateWidget(covariant _ReasoningPartTile oldWidget) {
     super.didUpdateWidget(oldWidget);
     if (!oldWidget.streaming && widget.streaming) {
-      _detailsOpen = true;
+      _thinkingStartedAtMs = DateTime.now().millisecondsSinceEpoch;
+      _thinkingDurationSeconds = null;
     }
     if (oldWidget.streaming && !widget.streaming) {
       _pending?.cancel();
       _pending = null;
       _lastFlush = DateTime.now().millisecondsSinceEpoch;
+      final startedAt = _thinkingStartedAtMs;
+      if (startedAt != null) {
+        final elapsedMs = _lastFlush - startedAt;
+        _thinkingDurationSeconds = (elapsedMs / 1000).ceil().clamp(1, 999);
+        _thinkingStartedAtMs = null;
+      }
       final s = _sanitizeReasoningText(widget.text);
       if (_displayed != s) setState(() => _displayed = s);
     } else if (oldWidget.text != widget.text) {
@@ -266,6 +277,60 @@ class _ReasoningPartTileState extends State<_ReasoningPartTile> {
     );
   }
 
+  String _completedThinkingLabel(BuildContext context) {
+    final seconds = _thinkingDurationSeconds;
+    if (seconds == null) {
+      return l(context, '已完成思考', 'Thought completed');
+    }
+    return l(context, '已思考 ${seconds}s', 'Thought for ${seconds}s');
+  }
+
+  Widget _buildReasoningTrigger(BuildContext context, bool hasReasoning) {
+    final oc = context.oc;
+    final labelStyle = Theme.of(context).textTheme.labelMedium?.copyWith(
+          color: oc.foregroundMuted,
+          fontWeight: FontWeight.w600,
+        );
+    return InkWell(
+      onTap: hasReasoning
+          ? () => setState(() => _detailsOpen = !_detailsOpen)
+          : null,
+      borderRadius: BorderRadius.circular(10),
+      child: Padding(
+        padding: const EdgeInsets.symmetric(vertical: 4),
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Icon(
+              Icons.psychology_alt_outlined,
+              size: 16,
+              color: oc.foregroundMuted,
+            ),
+            const SizedBox(width: 6),
+            if (widget.streaming)
+              _ThinkingShimmerText(
+                text: l(context, '正在思考...', 'Thinking...'),
+                style: labelStyle,
+              )
+            else
+              Text(
+                _completedThinkingLabel(context),
+                style: labelStyle,
+              ),
+            if (hasReasoning) ...[
+              const SizedBox(width: 4),
+              Icon(
+                _detailsOpen ? Icons.expand_less : Icons.expand_more,
+                size: 18,
+                color: oc.foregroundMuted,
+              ),
+            ],
+          ],
+        ),
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     final themeKey = context.themeCacheKey;
@@ -273,7 +338,8 @@ class _ReasoningPartTileState extends State<_ReasoningPartTile> {
       _cachedThemeKey = themeKey;
       _cachedReasoningStyle = null;
     }
-    if (_displayed.isEmpty) {
+    final hasReasoning = _displayed.isNotEmpty;
+    if (!hasReasoning && !widget.streaming) {
       return const SizedBox.shrink();
     }
 
@@ -282,58 +348,179 @@ class _ReasoningPartTileState extends State<_ReasoningPartTile> {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Text(
-            l(context, '思考', 'Thinking'),
-            style: TextStyle(
-              fontWeight: FontWeight.w700,
-              fontSize: 13,
-              height: 1.3,
-              color: context.oc.foreground,
-            ),
+          _buildReasoningTrigger(context, hasReasoning),
+          AnimatedSize(
+            duration: const Duration(milliseconds: 180),
+            curve: Curves.easeOutCubic,
+            alignment: Alignment.topLeft,
+            child: _detailsOpen && hasReasoning
+                ? Padding(
+                    padding: const EdgeInsets.only(top: 12),
+                    child: _ReasoningDetailsPanel(
+                      onCollapse: () => setState(() => _detailsOpen = false),
+                      child: widget.streaming
+                          ? _buildReasoningStreaming(context)
+                          : _reasoningMarkdown(context, _displayed),
+                    ),
+                  )
+                : const SizedBox.shrink(),
           ),
-          if (widget.streaming) ...[
-            const SizedBox(height: 8),
-            Padding(
-              padding: const EdgeInsets.only(top: 16),
-              child: _buildReasoningStreaming(context),
-            ),
-          ] else ...[
-            const SizedBox(height: 4),
-            InkWell(
-              onTap: () => setState(() => _detailsOpen = !_detailsOpen),
-              borderRadius: BorderRadius.circular(8),
-              child: Padding(
-                padding: const EdgeInsets.symmetric(vertical: 4),
-                child: Row(
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    Text(
-                      _detailsOpen
-                          ? l(context, '隐藏详情', 'Hide details')
-                          : l(context, '显示详情', 'Show details'),
-                      style: Theme.of(context).textTheme.labelMedium?.copyWith(
-                            color: context.oc.accent,
-                            fontWeight: FontWeight.w600,
-                          ),
-                    ),
-                    const SizedBox(width: 2),
-                    Icon(
-                      _detailsOpen ? Icons.expand_less : Icons.chevron_right,
-                      size: 18,
-                      color: context.oc.accent,
-                    ),
-                  ],
-                ),
-              ),
-            ),
-            if (_detailsOpen)
-              Padding(
-                padding: const EdgeInsets.only(top: 16),
-                child: _reasoningMarkdown(context, _displayed),
-              ),
-          ],
         ],
       ),
+    );
+  }
+}
+
+class _ReasoningDetailsPanel extends StatefulWidget {
+  const _ReasoningDetailsPanel({
+    required this.child,
+    required this.onCollapse,
+  });
+
+  final Widget child;
+  final VoidCallback onCollapse;
+
+  @override
+  State<_ReasoningDetailsPanel> createState() => _ReasoningDetailsPanelState();
+}
+
+class _ReasoningDetailsPanelState extends State<_ReasoningDetailsPanel> {
+  late final ScrollController _scrollController = ScrollController();
+
+  @override
+  void dispose() {
+    _scrollController.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final oc = context.oc;
+    return Container(
+      width: double.infinity,
+      constraints: const BoxConstraints(maxHeight: _kReasoningDetailsMaxHeight),
+      decoration: BoxDecoration(
+        color: oc.bgDeep.withOpacity(0.62),
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(color: oc.softBorderColor),
+      ),
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          Padding(
+            padding: const EdgeInsets.fromLTRB(12, 8, 8, 6),
+            child: Row(
+              children: [
+                Expanded(
+                  child: Text(
+                    l(context, '思考过程', 'Reasoning details'),
+                    style: Theme.of(context).textTheme.labelSmall?.copyWith(
+                          color: oc.foregroundMuted,
+                          fontWeight: FontWeight.w700,
+                        ),
+                  ),
+                ),
+                InkWell(
+                  onTap: widget.onCollapse,
+                  borderRadius: BorderRadius.circular(999),
+                  child: Padding(
+                    padding:
+                        const EdgeInsets.symmetric(horizontal: 8, vertical: 5),
+                    child: Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        Icon(
+                          Icons.keyboard_arrow_up_rounded,
+                          size: 16,
+                          color: oc.foregroundMuted,
+                        ),
+                        const SizedBox(width: 2),
+                        Text(
+                          l(context, '收起', 'Collapse'),
+                          style:
+                              Theme.of(context).textTheme.labelSmall?.copyWith(
+                                    color: oc.foregroundMuted,
+                                    fontWeight: FontWeight.w600,
+                                  ),
+                        ),
+                      ],
+                    ),
+                  ),
+                ),
+              ],
+            ),
+          ),
+          Divider(height: 1, thickness: 1, color: oc.softBorderColor),
+          Flexible(
+            child: Scrollbar(
+              controller: _scrollController,
+              thumbVisibility: true,
+              child: SingleChildScrollView(
+                controller: _scrollController,
+                primary: false,
+                padding: const EdgeInsets.fromLTRB(12, 10, 12, 12),
+                child: widget.child,
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _ThinkingShimmerText extends StatefulWidget {
+  const _ThinkingShimmerText({
+    required this.text,
+    required this.style,
+  });
+
+  final String text;
+  final TextStyle? style;
+
+  @override
+  State<_ThinkingShimmerText> createState() => _ThinkingShimmerTextState();
+}
+
+class _ThinkingShimmerTextState extends State<_ThinkingShimmerText>
+    with SingleTickerProviderStateMixin {
+  late final AnimationController _controller = AnimationController(
+    vsync: this,
+    duration: const Duration(milliseconds: 1200),
+  )..repeat();
+
+  @override
+  void dispose() {
+    _controller.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final baseColor = widget.style?.color ?? context.oc.foregroundMuted;
+    return AnimatedBuilder(
+      animation: _controller,
+      builder: (context, child) {
+        final begin = -1.0 + _controller.value * 2.0;
+        return ShaderMask(
+          blendMode: BlendMode.srcIn,
+          shaderCallback: (bounds) {
+            return LinearGradient(
+              begin: Alignment(begin, 0),
+              end: Alignment(begin + 1.0, 0),
+              colors: [
+                baseColor.withOpacity(0.58),
+                context.oc.foreground,
+                baseColor.withOpacity(0.58),
+              ],
+              stops: const [0.0, 0.5, 1.0],
+            ).createShader(bounds);
+          },
+          child: child,
+        );
+      },
+      child: Text(widget.text, style: widget.style),
     );
   }
 }

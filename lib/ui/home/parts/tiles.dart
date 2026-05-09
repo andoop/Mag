@@ -2,7 +2,6 @@ part of '../../home_page.dart';
 
 class _PartTile extends StatelessWidget {
   const _PartTile({
-    super.key,
     required this.part,
     required this.message,
     required this.controller,
@@ -250,6 +249,80 @@ class _PartTile extends StatelessWidget {
   }
 }
 
+class _CachedPartTile extends StatefulWidget {
+  const _CachedPartTile({
+    super.key,
+    required this.part,
+    required this.message,
+    required this.controller,
+    required this.workspace,
+    required this.serverUri,
+    required this.streamAssistantContent,
+    required this.turnDurationMs,
+    required this.showAssistantTextMeta,
+    required this.onInsertPromptReference,
+    required this.onSendPromptReference,
+  });
+
+  final MessagePart part;
+  final MessageInfo message;
+  final AppController controller;
+  final WorkspaceInfo? workspace;
+  final Uri? serverUri;
+  final bool streamAssistantContent;
+  final int? turnDurationMs;
+  final bool showAssistantTextMeta;
+  final ValueChanged<String> onInsertPromptReference;
+  final PromptReferenceAction onSendPromptReference;
+
+  @override
+  State<_CachedPartTile> createState() => _CachedPartTileState();
+}
+
+class _CachedPartTileState extends State<_CachedPartTile> {
+  Object? _lastSignature;
+  Widget? _cached;
+
+  Object _signature(BuildContext context) {
+    return Object.hashAll([
+      context.themeCacheKey,
+      Localizations.localeOf(context).toLanguageTag(),
+      widget.part.id,
+      identityHashCode(widget.part),
+      widget.message.id,
+      identityHashCode(widget.message),
+      widget.workspace?.id,
+      widget.workspace?.treeUri,
+      widget.serverUri?.toString(),
+      widget.streamAssistantContent,
+      widget.turnDurationMs,
+      widget.showAssistantTextMeta,
+    ]);
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final signature = _signature(context);
+    if (_cached != null && _lastSignature == signature) {
+      return _cached!;
+    }
+    _lastSignature = signature;
+    _cached = _PartTile(
+      part: widget.part,
+      message: widget.message,
+      controller: widget.controller,
+      workspace: widget.workspace,
+      serverUri: widget.serverUri,
+      streamAssistantContent: widget.streamAssistantContent,
+      turnDurationMs: widget.turnDurationMs,
+      showAssistantTextMeta: widget.showAssistantTextMeta,
+      onInsertPromptReference: widget.onInsertPromptReference,
+      onSendPromptReference: widget.onSendPromptReference,
+    );
+    return _cached!;
+  }
+}
+
 /// OpenCode 与 `message-part.tsx` 一致：`metadata.todos` 优先，否则回退 `state.input.todos`。
 List<Map<String, dynamic>> _resolveTodoWriteTodos(
     Map<String, dynamic> toolState) {
@@ -295,6 +368,83 @@ List<List<String>> _resolveQuestionToolAnswers(Map<String, dynamic> toolState) {
     }
   }
   return out;
+}
+
+class _DeferredHeavyContent extends StatefulWidget {
+  const _DeferredHeavyContent({
+    required this.cacheKey,
+    required this.builder,
+  });
+
+  final Object cacheKey;
+  final WidgetBuilder builder;
+
+  @override
+  State<_DeferredHeavyContent> createState() => _DeferredHeavyContentState();
+}
+
+class _DeferredHeavyContentState extends State<_DeferredHeavyContent> {
+  bool _mountedChild = false;
+  Object? _activeKey;
+
+  @override
+  void initState() {
+    super.initState();
+    _scheduleMount();
+  }
+
+  @override
+  void didUpdateWidget(covariant _DeferredHeavyContent oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.cacheKey == widget.cacheKey) return;
+    _mountedChild = false;
+    _scheduleMount();
+  }
+
+  void _scheduleMount() {
+    _activeKey = widget.cacheKey;
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted || _activeKey != widget.cacheKey || _mountedChild) return;
+      setState(() => _mountedChild = true);
+    });
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    if (!_mountedChild) return const SizedBox.shrink();
+    return widget.builder(context);
+  }
+}
+
+class _ToolCardModel {
+  const _ToolCardModel({
+    required this.isRunning,
+    required this.isError,
+    required this.title,
+    required this.statusLabel,
+    required this.summary,
+    required this.diffSuffix,
+    required this.primaryPreviewAttachment,
+    required this.resultAttachments,
+    required this.outputText,
+    required this.heavyContentKey,
+  });
+
+  final bool isRunning;
+  final bool isError;
+  final String title;
+  final String statusLabel;
+  final String summary;
+  final String? diffSuffix;
+  final Map<String, dynamic>? primaryPreviewAttachment;
+  final List<Map<String, dynamic>> resultAttachments;
+  final String? outputText;
+  final Object heavyContentKey;
+
+  bool get hasDetails =>
+      primaryPreviewAttachment != null ||
+      resultAttachments.isNotEmpty ||
+      (outputText != null && outputText!.isNotEmpty);
 }
 
 class _ToolPartTile extends StatefulWidget {
@@ -365,15 +515,21 @@ class _ToolPartTileState extends State<_ToolPartTile> {
     final becameError = oldWidget.status != 'error' && widget.status == 'error';
     if (becameError) {
       _expanded = true;
+      return;
+    }
+    final becameRunning =
+        oldWidget.status != widget.status && _defaultExpanded();
+    if (becameRunning) {
+      _expanded = true;
     }
   }
 
   bool _defaultExpanded() {
     final isRunning = widget.status == 'running' || widget.status == 'pending';
     final isError = widget.status == 'error';
-    final hasOutput = widget.output != null && widget.output!.isNotEmpty;
-    final hasAttachments = widget.attachments.isNotEmpty;
-    return isRunning || isError || (hasOutput && !hasAttachments);
+    final isLivePreviewTool =
+        widget.toolName == 'write' || widget.toolName == 'edit';
+    return isError || (isRunning && isLivePreviewTool);
   }
 
   String? _diffStatSuffix() {
@@ -397,9 +553,6 @@ class _ToolPartTileState extends State<_ToolPartTile> {
     }
     return null;
   }
-
-  bool _hasAttachmentOfType(String type) =>
-      _firstAttachmentOfType(type) != null;
 
   String _toolPreviewPath() {
     return ((widget.metadata['path'] as String?) ??
@@ -425,10 +578,6 @@ class _ToolPartTileState extends State<_ToolPartTile> {
             ? widget.editContentPreview
             : widget.editOldContentPreview);
     if (content == null || content.isEmpty) return null;
-    final hasDiff = _hasAttachmentOfType('diff_preview');
-    final isRunning = widget.status == 'running' || widget.status == 'pending';
-    final shouldShow = isRunning || widget.status == 'error' || !hasDiff;
-    if (!shouldShow) return null;
     final path = _toolPreviewPath();
     return {
       'type': 'write_stream_preview',
@@ -1107,69 +1256,137 @@ class _ToolPartTileState extends State<_ToolPartTile> {
     }
   }
 
+  String? _normalizedOutputText(String? localizedSummary) {
+    final output = widget.output?.trim();
+    if (output == null || output.isEmpty) return null;
+    final firstLine = output.split('\n').first.trim();
+    if (localizedSummary != null && firstLine == localizedSummary.trim()) {
+      return null;
+    }
+    return output;
+  }
+
+  _ToolCardModel _buildModel(BuildContext context) {
+    final localizedSummary = _localizedToolSummary(context);
+    final label = _localizedToolLabel(context);
+    final outputText = _normalizedOutputText(localizedSummary);
+    final primaryPreviewAttachment = _toolStreamPreviewAttachment();
+    final resultAttachments = List<Map<String, dynamic>>.unmodifiable(
+      widget.attachments,
+    );
+    final heavyContentKey = Object.hashAll([
+      widget.partId,
+      primaryPreviewAttachment?['content']?.toString().length ?? 0,
+      outputText?.length ?? 0,
+      resultAttachments.length,
+      for (final item in resultAttachments)
+        '${item['type']}:${item['path'] ?? item['url'] ?? item['filename'] ?? ''}',
+    ]);
+    return _ToolCardModel(
+      isRunning: widget.status == 'running' || widget.status == 'pending',
+      isError: widget.status == 'error',
+      title: label,
+      statusLabel: _toolStatusLabel(context, widget.status),
+      summary: localizedSummary ?? label,
+      diffSuffix: _diffStatSuffix(),
+      primaryPreviewAttachment: primaryPreviewAttachment,
+      resultAttachments: resultAttachments,
+      outputText: outputText,
+      heavyContentKey: heavyContentKey,
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
-    final isRunning = widget.status == 'running' || widget.status == 'pending';
-    final isError = widget.status == 'error';
-    final label = _localizedToolLabel(context);
+    final model = _buildModel(context);
     final expanded = _expanded;
-    final localizedSummary = _localizedToolSummary(context);
-    final collapsedOutput = localizedSummary ?? widget.output;
-    final expandedOutput = widget.hasDisplayOutput
-        ? (localizedSummary ?? widget.output)
-        : widget.output;
-    final collapsedSummary = collapsedOutput?.split('\n').first.trim();
-    final diffSuffix = _diffStatSuffix();
-    final toolStreamPreview = _toolStreamPreviewAttachment();
     final oc = context.oc;
     return Container(
       width: double.infinity,
       padding: const EdgeInsets.fromLTRB(9, 8, 9, 8),
       decoration: BoxDecoration(
-        color: isError
-            ? (context.isDarkMode
-                ? const Color(0xFF1F0A0A)
-                : const Color(0xFFFFFBFB))
-            : isRunning
-                ? (context.isDarkMode
-                    ? const Color(0xFF1C1A0E)
-                    : const Color(0xFFFFFCF2))
-                : oc.mutedPanel,
+        color: oc.mutedPanel,
         borderRadius: BorderRadius.circular(10),
-        border: Border.all(color: oc.softBorderColor),
+        border: Border.all(
+          color: model.isError
+              ? Colors.red.withOpacity(context.isDarkMode ? 0.36 : 0.24)
+              : oc.softBorderColor,
+        ),
       ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          InkWell(
-            onTap: () => setState(() {
-              _userToggled = true;
-              _expanded = !expanded;
-            }),
-            child: Row(
+          _ToolHeader(
+            model: model,
+            expanded: expanded,
+            onToggle: model.hasDetails
+                ? () => setState(() {
+                      _userToggled = true;
+                      _expanded = !expanded;
+                    })
+                : null,
+            onShowRaw: () => _openRawToolCallSheet(
+              context,
+              toolName: widget.toolName,
+              callId: widget.callId,
+              rawInput: widget.rawInput,
+              rawInputText: widget.rawInputText,
+              rawOutput: widget.rawOutput,
+            ),
+          ),
+          AnimatedSize(
+            duration: const Duration(milliseconds: 180),
+            curve: Curves.easeOutCubic,
+            alignment: Alignment.topCenter,
+            child: expanded && model.hasDetails
+                ? _ToolDetailsPanel(
+                    model: model,
+                    controller: widget.controller,
+                    workspace: widget.workspace,
+                    serverUri: widget.serverUri,
+                    onInsertPromptReference: widget.onInsertPromptReference,
+                    onSendPromptReference: widget.onSendPromptReference,
+                  )
+                : const SizedBox.shrink(),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _ToolHeader extends StatelessWidget {
+  const _ToolHeader({
+    required this.model,
+    required this.expanded,
+    required this.onToggle,
+    required this.onShowRaw,
+  });
+
+  final _ToolCardModel model;
+  final bool expanded;
+  final VoidCallback? onToggle;
+  final VoidCallback onShowRaw;
+
+  @override
+  Widget build(BuildContext context) {
+    final oc = context.oc;
+    return InkWell(
+      onTap: onToggle,
+      borderRadius: BorderRadius.circular(8),
+      child: Row(
+        children: [
+          _ToolStatusGlyph(model: model),
+          const SizedBox(width: 8),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                if (isRunning)
-                  const Padding(
-                    padding: EdgeInsets.only(right: 8),
-                    child: SizedBox(
-                      width: 12,
-                      height: 12,
-                      child: CircularProgressIndicator(strokeWidth: 1.5),
-                    ),
-                  ),
-                if (isError)
-                  Padding(
-                    padding: const EdgeInsets.only(right: 8),
-                    child: Icon(Icons.error_outline,
-                        size: 14, color: Colors.red.shade700),
-                  ),
-                Expanded(
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Text(
-                        '${widget.toolName} · ${_toolStatusLabel(context, widget.status)}'
-                        '${diffSuffix != null ? ' · $diffSuffix' : ''}',
+                Row(
+                  children: [
+                    Flexible(
+                      child: Text(
+                        model.title,
                         style: TextStyle(
                           fontFamily: 'monospace',
                           fontWeight: FontWeight.w600,
@@ -1178,90 +1395,215 @@ class _ToolPartTileState extends State<_ToolPartTile> {
                         ),
                         overflow: TextOverflow.ellipsis,
                       ),
-                      const SizedBox(height: 2),
+                    ),
+                    const SizedBox(width: 6),
+                    _ToolStatusPill(model: model),
+                    if (model.diffSuffix != null) ...[
+                      const SizedBox(width: 6),
                       Text(
-                        (!expanded &&
-                                collapsedSummary != null &&
-                                collapsedSummary.isNotEmpty)
-                            ? collapsedSummary
-                            : (localizedSummary ?? label),
-                        style: Theme.of(context)
-                            .textTheme
-                            .labelSmall
-                            ?.copyWith(color: oc.foregroundHint, height: 1.2),
-                        overflow: TextOverflow.ellipsis,
+                        model.diffSuffix!,
+                        style: Theme.of(context).textTheme.labelSmall?.copyWith(
+                              color: oc.foregroundHint,
+                              fontWeight: FontWeight.w600,
+                            ),
                       ),
                     ],
-                  ),
+                  ],
                 ),
-                _CompactIconButton(
-                  icon: Icons.data_object_outlined,
-                  tooltip: l(context, '查看原始调用', 'View raw call'),
-                  small: true,
-                  quiet: true,
-                  onPressed: () => _openRawToolCallSheet(
-                    context,
-                    toolName: widget.toolName,
-                    callId: widget.callId,
-                    rawInput: widget.rawInput,
-                    rawInputText: widget.rawInputText,
-                    rawOutput: widget.rawOutput,
-                  ),
-                ),
-                Icon(
-                  expanded ? Icons.expand_less : Icons.expand_more,
-                  size: 16,
-                  color: oc.foregroundHint,
+                const SizedBox(height: 2),
+                Text(
+                  model.summary,
+                  style: Theme.of(context)
+                      .textTheme
+                      .labelSmall
+                      ?.copyWith(color: oc.foregroundHint, height: 1.2),
+                  overflow: TextOverflow.ellipsis,
                 ),
               ],
             ),
           ),
-          if (expanded && toolStreamPreview != null) ...[
-            const SizedBox(height: 6),
-            _AttachmentTile(
-              attachment: toolStreamPreview,
-              controller: widget.controller,
-              workspace: widget.workspace,
-              serverUri: widget.serverUri,
-              onInsertPromptReference: widget.onInsertPromptReference,
-              onSendPromptReference: widget.onSendPromptReference,
+          _CompactIconButton(
+            icon: Icons.data_object_outlined,
+            tooltip: l(context, '查看原始调用', 'View raw call'),
+            small: true,
+            quiet: true,
+            onPressed: onShowRaw,
+          ),
+          if (model.hasDetails)
+            Icon(
+              expanded ? Icons.expand_less : Icons.expand_more,
+              size: 16,
+              color: oc.foregroundHint,
+            )
+          else
+            const SizedBox(width: 16),
+        ],
+      ),
+    );
+  }
+}
+
+class _ToolStatusGlyph extends StatelessWidget {
+  const _ToolStatusGlyph({required this.model});
+
+  final _ToolCardModel model;
+
+  @override
+  Widget build(BuildContext context) {
+    if (model.isRunning) {
+      return const SizedBox(
+        width: 12,
+        height: 12,
+        child: CircularProgressIndicator(strokeWidth: 1.5),
+      );
+    }
+    if (model.isError) {
+      return Icon(Icons.error_outline, size: 14, color: Colors.red.shade700);
+    }
+    return Icon(
+      Icons.check_circle_outline,
+      size: 14,
+      color: context.oc.foregroundHint,
+    );
+  }
+}
+
+class _ToolStatusPill extends StatelessWidget {
+  const _ToolStatusPill({required this.model});
+
+  final _ToolCardModel model;
+
+  @override
+  Widget build(BuildContext context) {
+    final oc = context.oc;
+    final Color foreground = model.isError
+        ? Colors.red.shade700
+        : model.isRunning
+            ? oc.orange
+            : oc.foregroundHint;
+    final Color background =
+        foreground.withOpacity(context.isDarkMode ? 0.14 : 0.1);
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+      decoration: BoxDecoration(
+        color: background,
+        borderRadius: BorderRadius.circular(999),
+      ),
+      child: Text(
+        model.statusLabel,
+        style: Theme.of(context).textTheme.labelSmall?.copyWith(
+              color: foreground,
+              fontWeight: FontWeight.w700,
+              height: 1.05,
             ),
-          ],
-          if (expanded &&
-              expandedOutput != null &&
-              expandedOutput.isNotEmpty) ...[
-            const SizedBox(height: 6),
-            Container(
-              width: double.infinity,
-              padding: const EdgeInsets.all(8),
-              decoration: BoxDecoration(
-                color: oc.shadow,
-                borderRadius: BorderRadius.circular(8),
-              ),
-              child: Text(
-                expandedOutput,
-                style: const TextStyle(
-                    fontFamily: 'monospace', fontSize: 11, height: 1.4),
-              ),
-            ),
-          ],
-          if (expanded && widget.attachments.isNotEmpty) ...[
-            const SizedBox(height: 6),
-            ...widget.attachments.map(
-              (item) => Padding(
-                padding: const EdgeInsets.only(bottom: 4),
-                child: _AttachmentTile(
-                  attachment: item,
-                  controller: widget.controller,
-                  workspace: widget.workspace,
-                  serverUri: widget.serverUri,
-                  onInsertPromptReference: widget.onInsertPromptReference,
-                  onSendPromptReference: widget.onSendPromptReference,
+      ),
+    );
+  }
+}
+
+class _ToolDetailsPanel extends StatelessWidget {
+  const _ToolDetailsPanel({
+    required this.model,
+    required this.controller,
+    required this.workspace,
+    required this.serverUri,
+    required this.onInsertPromptReference,
+    required this.onSendPromptReference,
+  });
+
+  final _ToolCardModel model;
+  final AppController controller;
+  final WorkspaceInfo? workspace;
+  final Uri? serverUri;
+  final ValueChanged<String> onInsertPromptReference;
+  final PromptReferenceAction onSendPromptReference;
+
+  @override
+  Widget build(BuildContext context) {
+    final children = <Widget>[];
+    final primary = model.primaryPreviewAttachment;
+    if (primary != null) {
+      children.add(
+        _AttachmentTile(
+          attachment: primary,
+          controller: controller,
+          workspace: workspace,
+          serverUri: serverUri,
+          onInsertPromptReference: onInsertPromptReference,
+          onSendPromptReference: onSendPromptReference,
+        ),
+      );
+    }
+    if (model.resultAttachments.isNotEmpty) {
+      children.add(
+        _DeferredHeavyContent(
+          cacheKey: '${model.heavyContentKey}-attachments',
+          builder: (context) => Column(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              for (final item in model.resultAttachments)
+                Padding(
+                  padding: const EdgeInsets.only(bottom: 4),
+                  child: _AttachmentTile(
+                    attachment: item,
+                    controller: controller,
+                    workspace: workspace,
+                    serverUri: serverUri,
+                    onInsertPromptReference: onInsertPromptReference,
+                    onSendPromptReference: onSendPromptReference,
+                  ),
                 ),
-              ),
-            ),
+            ],
+          ),
+        ),
+      );
+    }
+    final outputText = model.outputText;
+    if (outputText != null && outputText.isNotEmpty) {
+      children.add(
+        _DeferredHeavyContent(
+          cacheKey: '${model.heavyContentKey}-output',
+          builder: (context) => _ToolOutputBlock(output: outputText),
+        ),
+      );
+    }
+    if (children.isEmpty) return const SizedBox.shrink();
+    return Padding(
+      padding: const EdgeInsets.only(top: 8),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          for (var i = 0; i < children.length; i++) ...[
+            if (i > 0) const SizedBox(height: 6),
+            children[i],
           ],
         ],
+      ),
+    );
+  }
+}
+
+class _ToolOutputBlock extends StatelessWidget {
+  const _ToolOutputBlock({required this.output});
+
+  final String output;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.all(8),
+      decoration: BoxDecoration(
+        color: context.oc.shadow,
+        borderRadius: BorderRadius.circular(8),
+      ),
+      child: Text(
+        output,
+        style: const TextStyle(
+          fontFamily: 'monospace',
+          fontSize: 11,
+          height: 1.4,
+        ),
       ),
     );
   }
