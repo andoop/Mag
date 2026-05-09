@@ -146,6 +146,8 @@ When constructing the summary, try to stick to this template:
         messages: messages,
         parts: parts,
         currentAgent: currentAgent,
+        latestUserId: null,
+        sessionContracts: const [],
       ),
       {
         'role': 'user',

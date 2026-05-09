@@ -678,18 +678,10 @@ class ModelGateway {
       allowTemperature: _supportsTemperatureControl(config),
     );
     if (systemParts.isNotEmpty) {
-      payload['system'] = systemParts.join('\n\n');
+      payload['system'] = _anthropicCacheableSystem(systemParts);
     }
     if (_supportsToolCalls(config) && normalizedTools.isNotEmpty) {
-      payload['tools'] = normalizedTools
-          .map(
-            (tool) => {
-              'name': tool.id,
-              'description': tool.description,
-              'input_schema': tool.parameters,
-            },
-          )
-          .toList();
+      payload['tools'] = _anthropicCacheableTools(normalizedTools);
     }
     if (_supportsToolCalls(config) &&
         format?.type == OutputFormatType.jsonSchema) {
@@ -699,6 +691,37 @@ class ModelGateway {
       };
     }
     return payload;
+  }
+
+  List<JsonMap> _anthropicCacheableSystem(List<String> systemParts) {
+    final blocks = <JsonMap>[
+      for (final text in systemParts)
+        if (text.trim().isNotEmpty)
+          {
+            'type': 'text',
+            'text': text.trim(),
+          },
+    ];
+    if (blocks.isNotEmpty) {
+      blocks.last['cache_control'] = {'type': 'ephemeral'};
+    }
+    return blocks;
+  }
+
+  List<JsonMap> _anthropicCacheableTools(List<ToolDefinitionModel> tools) {
+    final output = tools
+        .map<JsonMap>(
+          (tool) => {
+            'name': tool.id,
+            'description': tool.description,
+            'input_schema': tool.parameters,
+          },
+        )
+        .toList();
+    if (output.isNotEmpty) {
+      output.last['cache_control'] = {'type': 'ephemeral'};
+    }
+    return output;
   }
 
   List<JsonMap> _anthropicUserBlocks(dynamic content) {

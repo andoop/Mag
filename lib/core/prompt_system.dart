@@ -21,10 +21,9 @@ class PromptContext {
     this.agentPrompt,
     required this.hasSkillTool,
     this.availableSkills = const [],
-    required this.currentStep,
-    required this.maxSteps,
+    this.currentStep,
+    this.maxSteps,
     required this.format,
-    this.sessionContracts = const [],
     this.allAgents = const [],
     this.isZh = false,
   });
@@ -37,10 +36,12 @@ class PromptContext {
   final String? agentPrompt;
   final bool hasSkillTool;
   final List<SkillInfo> availableSkills;
-  final int currentStep;
+  // Kept on the context for call-site compatibility, but intentionally not
+  // emitted into the cacheable system prompt. Step state changes every model
+  // turn and belongs near the tail of the request when it is needed.
+  final int? currentStep;
   final int? maxSteps;
   final MessageFormat? format;
-  final List<String> sessionContracts;
   final List<AgentDefinition> allAgents;
   final bool isZh;
 }
@@ -78,10 +79,6 @@ class PromptAssembler {
     if (instructions.isNotEmpty) {
       output.add({'role': 'system', 'content': instructions});
     }
-    final contractBlock = _sessionContractsPrompt(context);
-    if (contractBlock.isNotEmpty) {
-      output.add({'role': 'system', 'content': contractBlock});
-    }
     if (context.format?.type == OutputFormatType.jsonSchema) {
       output.add({
         'role': 'system',
@@ -104,6 +101,20 @@ class PromptAssembler {
       return '$text\n\n${isZh ? _buildSwitchReminderZh : _buildSwitchReminder}';
     }
     return text;
+  }
+
+  String applyLatestUserContext({
+    required String text,
+    required List<String> sessionContracts,
+    bool isZh = false,
+  }) {
+    final block = _latestUserContextPrompt(
+      sessionContracts: sessionContracts,
+      isZh: isZh,
+    );
+    if (block.isEmpty) return text;
+    if (text.isEmpty) return block;
+    return '$text\n\n$block';
   }
 
   String maxStepsReminder({bool zh = false}) =>
@@ -155,9 +166,9 @@ class PromptAssembler {
   }
 
   String _environmentPrompt(PromptContext context) {
-    final now = DateTime.now().toIso8601String();
     final agentDef = context.agentDefinition;
-    final tools = context.effectiveTools ?? agentDef.availableTools;
+    final tools =
+        _stableToolIds(context.effectiveTools ?? agentDef.availableTools);
 
     final zh = context.isZh;
     final lines = <String>[
@@ -175,9 +186,6 @@ class PromptAssembler {
       '${zh ? "模型" : "Model"}: ${context.model}.',
       '${zh ? "工作区" : "Workspace"}: ${context.workspace.name}.',
       'Tree URI: ${context.workspace.treeUri}.',
-      '${zh ? "日期" : "Date"}: $now.',
-      if (context.maxSteps != null)
-        '${zh ? "当前步骤" : "Current step"}: ${context.currentStep}/${context.maxSteps}.',
       zh
           ? '不要假设存在 shell、PTY 或桌面专属功能。'
           : 'Do not assume shell, PTY, or desktop-only capabilities exist.',
@@ -309,18 +317,50 @@ class PromptAssembler {
     return lines.join('\n');
   }
 
-  String _sessionContractsPrompt(PromptContext context) {
-    if (context.sessionContracts.isEmpty) return '';
+  List<String> _stableToolIds(List<String> tools) {
+    final builtin = <String>[];
+    final dynamic = <String>[];
+    for (final tool in tools) {
+      if (tool.startsWith('mcp.')) {
+        dynamic.add(tool);
+      } else {
+        builtin.add(tool);
+      }
+    }
+    dynamic.sort();
+    return [...builtin, ...dynamic];
+  }
+
+  String _latestUserContextPrompt({
+    required List<String> sessionContracts,
+    required bool isZh,
+  }) {
+    final date = _currentDateString();
+    if (sessionContracts.isEmpty) {
+      return isZh
+          ? '<system-reminder>\n当前日期：$date。\n</system-reminder>'
+          : '<system-reminder>\nCurrent date: $date.\n</system-reminder>';
+    }
     final lines = <String>[
-      context.isZh
+      '<system-reminder>',
+      isZh ? '当前日期：$date。' : 'Current date: $date.',
+      '',
+      isZh
           ? '# 当前会话中已明确确认的约束与决定'
           : '# Confirmed constraints and decisions for this session',
-      context.isZh
+      isZh
           ? '这些内容来自当前会话中用户已经明确说过的话。若后续实现与这些约束冲突，优先遵守这些约束。'
           : 'These items were stated explicitly by the user earlier in this session. If implementation choices conflict with them, follow these constraints.',
-      for (final item in context.sessionContracts) '- $item',
+      for (final item in sessionContracts) '- $item',
+      '</system-reminder>',
     ];
     return lines.join('\n');
+  }
+
+  String _currentDateString() {
+    final now = DateTime.now();
+    String two(int value) => value.toString().padLeft(2, '0');
+    return '${now.year}-${two(now.month)}-${two(now.day)}';
   }
 
   String _agentBehaviorBlock(String agent, List<String> tools,
@@ -429,7 +469,8 @@ class PromptAssembler {
         '## 编辑（串行，必须先 Read）',
       ]);
       if (hasEdit) {
-        lines.add('- `edit`：修改已有文件前必须先 `read`，然后用 `oldString` / `newString` 基于精确文本做替换。');
+        lines.add(
+            '- `edit`：修改已有文件前必须先 `read`，然后用 `oldString` / `newString` 基于精确文本做替换。');
       }
       if (hasApplyPatch) {
         lines.add(
@@ -439,7 +480,8 @@ class PromptAssembler {
         lines.add('- `write`：用于新文件，或你明确需要整文件重写时。');
       }
       if (hasDownload) {
-        lines.add('- `download`：把公开 `http/https` URL 下载到工作区文件。必须提供明确的 `filePath`；如果文件已存在，只有显式设置 `overwrite: true` 才能覆盖。');
+        lines.add(
+            '- `download`：把公开 `http/https` URL 下载到工作区文件。必须提供明确的 `filePath`；如果文件已存在，只有显式设置 `overwrite: true` 才能覆盖。');
       }
       lines.add('');
       lines.add('## 正确顺序（必须严格遵守）');
@@ -457,7 +499,8 @@ class PromptAssembler {
         lines.add('- 查找位置：$searchTools（独立搜索应并行） -> `read` 结果文件 -> 报告');
       }
       if (hasDownload) {
-        lines.add('- 下载远程文件：若只想先查看内容，用 `webfetch` -> 判断；若需要保存到工作区，用 `download` -> 继续 `read` / 预览 / 编辑。');
+        lines.add(
+            '- 下载远程文件：若只想先查看内容，用 `webfetch` -> 判断；若需要保存到工作区，用 `download` -> 继续 `read` / 预览 / 编辑。');
       }
       if (hasTask) {
         lines.add('- 非平凡实现：优先 `task` 委派 -> 验证结果 -> 报告');
@@ -478,7 +521,7 @@ class PromptAssembler {
     ]);
     if (hasEdit) {
       lines.add(
-        '- `edit`: modifying existing files. MUST `read` the file first, then replace exact text using `oldString` / `newString`.');
+          '- `edit`: modifying existing files. MUST `read` the file first, then replace exact text using `oldString` / `newString`.');
     }
     if (hasApplyPatch) {
       lines.add(

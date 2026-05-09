@@ -124,7 +124,8 @@ class _FakeHttpClientRequest implements HttpClientRequest {
   final _StubHttpResponseData _response;
 
   @override
-  Future<HttpClientResponse> close() async => _FakeHttpClientResponse(_response);
+  Future<HttpClientResponse> close() async =>
+      _FakeHttpClientResponse(_response);
 
   @override
   dynamic noSuchMethod(Invocation invocation) => super.noSuchMethod(invocation);
@@ -165,8 +166,7 @@ class _FakeHttpClientResponse extends Stream<List<int>>
 }
 
 class _FakeHttpHeaders implements HttpHeaders {
-  _FakeHttpHeaders(String mimeType)
-      : contentType = ContentType.parse(mimeType);
+  _FakeHttpHeaders(String mimeType) : contentType = ContentType.parse(mimeType);
 
   @override
   final ContentType? contentType;
@@ -610,10 +610,9 @@ void main() {
       ),
       throwsA(
         predicate(
-          (error) =>
-              error
-                  .toString()
-                  .contains('only accepts `filePath`, `oldString`, `newString`'),
+          (error) => error
+              .toString()
+              .contains('only accepts `filePath`, `oldString`, `newString`'),
         ),
       ),
     );
@@ -668,9 +667,8 @@ void main() {
       ),
       throwsA(
         predicate(
-          (error) =>
-              error.toString().contains(
-                  'No changes to apply: oldString and newString are identical.'),
+          (error) => error.toString().contains(
+              'No changes to apply: oldString and newString are identical.'),
         ),
       ),
     );
@@ -851,7 +849,8 @@ void main() {
     );
   });
 
-  test('skill discovers workspace-local skills and returns skill content', () async {
+  test('skill discovers workspace-local skills and returns skill content',
+      () async {
     final skillDir = Directory('${tempDir.path}/.opencode/skill/refactor-dart');
     await skillDir.create(recursive: true);
     await File('${skillDir.path}/SKILL.md').writeAsString('''
@@ -925,7 +924,8 @@ Read the target file before editing.
     );
     expect(result.displayOutput, 'Downloaded 127.0.0.1 -> downloads/note.txt');
     expect(result.metadata['contentType'], 'text/plain');
-    expect(result.attachments.any((item) => item['type'] == 'text_preview'), isTrue);
+    expect(result.attachments.any((item) => item['type'] == 'text_preview'),
+        isTrue);
   });
 
   test('download rejects overwrite unless explicitly enabled', () async {
@@ -965,12 +965,15 @@ Read the target file before editing.
     );
 
     expect(await target.readAsString(), 'new\n');
-    expect(result.attachments.any((item) => item['type'] == 'diff_preview'), isTrue);
+    expect(result.attachments.any((item) => item['type'] == 'diff_preview'),
+        isTrue);
   });
 
-  test('skill discovery follows workspace roots and opencode overrides duplicates',
+  test(
+      'skill discovery follows workspace roots and opencode overrides duplicates',
       () async {
-    final externalDir = Directory('${tempDir.path}/.claude/skills/shared-skill');
+    final externalDir =
+        Directory('${tempDir.path}/.claude/skills/shared-skill');
     await externalDir.create(recursive: true);
     await File('${externalDir.path}/SKILL.md').writeAsString('''
 ---
@@ -991,7 +994,8 @@ description: OpenCode description.
 
 # Shared Skill
 ''');
-    final invalidDir = Directory('${tempDir.path}/.agents/skills/no-frontmatter');
+    final invalidDir =
+        Directory('${tempDir.path}/.agents/skills/no-frontmatter');
     await invalidDir.create(recursive: true);
     await File('${invalidDir.path}/SKILL.md')
         .writeAsString('# Missing frontmatter\n');
@@ -1003,8 +1007,7 @@ description: OpenCode description.
 
     final names = skills.map((item) => item.name).toList();
     expect(names, containsAll(['public-file-download', 'shared-skill']));
-    final shared =
-        skills.firstWhere((item) => item.name == 'shared-skill');
+    final shared = skills.firstWhere((item) => item.name == 'shared-skill');
     expect(shared.description, 'OpenCode description.');
     expect(
       shared.location,
@@ -1133,10 +1136,12 @@ description: Review UI flows before implementation.
         Map<String, dynamic>.from(properties['name'] as Map? ?? const {});
 
     expect(description, contains('## Available Skills'));
-    expect(description, contains('**review-ui**: Review UI flows before implementation.'));
+    expect(description,
+        contains('**review-ui**: Review UI flows before implementation.'));
     expect(
       description,
-      contains('**public-file-download**: Download a public http/https file into the workspace at a chosen path.'),
+      contains(
+          '**public-file-download**: Download a public http/https file into the workspace at a chosen path.'),
     );
     expect(
       nameProperty['description'] as String? ?? '',
@@ -1312,7 +1317,7 @@ description: Review UI flows before implementation.
     );
   });
 
-  test('preview injects confirmed session constraints into system prompt',
+  test('preview injects confirmed session constraints into latest user context',
       () async {
     await database.putSetting(
       'model_config',
@@ -1361,13 +1366,21 @@ description: Review UI flows before implementation.
         .where((item) => item['role'] == 'system')
         .map((item) => item['content'] as String? ?? '')
         .join('\n\n');
+    final combinedUser = messages
+        .where((item) => item['role'] == 'user')
+        .map((item) => item['content'] as String? ?? '')
+        .join('\n\n');
 
     expect(
       combinedSystem,
+      isNot(contains('Confirmed constraints and decisions for this session')),
+    );
+    expect(
+      combinedUser,
       contains('Confirmed constraints and decisions for this session'),
     );
-    expect(combinedSystem, contains('Do not consider data compatibility'));
-    expect(combinedSystem, contains('Use filePath only'));
+    expect(combinedUser, contains('Do not consider data compatibility'));
+    expect(combinedUser, contains('Use filePath only'));
   });
 
   test('fallback variants expose reasoning effort presets', () {
@@ -2025,6 +2038,10 @@ description: Review UI flows before implementation.
         'budgetTokens': 1024,
       },
     );
+    final system = (payload['system'] as List).cast<Map>();
+    expect(system.last['cache_control'], {'type': 'ephemeral'});
+    final tools = (payload['tools'] as List).cast<Map>();
+    expect(tools.last['cache_control'], {'type': 'ephemeral'});
   });
 
   test('unsupported image input degrades to explicit user-facing error text',
@@ -2994,7 +3011,9 @@ description: Review UI flows before implementation.
     final replayRequest = gateway.requests.last;
     expect(
       replayRequest.any(
-        (item) => (item['content'] as String?) == 'Keep fixing the issue',
+        (item) =>
+            (item['content'] as String?)?.contains('Keep fixing the issue') ==
+            true,
       ),
       isTrue,
     );

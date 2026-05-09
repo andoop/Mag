@@ -11,8 +11,8 @@ class SessionEngine {
     required this.toolRegistry,
     required this.modelGateway,
     McpService? mcpService,
-  }) : mcpService =
-            mcpService ?? McpService(database: database, emitEvent: events.emit);
+  }) : mcpService = mcpService ??
+            McpService(database: database, emitEvent: events.emit);
 
   final AppDatabase database;
   final LocalEventBus events;
@@ -38,7 +38,10 @@ class SessionEngine {
     AgentDefinition agent, {
     String? modelId,
   }) async {
-    final mcpTools = (await mcpService.listTools()).map((item) => item.toToolModel()).toList();
+    final mcpTools = (await mcpService.listTools())
+        .map((item) => item.toToolModel())
+        .toList()
+      ..sort((a, b) => a.id.compareTo(b.id));
     return toolRegistry.availableForWorkspaceAgent(
       workspace,
       agent,

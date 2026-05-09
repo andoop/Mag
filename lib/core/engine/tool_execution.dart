@@ -329,8 +329,8 @@ extension SessionEngineTools on SessionEngine {
   Future<_PreparedToolExecution> _prepareToolExecution(ToolCall call) async {
     final requestedToolName =
         call.name.trim().isEmpty ? 'unknown' : call.name.trim();
-    final resolvedTool =
-        toolRegistry[requestedToolName] ?? await _resolveDynamicMcpTool(requestedToolName);
+    final resolvedTool = toolRegistry[requestedToolName] ??
+        await _resolveDynamicMcpTool(requestedToolName);
     if (resolvedTool == null) {
       return _PreparedToolExecution(
         requestedToolName: requestedToolName,
@@ -362,7 +362,8 @@ extension SessionEngineTools on SessionEngine {
     );
   }
 
-  Future<ToolDefinition?> _resolveDynamicMcpTool(String requestedToolName) async {
+  Future<ToolDefinition?> _resolveDynamicMcpTool(
+      String requestedToolName) async {
     if (!requestedToolName.startsWith('mcp.')) return null;
     final parts = requestedToolName.split('.');
     if (parts.length < 3) return null;
@@ -378,7 +379,9 @@ extension SessionEngineTools on SessionEngine {
     return ToolDefinition(
       id: requestedToolName,
       description: match.description,
-      parameters: match.inputSchema.isEmpty ? const {'type': 'object'} : match.inputSchema,
+      parameters: match.inputSchema.isEmpty
+          ? const {'type': 'object'}
+          : match.inputSchema,
       execute: (args, ctx) => _executeDynamicMcpTool(
         serverId: serverId,
         toolName: toolName,
@@ -415,7 +418,8 @@ extension SessionEngineTools on SessionEngine {
       }
     }
     if (buffer.isEmpty && result.structuredContent.isNotEmpty) {
-      buffer.write(const JsonEncoder.withIndent('  ').convert(result.structuredContent));
+      buffer.write(
+          const JsonEncoder.withIndent('  ').convert(result.structuredContent));
     }
     if (buffer.isEmpty) {
       buffer.write('MCP tool completed with no textual output.');
@@ -644,6 +648,8 @@ extension SessionEngineTools on SessionEngine {
         messages: context,
         parts: historyParts,
         currentAgent: firstUser.agent,
+        latestUserId: null,
+        sessionContracts: const [],
       );
 
       final messages = <Map<String, dynamic>>[
@@ -822,7 +828,8 @@ extension SessionEngineTools on SessionEngine {
           'Step 2: If the file already matches your intent, stop editing this section.\n'
           'Step 3: If you intended a different change, call `read` and submit only the exact differing text.';
     }
-    if (toolName == 'edit' && lower.contains('multiple matches for oldstring')) {
+    if (toolName == 'edit' &&
+        lower.contains('multiple matches for oldstring')) {
       return 'The oldString you provided matched multiple places in the file.\n'
           'Step 1: Call `read` and copy a larger surrounding block so the match is unique.\n'
           'Step 2: If you intentionally want to change every occurrence, retry with `replaceAll: true`.\n'

@@ -20,10 +20,10 @@ extension SessionEngineConversation on SessionEngine {
     }
     final zh = platformIsZh;
     final effectiveTools = (await availableToolModels(
-          workspace,
-          currentAgentDefinition,
-          modelId: model,
-        ))
+      workspace,
+      currentAgentDefinition,
+      modelId: model,
+    ))
         .map((item) => item.id)
         .toList();
     final availableSkills = effectiveTools.contains('skill')
@@ -32,6 +32,7 @@ extension SessionEngineConversation on SessionEngine {
             agentDefinition: currentAgentDefinition,
           )
         : const <SkillInfo>[];
+    final sessionContracts = _sessionContractItems(messages, parts);
     final system = await promptAssembler.buildSystemPrompts(
       PromptContext(
         workspace: workspace,
@@ -42,10 +43,7 @@ extension SessionEngineConversation on SessionEngine {
         agentPrompt: currentAgentDefinition.promptOverride,
         hasSkillTool: effectiveTools.contains('skill'),
         availableSkills: availableSkills,
-        currentStep: currentStep,
-        maxSteps: maxSteps,
         format: latestUser?.format,
-        sessionContracts: _sessionContractItems(messages, parts),
         allAgents: listAgents(),
         isZh: zh,
       ),
@@ -57,6 +55,8 @@ extension SessionEngineConversation on SessionEngine {
         messages: messages,
         parts: parts,
         currentAgent: currentAgent,
+        latestUserId: latestUser?.id,
+        sessionContracts: sessionContracts,
         isZh: zh,
       ),
     );
@@ -73,6 +73,8 @@ extension SessionEngineConversation on SessionEngine {
     required List<MessageInfo> messages,
     required List<MessagePart> parts,
     required String currentAgent,
+    required String? latestUserId,
+    required List<String> sessionContracts,
     bool isZh = false,
   }) {
     final partsByMessage = <String, List<MessagePart>>{};
@@ -123,15 +125,24 @@ extension SessionEngineConversation on SessionEngine {
         final switchedFromPlan =
             currentAgent == 'build' && message.agent == 'plan';
         final userContent = _userMessageContent(message, messageParts);
+        final isLatestUser = message.id == latestUserId;
         if (userContent is String) {
+          var text = promptAssembler.applyUserReminder(
+            agent: message.agent,
+            switchedFromPlan: switchedFromPlan,
+            text: userContent,
+            isZh: isZh,
+          );
+          if (isLatestUser) {
+            text = promptAssembler.applyLatestUserContext(
+              text: text,
+              sessionContracts: sessionContracts,
+              isZh: isZh,
+            );
+          }
           conversation.add({
             'role': 'user',
-            'content': promptAssembler.applyUserReminder(
-              agent: message.agent,
-              switchedFromPlan: switchedFromPlan,
-              text: userContent,
-              isZh: isZh,
-            ),
+            'content': text,
           });
         } else {
           final blocks = userContent.cast<Map<String, dynamic>>();
@@ -147,13 +158,28 @@ extension SessionEngineConversation on SessionEngine {
               text: firstText['text'] as String? ?? '',
               isZh: isZh,
             );
+            if (isLatestUser) {
+              firstText['text'] = promptAssembler.applyLatestUserContext(
+                text: firstText['text'] as String? ?? '',
+                sessionContracts: sessionContracts,
+                isZh: isZh,
+              );
+            }
+            blocks[0] = firstText;
           } else {
-            final reminder = promptAssembler.applyUserReminder(
+            var reminder = promptAssembler.applyUserReminder(
               agent: message.agent,
               switchedFromPlan: switchedFromPlan,
               text: '',
               isZh: isZh,
             );
+            if (isLatestUser) {
+              reminder = promptAssembler.applyLatestUserContext(
+                text: reminder,
+                sessionContracts: sessionContracts,
+                isZh: isZh,
+              );
+            }
             if (reminder.isEmpty) {
               conversation.add({
                 'role': 'user',
