@@ -21,6 +21,14 @@ class _WorkspaceHtmlPreviewState extends State<_WorkspaceHtmlPreview> {
   }
 
   @override
+  void didUpdateWidget(covariant _WorkspaceHtmlPreview oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.html != widget.html) {
+      _controller.loadHtmlString(widget.html, baseUrl: 'about:blank');
+    }
+  }
+
+  @override
   Widget build(BuildContext context) {
     return WebViewWidget(controller: _controller);
   }

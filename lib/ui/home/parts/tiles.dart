@@ -182,12 +182,18 @@ class _PartTile extends StatelessWidget {
                 ? '${displayOutput.substring(0, 800)}\n... (${displayOutput.length} chars total)'
                 : displayOutput;
             return _ToolPartTile(
+              messageId: part.messageId,
+              partId: part.id,
               toolName: toolName,
               toolTitle: toolTitle,
               status: toolStatus,
               callId: callId,
               rawInput: rawInput,
               rawInputText: toolState['raw'] as String?,
+              writeContentPreview: part.data['writeContentPreview'] as String?,
+              editOldContentPreview:
+                  part.data['editOldContentPreview'] as String?,
+              editContentPreview: part.data['editContentPreview'] as String?,
               rawOutput: rawOutput,
               hasDisplayOutput: rawDisplayOutput != null,
               metadata: metadata,
@@ -216,12 +222,17 @@ class _PartTile extends StatelessWidget {
             ? '${displayOutput.substring(0, 800)}\n... (${displayOutput.length} chars total)'
             : displayOutput;
         return _ToolPartTile(
+          messageId: part.messageId,
+          partId: part.id,
           toolName: toolName,
           toolTitle: toolTitle,
           status: toolStatus,
           callId: callId,
           rawInput: rawInput,
           rawInputText: toolState['raw'] as String?,
+          writeContentPreview: part.data['writeContentPreview'] as String?,
+          editOldContentPreview: part.data['editOldContentPreview'] as String?,
+          editContentPreview: part.data['editContentPreview'] as String?,
           rawOutput: rawOutput,
           hasDisplayOutput: rawDisplayOutput != null,
           metadata: metadata,
@@ -288,12 +299,17 @@ List<List<String>> _resolveQuestionToolAnswers(Map<String, dynamic> toolState) {
 
 class _ToolPartTile extends StatefulWidget {
   const _ToolPartTile({
+    required this.messageId,
+    required this.partId,
     required this.toolName,
     required this.toolTitle,
     required this.status,
     required this.callId,
     required this.rawInput,
     required this.rawInputText,
+    required this.writeContentPreview,
+    required this.editOldContentPreview,
+    required this.editContentPreview,
     required this.rawOutput,
     required this.hasDisplayOutput,
     required this.metadata,
@@ -306,12 +322,17 @@ class _ToolPartTile extends StatefulWidget {
     required this.onSendPromptReference,
   });
 
+  final String messageId;
+  final String partId;
   final String toolName;
   final String? toolTitle;
   final String status;
   final String? callId;
   final JsonMap rawInput;
   final String? rawInputText;
+  final String? writeContentPreview;
+  final String? editOldContentPreview;
+  final String? editContentPreview;
   final String? rawOutput;
   final bool hasDisplayOutput;
   final Map<String, dynamic> metadata;
@@ -375,6 +396,56 @@ class _ToolPartTileState extends State<_ToolPartTile> {
       if (item['type'] == type) return item;
     }
     return null;
+  }
+
+  bool _hasAttachmentOfType(String type) =>
+      _firstAttachmentOfType(type) != null;
+
+  String _toolPreviewPath() {
+    return ((widget.metadata['path'] as String?) ??
+            (widget.metadata['filePath'] as String?) ??
+            (widget.rawInput['filePath'] as String?) ??
+            (widget.rawInput['path'] as String?) ??
+            widget.toolTitle ??
+            '')
+        .trim();
+  }
+
+  Map<String, dynamic>? _toolStreamPreviewAttachment() {
+    final isWrite = widget.toolName == 'write';
+    final isEdit = widget.toolName == 'edit';
+    if (!isWrite && !isEdit) {
+      return null;
+    }
+    final hasReplacement = widget.editContentPreview != null &&
+        widget.editContentPreview!.isNotEmpty;
+    final content = isWrite
+        ? widget.writeContentPreview
+        : (hasReplacement
+            ? widget.editContentPreview
+            : widget.editOldContentPreview);
+    if (content == null || content.isEmpty) return null;
+    final hasDiff = _hasAttachmentOfType('diff_preview');
+    final isRunning = widget.status == 'running' || widget.status == 'pending';
+    final shouldShow = isRunning || widget.status == 'error' || !hasDiff;
+    if (!shouldShow) return null;
+    final path = _toolPreviewPath();
+    return {
+      'type': 'write_stream_preview',
+      'path': path,
+      'filename':
+          path.isEmpty ? (isEdit ? 'edit preview' : 'write preview') : path,
+      'content': content,
+      'status': widget.status,
+      'previewKind': isEdit ? 'edit' : 'write',
+      'previewPhase': isEdit && !hasReplacement ? 'old' : 'new',
+      'contentKey': isEdit
+          ? (hasReplacement ? 'editContentPreview' : 'editOldContentPreview')
+          : 'writeContentPreview',
+      'inline': true,
+      'messageID': widget.messageId,
+      'partID': widget.partId,
+    };
   }
 
   String _entryKindLabel(BuildContext context, bool isDirectory) {
@@ -1049,6 +1120,7 @@ class _ToolPartTileState extends State<_ToolPartTile> {
         : widget.output;
     final collapsedSummary = collapsedOutput?.split('\n').first.trim();
     final diffSuffix = _diffStatSuffix();
+    final toolStreamPreview = _toolStreamPreviewAttachment();
     final oc = context.oc;
     return Container(
       width: double.infinity,
@@ -1144,6 +1216,17 @@ class _ToolPartTileState extends State<_ToolPartTile> {
               ],
             ),
           ),
+          if (expanded && toolStreamPreview != null) ...[
+            const SizedBox(height: 6),
+            _AttachmentTile(
+              attachment: toolStreamPreview,
+              controller: widget.controller,
+              workspace: widget.workspace,
+              serverUri: widget.serverUri,
+              onInsertPromptReference: widget.onInsertPromptReference,
+              onSendPromptReference: widget.onSendPromptReference,
+            ),
+          ],
           if (expanded &&
               expandedOutput != null &&
               expandedOutput.isNotEmpty) ...[

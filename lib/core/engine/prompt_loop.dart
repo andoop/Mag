@@ -121,6 +121,78 @@ extension SessionEnginePrompt on SessionEngine {
         return null;
       }
 
+      String? tryDecodePartialJsonString(String raw) {
+        final buffer = StringBuffer();
+        for (var i = 0; i < raw.length; i++) {
+          final ch = raw[i];
+          if (ch != '\\') {
+            if (ch == '"') return buffer.toString();
+            buffer.write(ch);
+            continue;
+          }
+          if (i + 1 >= raw.length) break;
+          final escaped = raw[++i];
+          switch (escaped) {
+            case '"':
+            case '\\':
+            case '/':
+              buffer.write(escaped);
+              break;
+            case 'b':
+              buffer.write('\b');
+              break;
+            case 'f':
+              buffer.write('\f');
+              break;
+            case 'n':
+              buffer.write('\n');
+              break;
+            case 'r':
+              buffer.write('\r');
+              break;
+            case 't':
+              buffer.write('\t');
+              break;
+            case 'u':
+              if (i + 4 >= raw.length) return buffer.toString();
+              final hex = raw.substring(i + 1, i + 5);
+              final code = int.tryParse(hex, radix: 16);
+              if (code == null) return buffer.toString();
+              buffer.write(String.fromCharCode(code));
+              i += 4;
+              break;
+            default:
+              buffer.write(escaped);
+          }
+        }
+        return buffer.toString();
+      }
+
+      String? extractStreamingJsonStringField(
+        String argumentsText,
+        String fieldName,
+      ) {
+        final decoded = tryDecodeToolInput(argumentsText);
+        final decodedContent = decoded?[fieldName];
+        if (decodedContent is String) return decodedContent;
+        final key = RegExp('"${RegExp.escape(fieldName)}"\\s*:\\s*"')
+            .firstMatch(argumentsText);
+        if (key == null) return null;
+        return tryDecodePartialJsonString(argumentsText.substring(key.end));
+      }
+
+      String? extractStreamingWriteContent(String argumentsText) {
+        return extractStreamingJsonStringField(argumentsText, 'content');
+      }
+
+      String? extractStreamingEditOldContent(String argumentsText) {
+        return extractStreamingJsonStringField(argumentsText, 'oldString');
+      }
+
+      String? extractStreamingEditContent(String argumentsText) {
+        return extractStreamingJsonStringField(argumentsText, 'newString');
+      }
+
       List<MessagePart> userPartsForMessage(MessageInfo message) {
         final items = cachedParts
             .where((part) =>
@@ -364,6 +436,7 @@ extension SessionEnginePrompt on SessionEngine {
           createdAt:
               existing?.createdAt ?? DateTime.now().millisecondsSinceEpoch,
           data: {
+            if (existing != null) ...existing.data,
             'tool': toolName,
             'callID': callId,
             'state': {
@@ -499,6 +572,9 @@ extension SessionEnginePrompt on SessionEngine {
       final maxSteps = definition.steps;
       const maxElapsedMs = 10 * 60 * 1000; // 10 min safety net
       final consecutiveToolErrors = <String, int>{};
+      final writePreviewByCallId = <String, String>{};
+      final editOldPreviewByCallId = <String, String>{};
+      final editPreviewByCallId = <String, String>{};
       var totalConsecutiveErrors = 0;
       const maxEmptyResponseRetries = 2;
       while (true) {
@@ -748,6 +824,70 @@ extension SessionEnginePrompt on SessionEngine {
                     toolName: toolName,
                     argumentsText: argumentsText,
                   );
+                  Future<void> emitToolContentPreview({
+                    required String dataKey,
+                    required String preview,
+                    required Map<String, String> cache,
+                  }) async {
+                    final previous = cache[toolCallId] ?? '';
+                    final part = toolPartByCallId[toolCallId];
+                    if (part == null ||
+                        !preview.startsWith(previous) ||
+                        preview.length <= previous.length) {
+                      return;
+                    }
+                    final delta = preview.substring(previous.length);
+                    cache[toolCallId] = preview;
+                    _emitPartDelta(
+                      workspace: workspace,
+                      sessionId: session.id,
+                      messageId: assistant.id,
+                      partId: part.id,
+                      partType: PartType.tool,
+                      createdAt: part.createdAt,
+                      delta: {dataKey: delta},
+                    );
+                    toolPartByCallId[toolCallId] = MessagePart(
+                      id: part.id,
+                      sessionId: part.sessionId,
+                      messageId: part.messageId,
+                      type: part.type,
+                      createdAt: part.createdAt,
+                      data: {
+                        ...part.data,
+                        dataKey: preview,
+                      },
+                    );
+                  }
+
+                  if (toolName == 'write') {
+                    final preview = extractStreamingWriteContent(argumentsText);
+                    if (preview != null) {
+                      await emitToolContentPreview(
+                        dataKey: 'writeContentPreview',
+                        preview: preview,
+                        cache: writePreviewByCallId,
+                      );
+                    }
+                  } else if (toolName == 'edit') {
+                    final oldPreview =
+                        extractStreamingEditOldContent(argumentsText);
+                    if (oldPreview != null) {
+                      await emitToolContentPreview(
+                        dataKey: 'editOldContentPreview',
+                        preview: oldPreview,
+                        cache: editOldPreviewByCallId,
+                      );
+                    }
+                    final preview = extractStreamingEditContent(argumentsText);
+                    if (preview != null) {
+                      await emitToolContentPreview(
+                        dataKey: 'editContentPreview',
+                        preview: preview,
+                        cache: editPreviewByCallId,
+                      );
+                    }
+                  }
                 },
               );
               break;

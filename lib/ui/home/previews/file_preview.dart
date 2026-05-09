@@ -1,15 +1,62 @@
 part of '../../home_page.dart';
 
+Future<void> _openWriteStreamPreview(
+  BuildContext context, {
+  required AppController controller,
+  required WorkspaceInfo? workspace,
+  required String path,
+  required String initialContent,
+  String? messageId,
+  String? partId,
+  String? contentKey,
+  String previewKind = 'write',
+  String previewPhase = 'new',
+  ValueChanged<String>? onInsertPromptReference,
+  PromptReferenceAction? onSendPromptReference,
+}) {
+  return Navigator.of(context).push<void>(
+    MaterialPageRoute<void>(
+      builder: (ctx) => _WriteStreamPreviewPage(
+        controller: controller,
+        workspace: workspace,
+        path: path,
+        initialContent: initialContent,
+        messageId: messageId,
+        partId: partId,
+        contentKey: contentKey ?? 'writeContentPreview',
+        previewKind: previewKind,
+        previewPhase: previewPhase,
+        onInsertPromptReference: onInsertPromptReference,
+        onSendPromptReference: onSendPromptReference,
+      ),
+    ),
+  );
+}
+
 /// 全屏路由打开预览，避免 bottom sheet 抢走手势（游戏/HTML 滚动等）。
 Future<void> _openFilePreview(
   BuildContext context, {
   required AppController controller,
   required WorkspaceInfo workspace,
   required String path,
+  Uri? serverUri,
   int? initialLine,
   ValueChanged<String>? onInsertPromptReference,
   PromptReferenceAction? onSendPromptReference,
 }) {
+  if (_pathLooksHtmlFile(path) && serverUri != null) {
+    final previewUrl = _workspacePreviewUrl(
+      serverUri: serverUri,
+      workspace: workspace,
+      path: path,
+    );
+    return _openWebPreview(
+      context,
+      title: path,
+      subtitle: previewUrl.toString(),
+      url: previewUrl.toString(),
+    );
+  }
   return Navigator.of(context).push<void>(
     MaterialPageRoute<void>(
       builder: (ctx) => _FilePreviewSheet(
@@ -22,6 +69,408 @@ Future<void> _openFilePreview(
       ),
     ),
   );
+}
+
+class _WriteStreamPreviewPage extends StatefulWidget {
+  const _WriteStreamPreviewPage({
+    required this.controller,
+    required this.workspace,
+    required this.path,
+    required this.initialContent,
+    this.messageId,
+    this.partId,
+    required this.contentKey,
+    required this.previewKind,
+    required this.previewPhase,
+    this.onInsertPromptReference,
+    this.onSendPromptReference,
+  });
+
+  final AppController controller;
+  final WorkspaceInfo? workspace;
+  final String path;
+  final String initialContent;
+  final String? messageId;
+  final String? partId;
+  final String contentKey;
+  final String previewKind;
+  final String previewPhase;
+  final ValueChanged<String>? onInsertPromptReference;
+  final PromptReferenceAction? onSendPromptReference;
+
+  @override
+  State<_WriteStreamPreviewPage> createState() =>
+      _WriteStreamPreviewPageState();
+}
+
+class _WriteStreamPreviewPageState extends State<_WriteStreamPreviewPage> {
+  @override
+  void initState() {
+    super.initState();
+    widget.controller.addListener(_handleControllerChanged);
+  }
+
+  @override
+  void dispose() {
+    widget.controller.removeListener(_handleControllerChanged);
+    super.dispose();
+  }
+
+  void _handleControllerChanged() {
+    if (mounted) setState(() {});
+  }
+
+  String _currentContent() {
+    final partId = widget.partId;
+    if (partId == null || partId.isEmpty) return widget.initialContent;
+    for (final bundle in widget.controller.state.messages) {
+      if (widget.messageId != null && bundle.message.id != widget.messageId) {
+        continue;
+      }
+      for (final part in bundle.parts) {
+        if (part.id != partId) continue;
+        final preview = part.data[widget.contentKey] as String?;
+        if (preview != null) return preview;
+      }
+    }
+    return widget.initialContent;
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final content = _currentContent();
+    final isEditPreview = widget.previewKind == 'edit';
+    final isEditOldPreview = isEditPreview && widget.previewPhase == 'old';
+    final title = widget.path.isEmpty
+        ? (isEditPreview
+            ? l(context, '编辑预览', 'Edit preview')
+            : l(context, '写入预览', 'Write preview'))
+        : widget.path;
+    final lines =
+        content.isEmpty ? 0 : const LineSplitter().convert(content).length;
+    return DefaultTabController(
+      length: 2,
+      child: Scaffold(
+        appBar: AppBar(
+          title: Text(
+            title,
+            maxLines: 2,
+            overflow: TextOverflow.ellipsis,
+            style: const TextStyle(fontSize: 15, fontWeight: FontWeight.w600),
+          ),
+          leading: const BackButton(),
+          bottom: TabBar(
+            tabs: [
+              Tab(text: l(context, '过程', 'Process')),
+              Tab(text: l(context, '预览', 'Preview')),
+            ],
+          ),
+        ),
+        body: SafeArea(
+          child: Padding(
+            padding: const EdgeInsets.fromLTRB(12, 8, 12, 12),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  isEditPreview
+                      ? (isEditOldPreview
+                          ? l(context, '实时原文定位 · $lines 行',
+                              'Live original text · $lines line(s)')
+                          : l(context, '实时替换内容 · $lines 行',
+                              'Live replacement · $lines line(s)'))
+                      : l(context, '实时草稿 · $lines 行',
+                          'Live draft · $lines line(s)'),
+                  style: Theme.of(context)
+                      .textTheme
+                      .bodySmall
+                      ?.copyWith(color: context.oc.foregroundMuted),
+                ),
+                const SizedBox(height: 8),
+                Expanded(
+                  child: TabBarView(
+                    children: [
+                      _WriteStreamPreviewBody(
+                        path: widget.path,
+                        content: content,
+                        streaming: true,
+                        sourceOnly: true,
+                        workspace: widget.workspace,
+                        controller: widget.controller,
+                        onInsertPromptReference: widget.onInsertPromptReference,
+                        onSendPromptReference: widget.onSendPromptReference,
+                      ),
+                      _WriteStreamPreviewBody(
+                        path: widget.path,
+                        content: content,
+                        streaming: true,
+                        sourceOnly: isEditPreview,
+                        workspace: widget.workspace,
+                        controller: widget.controller,
+                        onInsertPromptReference: widget.onInsertPromptReference,
+                        onSendPromptReference: widget.onSendPromptReference,
+                      ),
+                    ],
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _WriteStreamPreviewBody extends StatefulWidget {
+  const _WriteStreamPreviewBody({
+    required this.path,
+    required this.content,
+    required this.streaming,
+    required this.workspace,
+    required this.controller,
+    required this.onInsertPromptReference,
+    required this.onSendPromptReference,
+    this.sourceOnly = false,
+  });
+
+  final String path;
+  final String content;
+  final bool streaming;
+  final WorkspaceInfo? workspace;
+  final AppController controller;
+  final ValueChanged<String>? onInsertPromptReference;
+  final PromptReferenceAction? onSendPromptReference;
+  final bool sourceOnly;
+
+  @override
+  State<_WriteStreamPreviewBody> createState() =>
+      _WriteStreamPreviewBodyState();
+}
+
+class _WriteStreamPreviewBodyState extends State<_WriteStreamPreviewBody> {
+  final ScrollController _scrollController = ScrollController();
+  bool _followTail = true;
+  bool _showJumpToBottom = false;
+  bool _programmaticScroll = false;
+
+  @override
+  void initState() {
+    super.initState();
+    _scrollController.addListener(_handleScroll);
+    WidgetsBinding.instance
+        .addPostFrameCallback((_) => _scrollToBottom(jump: true));
+  }
+
+  @override
+  void didUpdateWidget(covariant _WriteStreamPreviewBody oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.content != widget.content && _followTail) {
+      WidgetsBinding.instance.addPostFrameCallback((_) => _scrollToBottom());
+    }
+  }
+
+  @override
+  void dispose() {
+    _scrollController.removeListener(_handleScroll);
+    _scrollController.dispose();
+    super.dispose();
+  }
+
+  void _handleScroll() {
+    if (!_scrollController.hasClients || _programmaticScroll) return;
+    final position = _scrollController.position;
+    final distanceToBottom = position.maxScrollExtent - position.pixels;
+    final shouldFollow = distanceToBottom <= 24;
+    final shouldShowButton = distanceToBottom > 96;
+    if (shouldFollow != _followTail || shouldShowButton != _showJumpToBottom) {
+      setState(() {
+        _followTail = shouldFollow;
+        _showJumpToBottom = shouldShowButton;
+      });
+    }
+  }
+
+  void _scrollToBottom({bool jump = false}) {
+    if (!_scrollController.hasClients) return;
+    final target = _scrollController.position.maxScrollExtent;
+    _programmaticScroll = true;
+    if (jump) {
+      _scrollController.jumpTo(target);
+      _finishProgrammaticScroll();
+    } else {
+      _scrollController
+          .animateTo(
+            target,
+            duration: const Duration(milliseconds: 180),
+            curve: Curves.easeOutCubic,
+          )
+          .whenComplete(_finishProgrammaticScroll);
+    }
+    if (!_followTail || _showJumpToBottom) {
+      setState(() {
+        _followTail = true;
+        _showJumpToBottom = false;
+      });
+    }
+  }
+
+  void _finishProgrammaticScroll() {
+    _programmaticScroll = false;
+    if (!mounted) return;
+    if (!_followTail || _showJumpToBottom) {
+      setState(() {
+        _followTail = true;
+        _showJumpToBottom = false;
+      });
+    }
+  }
+
+  Widget _scrollingPreview(BuildContext context, Widget child,
+      {required Color background}) {
+    return Stack(
+      children: [
+        Container(
+          width: double.infinity,
+          padding: const EdgeInsets.all(12),
+          decoration: _panelDecoration(
+            context,
+            background: background,
+            radius: 12,
+            elevated: false,
+          ),
+          child: Scrollbar(
+            controller: _scrollController,
+            thumbVisibility: _showJumpToBottom,
+            child: SingleChildScrollView(
+              controller: _scrollController,
+              child: child,
+            ),
+          ),
+        ),
+        if (_showJumpToBottom)
+          Positioned(
+            right: 8,
+            bottom: 8,
+            child: AnimatedOpacity(
+              opacity: _showJumpToBottom ? 1 : 0,
+              duration: const Duration(milliseconds: 120),
+              child: DecoratedBox(
+                decoration: BoxDecoration(
+                  color: context.oc.panelBackground.withOpacity(0.92),
+                  borderRadius: BorderRadius.circular(999),
+                  border: Border.fromBorderSide(
+                    BorderSide(color: context.oc.borderColor),
+                  ),
+                  boxShadow: [
+                    BoxShadow(
+                      color: Colors.black.withOpacity(0.08),
+                      blurRadius: 10,
+                      offset: const Offset(0, 2),
+                    ),
+                  ],
+                ),
+                child: IconButton(
+                  tooltip: l(context, '滚动到底部', 'Scroll to bottom'),
+                  icon: const Icon(Icons.keyboard_arrow_down),
+                  color: context.oc.foregroundMuted,
+                  iconSize: 18,
+                  constraints:
+                      const BoxConstraints.tightFor(width: 32, height: 28),
+                  visualDensity: VisualDensity.compact,
+                  padding: EdgeInsets.zero,
+                  splashRadius: 16,
+                  onPressed: _scrollToBottom,
+                ),
+              ),
+            ),
+          ),
+      ],
+    );
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final isMarkdown = _pathLooksMarkdownFile(widget.path);
+    final isHtml = _pathLooksHtmlFile(widget.path);
+    if (isMarkdown && !widget.sourceOnly) {
+      return _scrollingPreview(
+        context,
+        _StreamingMarkdownText(
+          text: widget.content,
+          streaming: widget.streaming,
+          workspace: widget.workspace,
+          controller: widget.controller,
+          onInsertPromptReference: widget.onInsertPromptReference,
+          onSendPromptReference: widget.onSendPromptReference,
+        ),
+        background: context.oc.panelBackground,
+      );
+    }
+    if (isHtml && !widget.sourceOnly) {
+      return ClipRRect(
+        borderRadius: BorderRadius.circular(12),
+        child: Container(
+          width: double.infinity,
+          decoration: _panelDecoration(
+            context,
+            background: context.oc.panelBackground,
+            radius: 12,
+            elevated: false,
+          ),
+          child: _WorkspaceHtmlPreview(html: widget.content),
+        ),
+      );
+    }
+    return _scrollingPreview(
+      context,
+      _WriteStreamSourcePreview(path: widget.path, content: widget.content),
+      background: context.oc.shadow,
+    );
+  }
+}
+
+class _WriteStreamSourcePreview extends StatelessWidget {
+  const _WriteStreamSourcePreview({
+    required this.path,
+    required this.content,
+  });
+
+  final String path;
+  final String content;
+
+  @override
+  Widget build(BuildContext context) {
+    final language = _languageForPath(path);
+    return SingleChildScrollView(
+      scrollDirection: Axis.horizontal,
+      child: ConstrainedBox(
+        constraints: BoxConstraints(
+          minWidth: MediaQuery.of(context).size.width - 72,
+        ),
+        child: language == null
+            ? SelectableText(
+                content,
+                style: const TextStyle(
+                  fontFamily: 'monospace',
+                  fontSize: 12,
+                  height: 1.4,
+                ),
+              )
+            : HighlightView(
+                content,
+                language: language,
+                theme: _codeHighlightTheme(context),
+                padding: EdgeInsets.zero,
+                textStyle: const TextStyle(
+                  fontFamily: 'monospace',
+                  fontSize: 12,
+                  height: 1.4,
+                ),
+              ),
+      ),
+    );
+  }
 }
 
 class _FilePreviewSheet extends StatefulWidget {

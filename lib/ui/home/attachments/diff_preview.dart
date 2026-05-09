@@ -5,6 +5,7 @@ class _DiffPreviewAttachmentTile extends StatelessWidget {
     required this.attachment,
     required this.controller,
     required this.workspace,
+    required this.serverUri,
     required this.onInsertPromptReference,
     required this.onSendPromptReference,
   });
@@ -12,6 +13,7 @@ class _DiffPreviewAttachmentTile extends StatelessWidget {
   final Map<String, dynamic> attachment;
   final AppController controller;
   final WorkspaceInfo? workspace;
+  final Uri? serverUri;
   final ValueChanged<String> onInsertPromptReference;
   final PromptReferenceAction onSendPromptReference;
 
@@ -25,7 +27,9 @@ class _DiffPreviewAttachmentTile extends StatelessWidget {
       width: double.infinity,
       padding: const EdgeInsets.all(12),
       decoration: _panelDecoration(context,
-          background: context.oc.permissionPreviewBg, radius: 14, elevated: false),
+          background: context.oc.permissionPreviewBg,
+          radius: 14,
+          elevated: false),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
@@ -42,6 +46,7 @@ class _DiffPreviewAttachmentTile extends StatelessWidget {
                     controller: controller,
                     workspace: workspace!,
                     path: path,
+                    serverUri: serverUri,
                     onInsertPromptReference: onInsertPromptReference,
                     onSendPromptReference: onSendPromptReference,
                   ),

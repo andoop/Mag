@@ -94,23 +94,43 @@ class _GrepResultsAttachmentTile extends StatelessWidget {
           const SizedBox(height: 6),
           Text(
             l(context, '匹配: $count', 'Matches: $count'),
-            style: TextStyle(color: context.oc.foregroundMuted),
+            style: Theme.of(context)
+                .textTheme
+                .labelSmall
+                ?.copyWith(color: context.oc.foregroundMuted),
           ),
-          const SizedBox(height: 8),
-          ...items.map(
-            (item) => Padding(
-              padding: const EdgeInsets.only(bottom: 6),
-              child: _GrepResultRow(
-                path: item['path'] as String? ?? '',
-                line: item['line'] as int? ?? 1,
-                text: item['text'] as String? ?? '',
-                controller: controller,
-                workspace: workspace,
-                onInsertPromptReference: onInsertPromptReference,
-                onSendPromptReference: onSendPromptReference,
+          if (items.isNotEmpty) ...[
+            const SizedBox(height: 8),
+            ConstrainedBox(
+              constraints: const BoxConstraints(maxHeight: 220),
+              child: Scrollbar(
+                thumbVisibility: items.length > 6,
+                child: ListView.separated(
+                  primary: false,
+                  shrinkWrap: true,
+                  padding: EdgeInsets.zero,
+                  itemCount: items.length,
+                  separatorBuilder: (_, __) => Divider(
+                    height: 1,
+                    thickness: 0.6,
+                    color: context.oc.borderColor.withOpacity(0.55),
+                  ),
+                  itemBuilder: (context, index) {
+                    final item = items[index];
+                    return _GrepResultRow(
+                      path: item['path'] as String? ?? '',
+                      line: item['line'] as int? ?? 1,
+                      text: item['text'] as String? ?? '',
+                      controller: controller,
+                      workspace: workspace,
+                      onInsertPromptReference: onInsertPromptReference,
+                      onSendPromptReference: onSendPromptReference,
+                    );
+                  },
+                ),
               ),
             ),
-          ),
+          ],
         ],
       ),
     );
@@ -199,11 +219,32 @@ class _GrepResultRow extends StatelessWidget {
                 onSendPromptReference: onSendPromptReference,
               )
           : null,
-      child: Text(
-        '$path:$line: $text',
-        style: TextStyle(
-          fontFamily: 'monospace',
-          color: context.oc.foreground,
+      child: Padding(
+        padding: const EdgeInsets.symmetric(vertical: 5),
+        child: RichText(
+          maxLines: 2,
+          overflow: TextOverflow.ellipsis,
+          text: TextSpan(
+            style: TextStyle(
+              fontFamily: 'monospace',
+              fontSize: 11,
+              height: 1.25,
+              color: context.oc.foreground,
+            ),
+            children: [
+              TextSpan(
+                text: '$path:$line',
+                style: TextStyle(
+                  fontWeight: FontWeight.w600,
+                  color: context.oc.accent,
+                ),
+              ),
+              TextSpan(
+                text: ': ${text.trim()}',
+                style: TextStyle(color: context.oc.foregroundMuted),
+              ),
+            ],
+          ),
         ),
       ),
     );

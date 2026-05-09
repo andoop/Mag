@@ -23,6 +23,15 @@ class _AttachmentTile extends StatelessWidget {
     final mime = attachment['mime'] as String? ?? 'application/octet-stream';
     final path = attachment['url'] as String? ?? '';
     final filename = attachment['filename'] as String? ?? path;
+    if (type == 'write_stream_preview') {
+      return _WriteStreamPreviewAttachmentTile(
+        attachment: attachment,
+        controller: controller,
+        workspace: workspace,
+        onInsertPromptReference: onInsertPromptReference,
+        onSendPromptReference: onSendPromptReference,
+      );
+    }
     if (type == 'text_preview' && workspace != null) {
       return _TextPreviewAttachmentTile(
         attachment: attachment,
@@ -65,6 +74,7 @@ class _AttachmentTile extends StatelessWidget {
         attachment: attachment,
         controller: controller,
         workspace: workspace,
+        serverUri: serverUri,
         onInsertPromptReference: onInsertPromptReference,
         onSendPromptReference: onSendPromptReference,
       );
@@ -99,8 +109,8 @@ class _AttachmentTile extends StatelessWidget {
             decoration: BoxDecoration(
               color: context.oc.panelBackground,
               borderRadius: BorderRadius.circular(10),
-              border:
-                  Border.fromBorderSide(BorderSide(color: context.oc.borderColor)),
+              border: Border.fromBorderSide(
+                  BorderSide(color: context.oc.borderColor)),
             ),
             child: Icon(
               mime == 'application/pdf'
@@ -114,6 +124,133 @@ class _AttachmentTile extends StatelessWidget {
             child: Text('$filename\n$mime',
                 style: Theme.of(context).textTheme.bodySmall),
           ),
+        ],
+      ),
+    );
+  }
+}
+
+class _WriteStreamPreviewAttachmentTile extends StatelessWidget {
+  const _WriteStreamPreviewAttachmentTile({
+    required this.attachment,
+    required this.controller,
+    required this.workspace,
+    required this.onInsertPromptReference,
+    required this.onSendPromptReference,
+  });
+
+  final Map<String, dynamic> attachment;
+  final AppController controller;
+  final WorkspaceInfo? workspace;
+  final ValueChanged<String> onInsertPromptReference;
+  final PromptReferenceAction onSendPromptReference;
+
+  @override
+  Widget build(BuildContext context) {
+    final path = attachment['path'] as String? ?? '';
+    final filename = attachment['filename'] as String? ?? path;
+    final content = attachment['content'] as String? ?? '';
+    final status = attachment['status'] as String? ?? 'pending';
+    final previewKind = attachment['previewKind'] as String? ?? 'write';
+    final isEditPreview = previewKind == 'edit';
+    final previewPhase = attachment['previewPhase'] as String? ?? 'new';
+    final isEditOldPreview = isEditPreview && previewPhase == 'old';
+    final inline = attachment['inline'] == true;
+    final isRunning = status == 'running' || status == 'pending';
+    final lineCount =
+        content.isEmpty ? 0 : const LineSplitter().convert(content).length;
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.all(12),
+      decoration: _panelDecoration(
+        context,
+        background: context.oc.composerOptionBg,
+        radius: 14,
+        elevated: false,
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      filename.isEmpty
+                          ? (isEditPreview
+                              ? l(context, '编辑预览', 'Edit preview')
+                              : l(context, '写入预览', 'Write preview'))
+                          : filename,
+                      style: const TextStyle(fontWeight: FontWeight.bold),
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                    ),
+                    const SizedBox(height: 2),
+                    Text(
+                      isRunning
+                          ? (isEditPreview
+                              ? (isEditOldPreview
+                                  ? l(context, '正在定位原文 · $lineCount 行',
+                                      'Locating original · $lineCount line(s)')
+                                  : l(context, '正在生成替换内容 · $lineCount 行',
+                                      'Generating replacement · $lineCount line(s)'))
+                              : l(context, '正在生成 · $lineCount 行',
+                                  'Generating · $lineCount line(s)'))
+                          : (isEditPreview
+                              ? (isEditOldPreview
+                                  ? l(context, '待替换原文 · $lineCount 行',
+                                      'Original text · $lineCount line(s)')
+                                  : l(context, '替换内容草稿 · $lineCount 行',
+                                      'Replacement draft · $lineCount line(s)'))
+                              : l(context, '草稿 · $lineCount 行',
+                                  'Draft · $lineCount line(s)')),
+                      style: Theme.of(context)
+                          .textTheme
+                          .labelSmall
+                          ?.copyWith(color: context.oc.foregroundMuted),
+                    ),
+                  ],
+                ),
+              ),
+              const SizedBox(width: 8),
+              _CompactActionButton(
+                label: l(context, '查看详情', 'Details'),
+                icon: Icons.open_in_full_outlined,
+                onPressed: () => _openWriteStreamPreview(
+                  context,
+                  controller: controller,
+                  workspace: workspace,
+                  path: path,
+                  initialContent: content,
+                  messageId: attachment['messageID'] as String?,
+                  partId: attachment['partID'] as String?,
+                  contentKey: attachment['contentKey'] as String?,
+                  previewKind: previewKind,
+                  previewPhase: previewPhase,
+                  onInsertPromptReference: onInsertPromptReference,
+                  onSendPromptReference: onSendPromptReference,
+                ),
+              ),
+            ],
+          ),
+          if (inline && content.isNotEmpty) ...[
+            const SizedBox(height: 8),
+            ConstrainedBox(
+              constraints: const BoxConstraints(maxHeight: 260),
+              child: _WriteStreamPreviewBody(
+                path: path,
+                content: content,
+                streaming: isRunning,
+                sourceOnly: isEditPreview || _pathLooksHtmlFile(path),
+                workspace: workspace,
+                controller: controller,
+                onInsertPromptReference: onInsertPromptReference,
+                onSendPromptReference: onSendPromptReference,
+              ),
+            ),
+          ],
         ],
       ),
     );
