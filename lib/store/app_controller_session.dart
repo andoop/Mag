@@ -228,8 +228,8 @@ extension AppControllerSession on AppController {
     return picked;
   }
 
-  /// 供项目首页：已保存的工作区按最近打开时间排序，最多 [limit] 条。
-  Future<List<WorkspaceInfo>> workspacesForHome({int limit = 5}) async {
+  /// 供项目首页：已保存的工作区按最近打开时间排序；[limit] 为空时返回全部。
+  Future<List<WorkspaceInfo>> workspacesForHome({int? limit}) async {
     try {
       await initialize();
     } catch (_) {
@@ -246,7 +246,7 @@ extension AppControllerSession on AppController {
     }
 
     final sorted = [...all]..sort((a, b) => rank(b).compareTo(rank(a)));
-    return sorted.take(limit).toList();
+    return limit == null ? sorted : sorted.take(limit).toList();
   }
 
   void _cancelPendingPartDeltas() {

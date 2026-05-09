@@ -109,50 +109,63 @@ class _BrowserAttachmentTile extends StatelessWidget {
     );
     return Container(
       width: double.infinity,
-      padding: const EdgeInsets.all(12),
-      decoration: _panelDecoration(context,
-          background: oc.selectedFill, radius: 14, elevated: false),
+      padding: const EdgeInsets.fromLTRB(10, 9, 10, 10),
+      decoration: BoxDecoration(
+        color: oc.composerOptionBg,
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(color: oc.softBorderColor),
+      ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           Row(
             children: [
               Container(
-                width: 32,
-                height: 32,
+                width: 24,
+                height: 24,
+                alignment: Alignment.center,
                 decoration: BoxDecoration(
-                  color: context.oc.panelBackground,
-                  borderRadius: BorderRadius.circular(10),
-                  border: Border.fromBorderSide(
-                      BorderSide(color: context.oc.borderColor)),
+                  color:
+                      oc.accent.withOpacity(context.isDarkMode ? 0.14 : 0.08),
+                  borderRadius: BorderRadius.circular(8),
                 ),
-                child: const Icon(Icons.web, size: 18),
+                child: Icon(Icons.language_rounded, size: 15, color: oc.accent),
               ),
-              const SizedBox(width: 10),
+              const SizedBox(width: 8),
               Expanded(
-                  child: Text(
-                title,
-                style: const TextStyle(fontWeight: FontWeight.bold),
-                maxLines: 1,
-                overflow: TextOverflow.ellipsis,
-              )),
-            ],
-          ),
-          const SizedBox(height: 4),
-          Text(path,
-              style: Theme.of(context)
-                  .textTheme
-                  .bodySmall
-                  ?.copyWith(color: context.oc.foregroundMuted),
-              maxLines: 2,
-              overflow: TextOverflow.ellipsis),
-          const SizedBox(height: 8),
-          Wrap(
-            spacing: 6,
-            runSpacing: 6,
-            children: [
-              _CompactActionButton(
-                label: l(context, '打开网页', 'Open page'),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      title,
+                      style: Theme.of(context).textTheme.labelSmall?.copyWith(
+                            color: oc.foreground,
+                            fontSize: 12,
+                            fontWeight: FontWeight.w700,
+                          ),
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                    ),
+                    const SizedBox(height: 2),
+                    Text(
+                      path,
+                      style: Theme.of(context).textTheme.labelSmall?.copyWith(
+                            color: oc.foregroundHint,
+                            fontSize: 10.5,
+                            fontFamily: 'monospace',
+                          ),
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                    ),
+                  ],
+                ),
+              ),
+              const SizedBox(width: 8),
+              _CompactIconButton(
+                tooltip: l(context, '打开网页', 'Open page'),
+                icon: Icons.open_in_new_rounded,
+                small: true,
+                quiet: true,
                 onPressed: () => _openWebPreview(
                   context,
                   title: title,
@@ -160,8 +173,11 @@ class _BrowserAttachmentTile extends StatelessWidget {
                   url: previewUrl.toString(),
                 ),
               ),
-              _CompactActionButton(
-                label: l(context, '复制链接', 'Copy link'),
+              _CompactIconButton(
+                tooltip: l(context, '复制链接', 'Copy link'),
+                icon: Icons.link_rounded,
+                small: true,
+                quiet: true,
                 onPressed: () => _copyText(
                   context,
                   previewUrl.toString(),
@@ -241,8 +257,8 @@ class _PdfAttachmentTile extends StatelessWidget {
             decoration: BoxDecoration(
               color: context.oc.panelBackground,
               borderRadius: BorderRadius.circular(10),
-              border:
-                  Border.fromBorderSide(BorderSide(color: context.oc.borderColor)),
+              border: Border.fromBorderSide(
+                  BorderSide(color: context.oc.borderColor)),
             ),
             child: const Icon(Icons.picture_as_pdf, size: 18),
           ),

@@ -129,7 +129,7 @@ class OcColors extends ThemeExtension<OcColors> {
     borderColor: Color(0x20FFFFFF),
     softBorderColor: Color(0x14FFFFFF),
     agentBubble: Color(0xFF1C1C1E),
-    userBubble: Color(0xFF052E16),
+    userBubble: Color(0xFF1E293B),
     foreground: Color(0xDEFFFFFF),
     foregroundMuted: Color(0x8AFFFFFF),
     foregroundHint: Color(0x73FFFFFF),

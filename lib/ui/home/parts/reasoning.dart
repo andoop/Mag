@@ -354,6 +354,7 @@ class _ReasoningPartTileState extends State<_ReasoningPartTile> {
             child: Padding(
               padding: const EdgeInsets.only(top: 12),
               child: _ReasoningDetailsPanel(
+                onToggle: () => setState(() => _detailsOpen = !_detailsOpen),
                 onCollapse: () => setState(() => _detailsOpen = false),
                 child: widget.streaming
                     ? _buildReasoningStreaming(context)
@@ -381,7 +382,7 @@ class _ReasoningDetailsHost extends StatefulWidget {
 }
 
 class _ReasoningDetailsHostState extends State<_ReasoningDetailsHost> {
-  static const _duration = Duration(milliseconds: 180);
+  static const _duration = Duration(milliseconds: 240);
 
   bool _renderChild = false;
   Timer? _removeTimer;
@@ -422,7 +423,7 @@ class _ReasoningDetailsHostState extends State<_ReasoningDetailsHost> {
     return TweenAnimationBuilder<double>(
       tween: Tween<double>(end: widget.open ? 1 : 0),
       duration: _duration,
-      curve: Curves.easeOutCubic,
+      curve: Curves.easeInOutCubic,
       builder: (context, value, child) {
         return ClipRect(
           child: Align(
@@ -446,10 +447,12 @@ class _ReasoningDetailsHostState extends State<_ReasoningDetailsHost> {
 class _ReasoningDetailsPanel extends StatefulWidget {
   const _ReasoningDetailsPanel({
     required this.child,
+    required this.onToggle,
     required this.onCollapse,
   });
 
   final Widget child;
+  final VoidCallback onToggle;
   final VoidCallback onCollapse;
 
   @override
@@ -458,11 +461,105 @@ class _ReasoningDetailsPanel extends StatefulWidget {
 
 class _ReasoningDetailsPanelState extends State<_ReasoningDetailsPanel> {
   late final ScrollController _scrollController = ScrollController();
+  bool _stickToBottom = true;
+  bool _showJumpToBottom = false;
+
+  @override
+  void initState() {
+    super.initState();
+    _scrollController.addListener(_syncJumpToBottomVisibility);
+    _scheduleScrollToBottom(animated: false);
+  }
+
+  @override
+  void didUpdateWidget(covariant _ReasoningDetailsPanel oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (_stickToBottom) {
+      _scheduleScrollToBottom();
+    } else {
+      _scheduleJumpToBottomVisibilitySync();
+    }
+  }
 
   @override
   void dispose() {
+    _scrollController.removeListener(_syncJumpToBottomVisibility);
     _scrollController.dispose();
     super.dispose();
+  }
+
+  bool get _isNearBottom {
+    if (!_scrollController.hasClients) return true;
+    final position = _scrollController.position;
+    return position.maxScrollExtent - position.pixels <= 24;
+  }
+
+  void _scheduleScrollToBottom({bool animated = true}) {
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted || !_scrollController.hasClients) return;
+      final target = _scrollController.position.maxScrollExtent;
+      if (target <= 0) {
+        _setShowJumpToBottom(false);
+        return;
+      }
+      if (animated) {
+        _scrollController.animateTo(
+          target,
+          duration: const Duration(milliseconds: 160),
+          curve: Curves.easeOutCubic,
+        );
+      } else {
+        _scrollController.jumpTo(target);
+      }
+      _setShowJumpToBottom(false);
+    });
+  }
+
+  void _scheduleJumpToBottomVisibilitySync() {
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted) return;
+      _syncJumpToBottomVisibility();
+    });
+  }
+
+  void _syncJumpToBottomVisibility() {
+    if (!mounted) return;
+    _setShowJumpToBottom(!_stickToBottom && !_isNearBottom);
+  }
+
+  void _setShowJumpToBottom(bool value) {
+    if (_showJumpToBottom == value) return;
+    setState(() => _showJumpToBottom = value);
+  }
+
+  bool _handleScrollNotification(ScrollNotification notification) {
+    if (notification is UserScrollNotification ||
+        (notification is ScrollUpdateNotification &&
+            notification.dragDetails != null)) {
+      if (_stickToBottom && !_isNearBottom) {
+        setState(() {
+          _stickToBottom = false;
+          _showJumpToBottom = true;
+        });
+      } else {
+        _syncJumpToBottomVisibility();
+      }
+    }
+    if (notification is ScrollEndNotification && _isNearBottom) {
+      setState(() {
+        _stickToBottom = true;
+        _showJumpToBottom = false;
+      });
+    }
+    return false;
+  }
+
+  void _jumpToBottom() {
+    setState(() {
+      _stickToBottom = true;
+      _showJumpToBottom = false;
+    });
+    _scheduleScrollToBottom();
   }
 
   @override
@@ -485,12 +582,19 @@ class _ReasoningDetailsPanelState extends State<_ReasoningDetailsPanel> {
             child: Row(
               children: [
                 Expanded(
-                  child: Text(
-                    l(context, '思考过程', 'Reasoning details'),
-                    style: Theme.of(context).textTheme.labelSmall?.copyWith(
-                          color: oc.foregroundMuted,
-                          fontWeight: FontWeight.w700,
-                        ),
+                  child: InkWell(
+                    onTap: widget.onToggle,
+                    borderRadius: BorderRadius.circular(8),
+                    child: Padding(
+                      padding: const EdgeInsets.symmetric(vertical: 5),
+                      child: Text(
+                        l(context, '思考过程', 'Reasoning details'),
+                        style: Theme.of(context).textTheme.labelSmall?.copyWith(
+                              color: oc.foregroundMuted,
+                              fontWeight: FontWeight.w700,
+                            ),
+                      ),
+                    ),
                   ),
                 ),
                 InkWell(
@@ -525,15 +629,32 @@ class _ReasoningDetailsPanelState extends State<_ReasoningDetailsPanel> {
           ),
           Divider(height: 1, thickness: 1, color: oc.softBorderColor),
           Flexible(
-            child: Scrollbar(
-              controller: _scrollController,
-              thumbVisibility: true,
-              child: SingleChildScrollView(
-                controller: _scrollController,
-                primary: false,
-                padding: const EdgeInsets.fromLTRB(12, 10, 12, 12),
-                child: widget.child,
-              ),
+            child: Stack(
+              alignment: Alignment.bottomCenter,
+              children: [
+                NotificationListener<ScrollNotification>(
+                  onNotification: _handleScrollNotification,
+                  child: Scrollbar(
+                    controller: _scrollController,
+                    thumbVisibility: true,
+                    child: SingleChildScrollView(
+                      controller: _scrollController,
+                      primary: false,
+                      padding: const EdgeInsets.fromLTRB(12, 10, 12, 38),
+                      child: widget.child,
+                    ),
+                  ),
+                ),
+                _FloatingPillAction(
+                  visible: _showJumpToBottom,
+                  icon: Icons.keyboard_arrow_down_rounded,
+                  label: l(context, '到底部', 'Bottom'),
+                  onPressed: _jumpToBottom,
+                ),
+                _QuickCollapseButton(
+                  onPressed: widget.onCollapse,
+                ),
+              ],
             ),
           ),
         ],

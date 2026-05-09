@@ -1171,7 +1171,10 @@ extension SessionEnginePrompt on SessionEngine {
       _debugLog('prompt', 'cancelled session=${session.id}');
       // Cleanup incomplete tool parts (mirrors mag processor cleanup)
       await _cleanupIncompleteToolParts(
-          workspace: workspace, sessionId: session.id);
+        workspace: workspace,
+        sessionId: session.id,
+        cancelled: true,
+      );
       rethrow;
     } catch (error) {
       _debugLog('prompt', 'error: $error');
@@ -1204,6 +1207,7 @@ extension SessionEnginePrompt on SessionEngine {
   Future<void> _cleanupIncompleteToolParts({
     required WorkspaceInfo workspace,
     required String sessionId,
+    bool cancelled = false,
   }) async {
     try {
       final parts = await database.listPartsForSession(sessionId);
@@ -1214,8 +1218,19 @@ extension SessionEnginePrompt on SessionEngine {
         final status = state['status'] as String?;
         if (status == ToolStatus.completed.name ||
             status == ToolStatus.error.name) continue;
-        state['status'] = ToolStatus.error.name;
-        state['error'] = 'Tool execution aborted';
+        final metadata =
+            Map<String, dynamic>.from(state['metadata'] as Map? ?? const {});
+        if (cancelled) {
+          state['status'] = ToolStatus.error.name;
+          state['error'] = 'Tool execution stopped';
+          state['metadata'] = {
+            ...metadata,
+            'cancelled': true,
+          };
+        } else {
+          state['status'] = ToolStatus.error.name;
+          state['error'] = 'Tool execution aborted';
+        }
         final updated = MessagePart(
           id: part.id,
           sessionId: part.sessionId,

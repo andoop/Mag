@@ -490,61 +490,83 @@ class _QuestionToolPartState extends State<_QuestionToolPart> {
                     rawOutput: widget.rawOutput,
                   ),
                 ),
-                Icon(
-                  expanded ? Icons.expand_less : Icons.expand_more,
-                  size: 16,
-                  color: oc.foregroundHint,
+                AnimatedRotation(
+                  turns: expanded ? 0.5 : 0,
+                  duration: const Duration(milliseconds: 180),
+                  curve: Curves.easeInOutCubic,
+                  child: Icon(
+                    Icons.expand_more,
+                    size: 16,
+                    color: oc.foregroundHint,
+                  ),
                 ),
               ],
             ),
           ),
-          if (expanded) ...[
-            if (completed) ...[
-              const SizedBox(height: 8),
-              ...List.generate(widget.questions.length, (i) {
-                final q = widget.questions[i];
-                final text = q['question'] as String? ?? '';
-                final ans =
-                    i < widget.answers.length ? widget.answers[i] : <String>[];
-                final line = ans.isEmpty ? noneLabel : ans.join(', ');
-                return Padding(
-                  padding: const EdgeInsets.only(bottom: 10),
+          _SmoothExpansion(
+            open: expanded,
+            child: Stack(
+              children: [
+                Padding(
+                  padding: const EdgeInsets.only(bottom: 30),
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
-                      Text(
-                        text,
-                        style: TextStyle(
-                          fontSize: 13,
-                          height: 1.35,
-                          fontWeight: FontWeight.w600,
-                          color: oc.foreground,
+                      if (completed) ...[
+                        const SizedBox(height: 8),
+                        ...List.generate(widget.questions.length, (i) {
+                          final q = widget.questions[i];
+                          final text = q['question'] as String? ?? '';
+                          final ans = i < widget.answers.length
+                              ? widget.answers[i]
+                              : <String>[];
+                          final line = ans.isEmpty ? noneLabel : ans.join(', ');
+                          return Padding(
+                            padding: const EdgeInsets.only(bottom: 10),
+                            child: Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                Text(
+                                  text,
+                                  style: TextStyle(
+                                    fontSize: 13,
+                                    height: 1.35,
+                                    fontWeight: FontWeight.w600,
+                                    color: oc.foreground,
+                                  ),
+                                ),
+                                const SizedBox(height: 4),
+                                Text(
+                                  line,
+                                  style: TextStyle(
+                                    fontSize: 12.5,
+                                    height: 1.35,
+                                    color: oc.foregroundMuted,
+                                  ),
+                                ),
+                              ],
+                            ),
+                          );
+                        }),
+                      ] else if (isRunning) ...[
+                        const SizedBox(height: 8),
+                        Text(
+                          l(context, '等待你在面板中作答…', 'Waiting for your answers…'),
+                          style: Theme.of(context)
+                              .textTheme
+                              .labelSmall
+                              ?.copyWith(color: oc.foregroundHint, height: 1.2),
                         ),
-                      ),
-                      const SizedBox(height: 4),
-                      Text(
-                        line,
-                        style: TextStyle(
-                          fontSize: 12.5,
-                          height: 1.35,
-                          color: oc.foregroundMuted,
-                        ),
-                      ),
+                      ],
                     ],
                   ),
-                );
-              }),
-            ] else if (isRunning) ...[
-              const SizedBox(height: 8),
-              Text(
-                l(context, '等待你在面板中作答…', 'Waiting for your answers…'),
-                style: Theme.of(context)
-                    .textTheme
-                    .labelSmall
-                    ?.copyWith(color: oc.foregroundHint, height: 1.2),
-              ),
-            ],
-          ],
+                ),
+                _QuickCollapseButton(
+                  onPressed: () => setState(() => _expanded = false),
+                ),
+              ],
+            ),
+          ),
         ],
       ),
     );

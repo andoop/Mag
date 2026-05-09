@@ -489,49 +489,18 @@ class _WriteStreamPreviewBodyState extends State<_WriteStreamPreviewBody> {
             thumbVisibility: _showJumpToBottom,
             child: SingleChildScrollView(
               controller: _scrollController,
-              child: child,
-            ),
-          ),
-        ),
-        Positioned(
-          right: 8,
-          bottom: 8,
-          child: IgnorePointer(
-            ignoring: !_showJumpToBottom,
-            child: AnimatedOpacity(
-              opacity: _showJumpToBottom ? 1 : 0,
-              duration: const Duration(milliseconds: 140),
-              curve: Curves.easeOutCubic,
-              child: DecoratedBox(
-                decoration: BoxDecoration(
-                  color: context.oc.panelBackground.withOpacity(0.92),
-                  borderRadius: BorderRadius.circular(999),
-                  border: Border.fromBorderSide(
-                    BorderSide(color: context.oc.borderColor),
-                  ),
-                  boxShadow: [
-                    BoxShadow(
-                      color: Colors.black.withOpacity(0.08),
-                      blurRadius: 10,
-                      offset: const Offset(0, 2),
-                    ),
-                  ],
-                ),
-                child: IconButton(
-                  tooltip: l(context, '滚动到底部', 'Scroll to bottom'),
-                  icon: const Icon(Icons.keyboard_arrow_down),
-                  color: context.oc.foregroundMuted,
-                  iconSize: 18,
-                  constraints:
-                      const BoxConstraints.tightFor(width: 32, height: 28),
-                  visualDensity: VisualDensity.compact,
-                  padding: EdgeInsets.zero,
-                  splashRadius: 16,
-                  onPressed: _scrollToBottom,
-                ),
+              child: Padding(
+                padding: const EdgeInsets.only(bottom: 36),
+                child: child,
               ),
             ),
           ),
+        ),
+        _FloatingPillAction(
+          visible: _showJumpToBottom,
+          icon: Icons.keyboard_arrow_down_rounded,
+          label: l(context, '到底部', 'Bottom'),
+          onPressed: _scrollToBottom,
         ),
       ],
     );

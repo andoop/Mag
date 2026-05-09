@@ -174,6 +174,195 @@ class _CompactIconButton extends StatelessWidget {
   }
 }
 
+class _SmoothExpansion extends StatefulWidget {
+  const _SmoothExpansion({
+    required this.open,
+    required this.child,
+  });
+
+  static const duration = Duration(milliseconds: 240);
+  static const curve = Curves.easeInOutCubic;
+
+  final bool open;
+  final Widget child;
+
+  @override
+  State<_SmoothExpansion> createState() => _SmoothExpansionState();
+}
+
+class _SmoothExpansionState extends State<_SmoothExpansion>
+    with SingleTickerProviderStateMixin {
+  late final AnimationController _controller;
+  late final Animation<double> _animation;
+  bool _renderChild = false;
+  Timer? _removeTimer;
+
+  @override
+  void initState() {
+    super.initState();
+    _renderChild = widget.open;
+    _controller = AnimationController(
+      vsync: this,
+      duration: _SmoothExpansion.duration,
+      value: widget.open ? 1 : 0,
+    );
+    _animation = CurvedAnimation(
+      parent: _controller,
+      curve: _SmoothExpansion.curve,
+      reverseCurve: Curves.easeInCubic,
+    );
+  }
+
+  @override
+  void didUpdateWidget(covariant _SmoothExpansion oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (widget.open) {
+      _removeTimer?.cancel();
+      _removeTimer = null;
+      if (!_renderChild) setState(() => _renderChild = true);
+      _controller.forward();
+      return;
+    }
+    if (oldWidget.open && !widget.open) {
+      _removeTimer?.cancel();
+      _controller.reverse();
+      _removeTimer = Timer(_SmoothExpansion.duration, () {
+        if (!mounted || widget.open) return;
+        setState(() => _renderChild = false);
+      });
+    }
+  }
+
+  @override
+  void dispose() {
+    _removeTimer?.cancel();
+    _controller.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    if (!_renderChild && !widget.open) return const SizedBox.shrink();
+    return AnimatedBuilder(
+      animation: _animation,
+      builder: (context, child) {
+        final t = _animation.value.clamp(0.0, 1.0);
+        return ClipRect(
+          child: Align(
+            alignment: Alignment.topLeft,
+            heightFactor: t,
+            child: IgnorePointer(
+              ignoring: !widget.open,
+              child: Opacity(opacity: t, child: child),
+            ),
+          ),
+        );
+      },
+      child: widget.child,
+    );
+  }
+}
+
+class _FloatingPillAction extends StatelessWidget {
+  const _FloatingPillAction({
+    required this.visible,
+    required this.icon,
+    required this.label,
+    required this.onPressed,
+    this.alignment = Alignment.bottomCenter,
+    this.compact = false,
+  });
+
+  final bool visible;
+  final IconData icon;
+  final String label;
+  final VoidCallback onPressed;
+  final Alignment alignment;
+  final bool compact;
+
+  @override
+  Widget build(BuildContext context) {
+    final oc = context.oc;
+    return Positioned.fill(
+      child: IgnorePointer(
+        ignoring: !visible,
+        child: Align(
+          alignment: alignment,
+          child: AnimatedScale(
+            scale: visible ? 1 : 0.92,
+            duration: const Duration(milliseconds: 140),
+            curve: Curves.easeOutCubic,
+            child: AnimatedOpacity(
+              opacity: visible ? 1 : 0,
+              duration: const Duration(milliseconds: 140),
+              curve: Curves.easeOutCubic,
+              child: Padding(
+                padding: const EdgeInsets.all(6),
+                child: Tooltip(
+                  message: label,
+                  child: Material(
+                    color: oc.bgDeep.withOpacity(0.92),
+                    borderRadius: BorderRadius.circular(999),
+                    child: InkWell(
+                      onTap: onPressed,
+                      borderRadius: BorderRadius.circular(999),
+                      child: Padding(
+                        padding: compact
+                            ? const EdgeInsets.all(6)
+                            : const EdgeInsets.symmetric(
+                                horizontal: 10,
+                                vertical: 6,
+                              ),
+                        child: Row(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            Icon(icon, size: 16, color: oc.foregroundMuted),
+                            if (!compact) ...[
+                              const SizedBox(width: 2),
+                              Text(
+                                label,
+                                style: Theme.of(context)
+                                    .textTheme
+                                    .labelSmall
+                                    ?.copyWith(
+                                      color: oc.foregroundMuted,
+                                      fontWeight: FontWeight.w700,
+                                    ),
+                              ),
+                            ],
+                          ],
+                        ),
+                      ),
+                    ),
+                  ),
+                ),
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _QuickCollapseButton extends StatelessWidget {
+  const _QuickCollapseButton({required this.onPressed});
+
+  final VoidCallback onPressed;
+
+  @override
+  Widget build(BuildContext context) {
+    return _FloatingPillAction(
+      visible: true,
+      icon: Icons.keyboard_arrow_up_rounded,
+      label: l(context, '收起', 'Collapse'),
+      onPressed: onPressed,
+      alignment: Alignment.bottomRight,
+      compact: true,
+    );
+  }
+}
+
 String _toolStatusLabel(BuildContext context, String status) {
   switch (status) {
     case 'running':

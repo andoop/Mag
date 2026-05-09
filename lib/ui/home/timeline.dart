@@ -91,6 +91,24 @@ List<MessagePart> _visibleTimelineParts(SessionMessageBundle bundle) {
   return List<MessagePart>.unmodifiable(primary);
 }
 
+bool _shouldStreamTimelinePart(
+  List<MessagePart> visibleParts,
+  int index,
+  bool streamAssistantContent,
+) {
+  if (!streamAssistantContent) return false;
+  final part = visibleParts[index];
+  if (part.type != PartType.reasoning) return true;
+
+  // Reasoning is only "thinking" while it is the active tail. Once answer text,
+  // tool calls, or another visible part appears after it, the thinking phase has
+  // finished even if the assistant turn is still streaming.
+  for (var i = index + 1; i < visibleParts.length; i++) {
+    if (visibleParts[i].type != PartType.stepStart) return false;
+  }
+  return true;
+}
+
 String _formatTimelineTimestamp(int ms) {
   final dt = DateTime.fromMillisecondsSinceEpoch(ms);
   final hh = dt.hour.toString().padLeft(2, '0');
@@ -189,6 +207,9 @@ extension _HomePageTimeline on _HomePageState {
       }
       count += renderedEntries.length;
     }
+    if (state.error != null && !state.isBusy) {
+      count += 1;
+    }
     if (showGlobalRunningIndicator) {
       count += 2;
     }
@@ -274,6 +295,13 @@ extension _HomePageTimeline on _HomePageState {
         );
       }
       cursor = messageEnd;
+    }
+    if (state.error != null && !state.isBusy) {
+      if (index == cursor++) {
+        return _TimelineErrorCard(
+          message: state.error!,
+        );
+      }
     }
     if (state.isBusy && renderedEntries.isEmpty) {
       if (index == cursor++) {
@@ -456,12 +484,18 @@ class _AssistantTurnBubble extends StatelessWidget {
     for (final bundle in bundles) {
       final streamAssistantContent =
           streamingAssistantMessageId == bundle.message.id;
-      for (final part in _visibleTimelineParts(bundle)) {
+      final visibleParts = _visibleTimelineParts(bundle);
+      for (var i = 0; i < visibleParts.length; i++) {
+        final part = visibleParts[i];
         visibleEntries.add(
           _TurnPartEntry(
             bundle: bundle,
             part: part,
-            streamAssistantContent: streamAssistantContent,
+            streamAssistantContent: _shouldStreamTimelinePart(
+              visibleParts,
+              i,
+              streamAssistantContent,
+            ),
           ),
         );
       }
@@ -719,64 +753,74 @@ class _ContextToolGroupTileState extends State<_ContextToolGroupTile> {
                     ),
                   ),
                   const SizedBox(width: 6),
-                  Icon(
-                    _expanded ? Icons.expand_less : Icons.expand_more,
-                    color: oc.foregroundMuted,
-                    size: 20,
+                  AnimatedRotation(
+                    turns: _expanded ? 0.5 : 0,
+                    duration: const Duration(milliseconds: 180),
+                    curve: Curves.easeInOutCubic,
+                    child: Icon(
+                      Icons.expand_more,
+                      color: oc.foregroundMuted,
+                      size: 20,
+                    ),
                   ),
                 ],
               ),
             ),
           ),
-          AnimatedSize(
-            duration: const Duration(milliseconds: 180),
-            curve: Curves.easeOutCubic,
-            alignment: Alignment.topCenter,
-            child: _expanded
-                ? Column(
-                    crossAxisAlignment: CrossAxisAlignment.stretch,
-                    children: [
-                      Divider(
-                          height: 1, thickness: 1, color: oc.softBorderColor),
-                      Padding(
-                        padding: const EdgeInsets.fromLTRB(12, 10, 12, 12),
-                        child: _DeferredHeavyContent(
-                          cacheKey: widget.entries
-                              .map((entry) => entry.part.id)
-                              .join('|'),
-                          builder: (context) => Column(
-                            crossAxisAlignment: CrossAxisAlignment.stretch,
-                            children: [
-                              for (var i = 0;
-                                  i < widget.entries.length;
-                                  i++) ...[
-                                if (i > 0) const SizedBox(height: 8),
-                                _CachedPartTile(
-                                  key: ValueKey<String>(
-                                    'context-part-${widget.entries[i].part.id}',
-                                  ),
-                                  part: widget.entries[i].part,
-                                  message: widget.entries[i].bundle.message,
-                                  controller: widget.controller,
-                                  workspace: widget.workspace,
-                                  serverUri: widget.serverUri,
-                                  streamAssistantContent:
-                                      widget.entries[i].streamAssistantContent,
-                                  turnDurationMs: null,
-                                  showAssistantTextMeta: false,
-                                  onInsertPromptReference:
-                                      widget.onInsertPromptReference,
-                                  onSendPromptReference:
-                                      widget.onSendPromptReference,
+          _SmoothExpansion(
+            open: _expanded,
+            child: Stack(
+              children: [
+                Column(
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
+                  children: [
+                    Divider(height: 1, thickness: 1, color: oc.softBorderColor),
+                    Padding(
+                      padding: const EdgeInsets.fromLTRB(12, 10, 12, 38),
+                      child: _DeferredHeavyContent(
+                        cacheKey: widget.entries
+                            .map((entry) => entry.part.id)
+                            .join('|'),
+                        builder: (context) => Column(
+                          crossAxisAlignment: CrossAxisAlignment.stretch,
+                          children: [
+                            for (var i = 0; i < widget.entries.length; i++) ...[
+                              if (i > 0) const SizedBox(height: 8),
+                              _CachedPartTile(
+                                key: ValueKey<String>(
+                                  'context-part-${widget.entries[i].part.id}',
                                 ),
-                              ],
+                                part: widget.entries[i].part,
+                                message: widget.entries[i].bundle.message,
+                                controller: widget.controller,
+                                workspace: widget.workspace,
+                                serverUri: widget.serverUri,
+                                streamAssistantContent:
+                                    widget.entries[i].streamAssistantContent,
+                                turnDurationMs: null,
+                                showAssistantTextMeta: false,
+                                onInsertPromptReference:
+                                    widget.onInsertPromptReference,
+                                onSendPromptReference:
+                                    widget.onSendPromptReference,
+                              ),
                             ],
-                          ),
+                          ],
                         ),
                       ),
-                    ],
-                  )
-                : const SizedBox.shrink(),
+                    ),
+                  ],
+                ),
+                _QuickCollapseButton(
+                  onPressed: () {
+                    setState(() {
+                      _userToggled = true;
+                      _expanded = false;
+                    });
+                  },
+                ),
+              ],
+            ),
           ),
         ],
       ),
@@ -997,21 +1041,25 @@ class _MessageBubbleState extends State<_MessageBubble> {
                         style: const TextStyle(fontSize: 15, height: 1.45),
                       ),
                     ],
-                    for (final part in primaryParts) ...[
+                    for (var i = 0; i < primaryParts.length; i++) ...[
                       const SizedBox(height: 10),
                       _CachedPartTile(
-                        key: ValueKey<String>('message-part-${part.id}'),
-                        part: part,
+                        key: ValueKey<String>(
+                            'message-part-${primaryParts[i].id}'),
+                        part: primaryParts[i],
                         message: bundle.message,
                         controller: widget.controller,
                         workspace: widget.controller.state.workspace,
                         serverUri: widget.controller.state.serverUri,
-                        streamAssistantContent:
-                            widget.isStreamingAssistantMessage,
+                        streamAssistantContent: _shouldStreamTimelinePart(
+                          primaryParts,
+                          i,
+                          widget.isStreamingAssistantMessage,
+                        ),
                         turnDurationMs: turnDurationMs,
                         showAssistantTextMeta: !isUser &&
                             lastPlainTextPart != null &&
-                            identical(part, lastPlainTextPart),
+                            identical(primaryParts[i], lastPlainTextPart),
                         onInsertPromptReference: widget.onInsertPromptReference,
                         onSendPromptReference: widget.onSendPromptReference,
                       ),
@@ -1482,6 +1530,105 @@ class _RunningIndicator extends StatelessWidget {
             const SizedBox(width: 8),
             Text(l(context, '运行中', 'Running')),
           ],
+        ),
+      ),
+    );
+  }
+}
+
+class _TimelineErrorCard extends StatelessWidget {
+  const _TimelineErrorCard({
+    required this.message,
+  });
+
+  final String message;
+
+  String _title(BuildContext context) {
+    final lower = message.toLowerCase();
+    if (lower.contains('socketexception') ||
+        lower.contains('connection') ||
+        lower.contains('timed out') ||
+        lower.contains('timeout') ||
+        lower.contains('network') ||
+        lower.contains('failed host lookup')) {
+      return l(context, '连接中断', 'Connection interrupted');
+    }
+    if (lower.contains('cancel') ||
+        lower.contains('stopped') ||
+        lower.contains('aborted')) {
+      return l(context, '已停止', 'Stopped');
+    }
+    return l(context, '生成未完成', 'Generation did not finish');
+  }
+
+  String _detail(BuildContext context) {
+    final lower = message.toLowerCase();
+    if (lower.contains('socketexception') ||
+        lower.contains('connection') ||
+        lower.contains('timed out') ||
+        lower.contains('timeout') ||
+        lower.contains('network') ||
+        lower.contains('failed host lookup')) {
+      return l(context, '网络连接不稳定，稍后刷新或重新发送即可。',
+          'The network connection was interrupted. Refresh or try again.');
+    }
+    if (lower.contains('cancel') ||
+        lower.contains('stopped') ||
+        lower.contains('aborted')) {
+      return l(context, '本次生成已停止。', 'This generation was stopped.');
+    }
+    return l(context, '这次回复没有完成，可以重新发送或稍后再试。',
+        'This response did not finish. Try sending again later.');
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final oc = context.oc;
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 10),
+      child: Center(
+        child: ConstrainedBox(
+          constraints: const BoxConstraints(maxWidth: 560),
+          child: Container(
+            padding: const EdgeInsets.fromLTRB(12, 10, 10, 10),
+            decoration: BoxDecoration(
+              color: oc.mutedPanel.withOpacity(context.isDarkMode ? 0.58 : 0.8),
+              borderRadius: BorderRadius.circular(14),
+              border: Border.all(color: oc.softBorderColor),
+            ),
+            child: Row(
+              children: [
+                Icon(
+                  Icons.info_outline_rounded,
+                  size: 17,
+                  color: oc.foregroundHint,
+                ),
+                const SizedBox(width: 8),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        _title(context),
+                        style: Theme.of(context).textTheme.labelSmall?.copyWith(
+                              color: oc.foreground,
+                              fontWeight: FontWeight.w700,
+                            ),
+                      ),
+                      const SizedBox(height: 2),
+                      Text(
+                        _detail(context),
+                        style: Theme.of(context).textTheme.labelSmall?.copyWith(
+                              color: oc.foregroundMuted,
+                              height: 1.2,
+                            ),
+                      ),
+                    ],
+                  ),
+                ),
+              ],
+            ),
+          ),
         ),
       ),
     );

@@ -4,6 +4,7 @@ import '../core/models.dart';
 import '../platform/floating_window_bridge.dart';
 import '../store/app_controller.dart';
 import '../store/project_recents_store.dart';
+import 'home_page.dart';
 import 'i18n.dart';
 import 'oc_theme.dart';
 
@@ -26,17 +27,45 @@ class ProjectHomePage extends StatefulWidget {
 
 class _ProjectHomePageState extends State<ProjectHomePage> {
   late Future<_RecentProjectsLoad> _recentFuture;
+  final ScrollController _projectListController = ScrollController();
+  double _homeCollapseT = 0;
 
   @override
   void initState() {
     super.initState();
     _recentFuture = _loadRecents();
+    _projectListController.addListener(_syncHomeCollapse);
+  }
+
+  @override
+  void dispose() {
+    _projectListController.removeListener(_syncHomeCollapse);
+    _projectListController.dispose();
+    super.dispose();
+  }
+
+  double _lerp(double begin, double end, double t) {
+    return begin + (end - begin) * t;
+  }
+
+  void _syncHomeCollapse() {
+    if (!_projectListController.hasClients) return;
+    final position = _projectListController.position;
+    final canScroll = position.maxScrollExtent > 0;
+    final next = canScroll ? (position.pixels / 96).clamp(0.0, 1.0) : 0.0;
+    if ((next - _homeCollapseT).abs() < 0.01) return;
+    setState(() => _homeCollapseT = next);
   }
 
   Future<_RecentProjectsLoad> _loadRecents() async {
     final list = await widget.controller.workspacesForHome();
     final times = await ProjectRecentsStore.lastOpenedMap();
-    return _RecentProjectsLoad(list: list, times: times);
+    final sorted = [...list]..sort((a, b) {
+        final aTime = times[a.id] ?? a.createdAt;
+        final bTime = times[b.id] ?? b.createdAt;
+        return bTime.compareTo(aTime);
+      });
+    return _RecentProjectsLoad(list: sorted, times: times);
   }
 
   Future<void> _showCreateProjectDialog() async {
@@ -124,230 +153,213 @@ class _ProjectHomePageState extends State<ProjectHomePage> {
       animation: widget.controller,
       builder: (context, _) {
         return Scaffold(
-      backgroundColor: oc.pageBackground,
-      body: SafeArea(
-        child: Padding(
-          padding: const EdgeInsets.symmetric(horizontal: 20),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.stretch,
-            children: [
-              const SizedBox(height: 48),
-              Row(
-                mainAxisAlignment: MainAxisAlignment.end,
+          backgroundColor: oc.pageBackground,
+          body: SafeArea(
+            child: Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 20),
+              child: Stack(
+                clipBehavior: Clip.none,
                 children: [
-                  IconButton(
-                    tooltip: l(context, '切换主题', 'Toggle theme'),
-                    onPressed: () => widget.controller.toggleThemeMode(),
-                    icon: Icon(
-                      context.isDarkMode
-                          ? Icons.light_mode_outlined
-                          : Icons.dark_mode_outlined,
+                  Positioned(
+                    top: _lerp(48, 8, _homeCollapseT),
+                    right: 0,
+                    child: AnimatedOpacity(
+                      opacity: _lerp(1, 0.92, _homeCollapseT),
+                      duration: const Duration(milliseconds: 80),
+                      child: Row(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          IconButton(
+                            tooltip: l(context, '设置', 'Settings'),
+                            onPressed: () => openAppSettingsSheet(
+                              context,
+                              controller: widget.controller,
+                              modelConfig:
+                                  widget.controller.state.modelConfig ??
+                                      ModelConfig.defaults(),
+                            ),
+                            icon: const Icon(Icons.settings_outlined),
+                          ),
+                          IconButton(
+                            tooltip: l(context, '切换主题', 'Toggle theme'),
+                            onPressed: () =>
+                                widget.controller.toggleThemeMode(),
+                            icon: Icon(
+                              context.isDarkMode
+                                  ? Icons.light_mode_outlined
+                                  : Icons.dark_mode_outlined,
+                            ),
+                          ),
+                        ],
+                      ),
                     ),
                   ),
-                ],
-              ),
-              Text(
-                l(context, 'Mag', 'Mag'),
-                textAlign: TextAlign.center,
-                style: TextStyle(
-                  fontSize: 42,
-                  fontWeight: FontWeight.w800,
-                  letterSpacing: -1.2,
-                  color: oc.text.withOpacity(0.12),
-                ),
-              ),
-              const SizedBox(height: 8),
-              Text(
-                l(context, '本地 AI 工作区', 'Local AI workspace'),
-                textAlign: TextAlign.center,
-                style: TextStyle(
-                  fontSize: 14,
-                  fontWeight: FontWeight.w500,
-                  color: oc.muted,
-                ),
-              ),
-              if (widget.controller.state.serverUri != null) ...[
-                const SizedBox(height: 6),
-                Text(
-                  widget.controller.state.serverUri.toString(),
-                  textAlign: TextAlign.center,
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
-                  style: TextStyle(
-                    fontSize: 11,
-                    color: oc.muted.withOpacity(0.85),
-                  ),
-                ),
-              ],
-              const SizedBox(height: 36),
-              Expanded(
-                child: FutureBuilder<_RecentProjectsLoad>(
-                  future: _recentFuture,
-                  builder: (context, snap) {
-                    if (snap.hasError) {
-                      return Center(
-                        child: Column(
-                          mainAxisAlignment: MainAxisAlignment.center,
-                          children: [
-                            Text(
-                              l(context, '项目列表加载失败', 'Failed to load projects'),
-                              textAlign: TextAlign.center,
-                              style: TextStyle(
-                                color: oc.muted,
-                                fontSize: 14,
+                  Positioned(
+                    top: _lerp(96, 34, _homeCollapseT),
+                    left: 0,
+                    right: 0,
+                    child: IgnorePointer(
+                      ignoring: _homeCollapseT > 0.8,
+                      child: Opacity(
+                        opacity: (1 - _homeCollapseT).clamp(0.0, 1.0),
+                        child: Transform.translate(
+                          offset: Offset(0, -18 * _homeCollapseT),
+                          child: Column(
+                            children: [
+                              Text(
+                                l(context, 'Mag', 'Mag'),
+                                textAlign: TextAlign.center,
+                                style: TextStyle(
+                                  fontSize: 42,
+                                  fontWeight: FontWeight.w800,
+                                  letterSpacing: -1.2,
+                                  color: oc.text.withOpacity(0.12),
+                                ),
                               ),
-                            ),
-                            const SizedBox(height: 12),
-                            FilledButton(
-                              onPressed: () {
+                              const SizedBox(height: 8),
+                              Text(
+                                l(context, '本地 AI 工作区', 'Local AI workspace'),
+                                textAlign: TextAlign.center,
+                                style: TextStyle(
+                                  fontSize: 14,
+                                  fontWeight: FontWeight.w500,
+                                  color: oc.muted,
+                                ),
+                              ),
+                            ],
+                          ),
+                        ),
+                      ),
+                    ),
+                  ),
+                  Positioned(
+                    top: _lerp(202, 56, _homeCollapseT),
+                    left: 0,
+                    right: 0,
+                    bottom: 0,
+                    child: ColoredBox(
+                      color: oc.pageBackground,
+                      child: FutureBuilder<_RecentProjectsLoad>(
+                        future: _recentFuture,
+                        builder: (context, snap) {
+                          if (snap.hasError) {
+                            return _ProjectLoadError(
+                              onRetry: () {
                                 setState(() {
                                   _recentFuture = _loadRecents();
                                 });
                               },
-                              child: Text(l(context, '重试', 'Retry')),
-                            ),
-                          ],
-                        ),
-                      );
-                    }
-                    if (snap.connectionState == ConnectionState.waiting &&
-                        !snap.hasData) {
-                      return Center(
-                        child: Text(
-                          l(context, '加载中…', 'Loading…'),
-                          style: TextStyle(color: oc.muted, fontSize: 13),
-                        ),
-                      );
-                    }
-                    final data = snap.data;
-                    final list = data?.list ?? const <WorkspaceInfo>[];
-                    final times = data?.times ?? const <String, int>{};
-                    if (list.isEmpty) {
-                      return _EmptyProjects(
-                        onCreate: _showCreateProjectDialog,
-                      );
-                    }
-                    return Column(
-                      crossAxisAlignment: CrossAxisAlignment.stretch,
-                      children: [
-                        Row(
-                          children: [
-                            Expanded(
+                            );
+                          }
+                          if (snap.connectionState == ConnectionState.waiting &&
+                              !snap.hasData) {
+                            return Center(
                               child: Text(
-                                l(context, '最近项目', 'Recent projects'),
-                                style: TextStyle(
-                                  fontSize: 14,
-                                  fontWeight: FontWeight.w600,
-                                  color: oc.text,
-                                ),
+                                l(context, '加载中…', 'Loading…'),
+                                style: TextStyle(color: oc.muted, fontSize: 13),
                               ),
-                            ),
-                            TextButton.icon(
-                              onPressed: _showCreateProjectDialog,
-                              icon: const Icon(Icons.create_new_folder_rounded, size: 18),
-                              label: Text(l(context, '新建项目', 'New project')),
-                            ),
-                          ],
-                        ),
-                        const SizedBox(height: 8),
-                        Expanded(
-                          child: ListView.separated(
-                            itemCount: list.length,
-                            separatorBuilder: (_, __) =>
-                                const SizedBox(height: 6),
-                            itemBuilder: (context, i) {
-                              final w = list[i];
-                              return Material(
-                                color: oc.panelBackground,
-                                borderRadius: BorderRadius.circular(14),
-                                child: InkWell(
-                                  borderRadius: BorderRadius.circular(14),
-                                  onTap: () async {
-                                    await widget.controller.openSavedProject(w);
-                                    await _requestNotificationPermissionAfterProjectEnter();
-                                  },
-                                  child: Padding(
-                                    padding: const EdgeInsets.symmetric(
-                                      horizontal: 14,
-                                      vertical: 14,
-                                    ),
-                                    child: Row(
-                                      children: [
-                                        Expanded(
-                                          child: Text(
-                                            _displayPath(context, w.name),
-                                            style: TextStyle(
-                                              fontSize: 14,
-                                              fontWeight: FontWeight.w500,
-                                              color: oc.text,
-                                            ),
-                                          ),
-                                        ),
-                                        Text(
-                                          _relativeTime(
-                                            context,
-                                            times[w.id] ?? w.createdAt,
-                                          ),
-                                          style: TextStyle(
-                                            fontSize: 12,
-                                            color: oc.muted,
-                                          ),
-                                        ),
-                                        PopupMenuButton<String>(
-                                          tooltip: l(context, '项目操作', 'Project actions'),
-                                          onSelected: (value) async {
-                                            if (value == 'rename') {
-                                              await _showRenameProjectDialog(w);
-                                            } else if (value == 'delete') {
-                                              await _confirmDeleteProject(w);
-                                            }
-                                          },
-                                          itemBuilder: (context) => [
-                                            PopupMenuItem<String>(
-                                              value: 'rename',
-                                              child: Text(
-                                                l(context, '重命名', 'Rename'),
-                                              ),
-                                            ),
-                                            PopupMenuItem<String>(
-                                              value: 'delete',
-                                              child: Text(
-                                                l(context, '删除', 'Delete'),
-                                              ),
-                                            ),
-                                          ],
-                                        ),
-                                      ],
+                            );
+                          }
+                          final data = snap.data;
+                          final list = data?.list ?? const <WorkspaceInfo>[];
+                          final times = data?.times ?? const <String, int>{};
+                          if (list.isEmpty) {
+                            return _EmptyProjects(
+                              onCreate: _showCreateProjectDialog,
+                            );
+                          }
+                          return Column(
+                            crossAxisAlignment: CrossAxisAlignment.stretch,
+                            children: [
+                              Row(
+                                children: [
+                                  Expanded(
+                                    child: Text(
+                                      l(context, '项目列表', 'Projects'),
+                                      style: TextStyle(
+                                        fontSize: 14,
+                                        fontWeight: FontWeight.w600,
+                                        color: oc.text,
+                                      ),
                                     ),
                                   ),
+                                  FilledButton.icon(
+                                    onPressed: _showCreateProjectDialog,
+                                    icon: const Icon(
+                                      Icons.create_new_folder_rounded,
+                                      size: 17,
+                                    ),
+                                    label: Text(l(context, '新建', 'New')),
+                                    style: FilledButton.styleFrom(
+                                      backgroundColor: oc.sendButtonBg,
+                                      foregroundColor: oc.sendButtonFg,
+                                      visualDensity: VisualDensity.compact,
+                                      tapTargetSize:
+                                          MaterialTapTargetSize.shrinkWrap,
+                                      padding: const EdgeInsets.symmetric(
+                                        horizontal: 11,
+                                        vertical: 7,
+                                      ),
+                                    ),
+                                  ),
+                                ],
+                              ),
+                              const SizedBox(height: 8),
+                              Expanded(
+                                child: ListView.separated(
+                                  controller: _projectListController,
+                                  physics: const AlwaysScrollableScrollPhysics(
+                                    parent: BouncingScrollPhysics(),
+                                  ),
+                                  padding: const EdgeInsets.only(bottom: 8),
+                                  itemCount: list.length,
+                                  separatorBuilder: (_, __) =>
+                                      const SizedBox(height: 6),
+                                  itemBuilder: (context, i) {
+                                    final w = list[i];
+                                    final openedAt = times[w.id] ?? w.createdAt;
+                                    return _ProjectListTile(
+                                      displayName:
+                                          _displayPath(context, w.name),
+                                      openedLabel:
+                                          _relativeTime(context, openedAt),
+                                      onOpen: () async {
+                                        await widget.controller
+                                            .openSavedProject(w);
+                                        await _requestNotificationPermissionAfterProjectEnter();
+                                      },
+                                      onRename: () =>
+                                          _showRenameProjectDialog(w),
+                                      onDelete: () => _confirmDeleteProject(w),
+                                    );
+                                  },
                                 ),
-                              );
-                            },
-                          ),
-                        ),
-                      ],
-                    );
-                  },
-                ),
-              ),
-              const SizedBox(height: 12),
-              if (widget.controller.state.error != null)
-                Padding(
-                  padding: const EdgeInsets.only(bottom: 8),
-                  child: Text(
-                    widget.controller.state.error!,
-                    style: TextStyle(
-                      fontSize: 12,
-                      color: Colors.red.shade700,
+                              ),
+                            ],
+                          );
+                        },
+                      ),
                     ),
                   ),
-                ),
-              const SizedBox(height: 8),
-            ],
+                  if (widget.controller.state.error != null)
+                    Positioned(
+                      left: 0,
+                      right: 0,
+                      bottom: 8,
+                      child: Text(
+                        widget.controller.state.error!,
+                        textAlign: TextAlign.center,
+                        style: TextStyle(
+                          fontSize: 12,
+                          color: Colors.red.shade700,
+                        ),
+                      ),
+                    ),
+                ],
+              ),
+            ),
           ),
-        ),
-      ),
-    );
+        );
       },
     );
   }
@@ -377,6 +389,141 @@ class _ProjectHomePageState extends State<ProjectHomePage> {
       return l(context, '${diff.inDays} 天前', '${diff.inDays}d ago');
     }
     return '${dt.year}-${dt.month.toString().padLeft(2, '0')}-${dt.day.toString().padLeft(2, '0')}';
+  }
+}
+
+class _ProjectListTile extends StatelessWidget {
+  const _ProjectListTile({
+    required this.displayName,
+    required this.openedLabel,
+    required this.onOpen,
+    required this.onRename,
+    required this.onDelete,
+  });
+
+  final String displayName;
+  final String openedLabel;
+  final Future<void> Function() onOpen;
+  final Future<void> Function() onRename;
+  final Future<void> Function() onDelete;
+
+  @override
+  Widget build(BuildContext context) {
+    final oc = context.oc;
+    return Material(
+      color: oc.panelBackground,
+      borderRadius: BorderRadius.circular(14),
+      child: InkWell(
+        borderRadius: BorderRadius.circular(14),
+        onTap: onOpen,
+        child: Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 14),
+          child: Row(
+            children: [
+              Expanded(
+                child: Text(
+                  displayName,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: TextStyle(
+                    fontSize: 14,
+                    fontWeight: FontWeight.w500,
+                    color: oc.text,
+                  ),
+                ),
+              ),
+              const SizedBox(width: 8),
+              Text(
+                openedLabel,
+                style: TextStyle(
+                  fontSize: 12,
+                  color: oc.muted,
+                ),
+              ),
+              PopupMenuButton<String>(
+                tooltip: l(context, '项目操作', 'Project actions'),
+                icon: Icon(Icons.more_horiz_rounded, color: oc.muted),
+                color: oc.panelBackground,
+                elevation: 10,
+                position: PopupMenuPosition.under,
+                shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(14),
+                  side: BorderSide(color: oc.softBorderColor),
+                ),
+                onSelected: (value) async {
+                  if (value == 'rename') {
+                    await onRename();
+                  } else if (value == 'delete') {
+                    await onDelete();
+                  }
+                },
+                itemBuilder: (context) => [
+                  PopupMenuItem<String>(
+                    value: 'rename',
+                    child: Row(
+                      children: [
+                        Icon(Icons.drive_file_rename_outline_rounded,
+                            size: 18, color: oc.foregroundMuted),
+                        const SizedBox(width: 10),
+                        Text(l(context, '重命名', 'Rename')),
+                      ],
+                    ),
+                  ),
+                  PopupMenuItem<String>(
+                    value: 'delete',
+                    child: Row(
+                      children: [
+                        Icon(Icons.delete_outline_rounded,
+                            size: 18, color: Colors.red.shade600),
+                        const SizedBox(width: 10),
+                        Text(
+                          l(context, '删除', 'Delete'),
+                          style: TextStyle(color: Colors.red.shade600),
+                        ),
+                      ],
+                    ),
+                  ),
+                ],
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _ProjectLoadError extends StatelessWidget {
+  const _ProjectLoadError({required this.onRetry});
+
+  final VoidCallback onRetry;
+
+  @override
+  Widget build(BuildContext context) {
+    final oc = context.oc;
+    return Center(
+      child: Column(
+        mainAxisAlignment: MainAxisAlignment.center,
+        children: [
+          Icon(
+            Icons.error_outline_rounded,
+            size: 34,
+            color: oc.muted.withOpacity(0.75),
+          ),
+          const SizedBox(height: 10),
+          Text(
+            l(context, '项目列表加载失败', 'Failed to load projects'),
+            textAlign: TextAlign.center,
+            style: TextStyle(color: oc.muted, fontSize: 14),
+          ),
+          const SizedBox(height: 12),
+          FilledButton(
+            onPressed: onRetry,
+            child: Text(l(context, '重试', 'Retry')),
+          ),
+        ],
+      ),
+    );
   }
 }
 

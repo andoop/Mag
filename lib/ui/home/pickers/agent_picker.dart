@@ -3,7 +3,6 @@ part of '../../home_page.dart';
 // ignore_for_file: invalid_use_of_protected_member
 
 extension _HomePageAgentPicker on _HomePageState {
-
   Future<void> _openAgentPicker(BuildContext context) async {
     final state = widget.controller.state;
     if (state.agents.isEmpty) return;
@@ -101,9 +100,7 @@ extension _HomePageAgentPicker on _HomePageState {
                           child: Container(
                             padding: const EdgeInsets.all(14),
                             decoration: BoxDecoration(
-                              color: selected
-                                  ? oc.selectedFill
-                                  : oc.bgDeep,
+                              color: selected ? oc.selectedFill : oc.bgDeep,
                               borderRadius: BorderRadius.circular(16),
                               border: Border.all(
                                 color: selected
@@ -132,7 +129,8 @@ extension _HomePageAgentPicker on _HomePageState {
                                 const SizedBox(width: 12),
                                 Expanded(
                                   child: Column(
-                                    crossAxisAlignment: CrossAxisAlignment.start,
+                                    crossAxisAlignment:
+                                        CrossAxisAlignment.start,
                                     children: [
                                       Row(
                                         children: [
@@ -150,12 +148,14 @@ extension _HomePageAgentPicker on _HomePageState {
                                           ),
                                           if (selected)
                                             Container(
-                                              padding: const EdgeInsets.symmetric(
+                                              padding:
+                                                  const EdgeInsets.symmetric(
                                                 horizontal: 8,
                                                 vertical: 4,
                                               ),
                                               decoration: BoxDecoration(
-                                                color: oc.accent.withOpacity(0.22),
+                                                color:
+                                                    oc.accent.withOpacity(0.22),
                                                 borderRadius:
                                                     BorderRadius.circular(8),
                                               ),
@@ -203,18 +203,10 @@ extension _HomePageAgentPicker on _HomePageState {
   }
 
   Future<void> _openSettings(BuildContext context, ModelConfig? config) async {
-    await showModalBottomSheet<void>(
-      context: context,
-      isScrollControlled: true,
-      backgroundColor: context.oc.pageBackground,
-      barrierColor: Colors.transparent,
-      builder: (context) => FractionallySizedBox(
-        heightFactor: 0.92,
-        child: _AppSettingsSheet(
-          controller: widget.controller,
-          modelConfig: config ?? ModelConfig.defaults(),
-        ),
-      ),
+    await openAppSettingsSheet(
+      context,
+      controller: widget.controller,
+      modelConfig: config ?? ModelConfig.defaults(),
     );
   }
 }

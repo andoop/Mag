@@ -600,6 +600,9 @@ class LocalServer {
               variant: body['variant'] as String?,
             )
                 .catchError((error) async {
+              if (error is CancelledException) {
+                return;
+              }
               events.emit(ServerEvent(
                 type: 'session.error',
                 properties: {

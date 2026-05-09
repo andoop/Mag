@@ -816,26 +816,6 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
             children: [
               Column(
                 children: [
-                  if (state.error != null)
-                    MaterialBanner(
-                      content: Text(
-                        state.error!,
-                        maxLines: 4,
-                        overflow: TextOverflow.ellipsis,
-                      ),
-                      actions: [
-                        TextButton(
-                          onPressed: () {
-                            if (state.session != null) {
-                              widget.controller.refreshSession();
-                            } else {
-                              widget.controller.enterNewSessionLanding();
-                            }
-                          },
-                          child: Text(l(context, '刷新', 'Refresh')),
-                        )
-                      ],
-                    ),
                   Expanded(
                     child: state.session == null
                         ? _buildNewSessionLanding(context, state)

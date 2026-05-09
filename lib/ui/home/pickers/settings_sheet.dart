@@ -19,6 +19,26 @@ double _dialogMaxWidth(
   return width < maxWidth ? width : maxWidth;
 }
 
+Future<void> openAppSettingsSheet(
+  BuildContext context, {
+  required AppController controller,
+  required ModelConfig modelConfig,
+}) {
+  return showModalBottomSheet<void>(
+    context: context,
+    isScrollControlled: true,
+    backgroundColor: context.oc.pageBackground,
+    barrierColor: Colors.transparent,
+    builder: (context) => FractionallySizedBox(
+      heightFactor: 0.92,
+      child: _AppSettingsSheet(
+        controller: controller,
+        modelConfig: modelConfig,
+      ),
+    ),
+  );
+}
+
 class _AppSettingsSheet extends StatefulWidget {
   const _AppSettingsSheet({
     required this.controller,
@@ -81,7 +101,8 @@ class _AppSettingsSheetState extends State<_AppSettingsSheet> {
         providerId: connection.id,
         baseUrl: _baseUrlController.text.trim(),
         apiKey: _apiKeyController.text.trim(),
-        usePublicToken: connection.id == 'mag' && _apiKeyController.text.trim().isEmpty,
+        usePublicToken:
+            connection.id == 'mag' && _apiKeyController.text.trim().isEmpty,
       );
       await widget.controller.connectProvider(
         connection.copyWith(
@@ -271,7 +292,8 @@ class _AppSettingsSheetState extends State<_AppSettingsSheet> {
                         controller: nameController,
                         decoration: InputDecoration(
                           labelText: l(context, '名称', 'Name'),
-                          hintText: l(context, '例如：GitHub MCP', 'Example: GitHub MCP'),
+                          hintText: l(
+                              context, '例如：GitHub MCP', 'Example: GitHub MCP'),
                         ),
                       ),
                       const SizedBox(height: 12),
@@ -287,8 +309,8 @@ class _AppSettingsSheetState extends State<_AppSettingsSheet> {
                         controller: tokenController,
                         obscureText: true,
                         decoration: InputDecoration(
-                          labelText:
-                              l(context, 'Bearer Token（可选）', 'Bearer token (optional)'),
+                          labelText: l(context, 'Bearer Token（可选）',
+                              'Bearer token (optional)'),
                         ),
                       ),
                       const SizedBox(height: 12),
@@ -299,8 +321,10 @@ class _AppSettingsSheetState extends State<_AppSettingsSheet> {
                         ),
                         items: const [
                           DropdownMenuItem(value: 'none', child: Text('None')),
-                          DropdownMenuItem(value: 'bearer', child: Text('Bearer token')),
-                          DropdownMenuItem(value: 'oauth', child: Text('OAuth / PKCE')),
+                          DropdownMenuItem(
+                              value: 'bearer', child: Text('Bearer token')),
+                          DropdownMenuItem(
+                              value: 'oauth', child: Text('OAuth / PKCE')),
                         ],
                         onChanged: (value) {
                           setDialogState(() {
@@ -313,7 +337,8 @@ class _AppSettingsSheetState extends State<_AppSettingsSheet> {
                         TextField(
                           controller: authEndpointController,
                           decoration: InputDecoration(
-                            labelText: l(context, '授权端点', 'Authorization endpoint'),
+                            labelText:
+                                l(context, '授权端点', 'Authorization endpoint'),
                           ),
                         ),
                         const SizedBox(height: 12),
@@ -334,14 +359,16 @@ class _AppSettingsSheetState extends State<_AppSettingsSheet> {
                         TextField(
                           controller: scopeController,
                           decoration: InputDecoration(
-                            labelText: l(context, 'Scopes（空格分隔）', 'Scopes (space-separated)'),
+                            labelText: l(context, 'Scopes（空格分隔）',
+                                'Scopes (space-separated)'),
                           ),
                         ),
                         const SizedBox(height: 12),
                         TextField(
                           controller: redirectUriController,
                           decoration: InputDecoration(
-                            labelText: l(context, 'Redirect URI', 'Redirect URI'),
+                            labelText:
+                                l(context, 'Redirect URI', 'Redirect URI'),
                           ),
                         ),
                       ],
@@ -488,7 +515,8 @@ class _AppSettingsSheetState extends State<_AppSettingsSheet> {
       await widget.controller.deleteMcpServer(server.id);
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text(l(context, 'MCP Server 已删除', 'MCP server deleted'))),
+        SnackBar(
+            content: Text(l(context, 'MCP Server 已删除', 'MCP server deleted'))),
       );
     } catch (error) {
       if (!mounted) return;
@@ -533,7 +561,8 @@ class _AppSettingsSheetState extends State<_AppSettingsSheet> {
         builder: (context) {
           final dialogHeight = MediaQuery.of(context).size.height * 0.72;
           return AlertDialog(
-            title: Text(l(context, '连接 ${server.name}', 'Connect ${server.name}')),
+            title:
+                Text(l(context, '连接 ${server.name}', 'Connect ${server.name}')),
             content: SizedBox(
               width: _dialogMaxWidth(context, maxWidth: 760),
               height: dialogHeight.clamp(420.0, 620.0),
@@ -545,12 +574,14 @@ class _AppSettingsSheetState extends State<_AppSettingsSheet> {
                     style: TextStyle(fontSize: 12.5, color: context.oc.muted),
                   ),
                   const SizedBox(height: 12),
-                  Expanded(child: WebViewWidget(controller: webViewController!)),
+                  Expanded(
+                      child: WebViewWidget(controller: webViewController!)),
                   const SizedBox(height: 12),
                   TextField(
                     controller: codeController,
                     decoration: InputDecoration(
-                      labelText: l(context, 'Authorization Code', 'Authorization code'),
+                      labelText: l(
+                          context, 'Authorization Code', 'Authorization code'),
                     ),
                   ),
                 ],
@@ -603,7 +634,8 @@ class _AppSettingsSheetState extends State<_AppSettingsSheet> {
     if (resources.isEmpty) {
       _showInfo(
         context,
-        l(context, '当前没有可用的 MCP resources。', 'No MCP resources are available yet.'),
+        l(context, '当前没有可用的 MCP resources。',
+            'No MCP resources are available yet.'),
       );
       return;
     }
@@ -642,26 +674,31 @@ class _AppSettingsSheetState extends State<_AppSettingsSheet> {
                       child: filtered.isEmpty
                           ? Center(
                               child: Text(
-                                l(context, '没有匹配的 resources。', 'No matching resources.'),
-                                style: TextStyle(fontSize: 12.5, color: context.oc.muted),
+                                l(context, '没有匹配的 resources。',
+                                    'No matching resources.'),
+                                style: TextStyle(
+                                    fontSize: 12.5, color: context.oc.muted),
                               ),
                             )
                           : ListView.separated(
                               shrinkWrap: true,
                               itemCount: filtered.length,
-                              separatorBuilder: (_, __) => const Divider(height: 1),
+                              separatorBuilder: (_, __) =>
+                                  const Divider(height: 1),
                               itemBuilder: (context, index) {
                                 final item = filtered[index];
                                 return ListTile(
                                   contentPadding: EdgeInsets.zero,
                                   title: Text(item.name),
-                                  subtitle: Text('${item.serverId}\n${item.uri}'),
+                                  subtitle:
+                                      Text('${item.serverId}\n${item.uri}'),
                                   isThreeLine: true,
                                   trailing: const Icon(Icons.chevron_right),
                                   onTap: () async {
                                     final hostContext = this.context;
                                     try {
-                                      final contents = await widget.controller.readMcpResource(
+                                      final contents = await widget.controller
+                                          .readMcpResource(
                                         serverId: item.serverId,
                                         uri: item.uri,
                                       );
@@ -671,19 +708,28 @@ class _AppSettingsSheetState extends State<_AppSettingsSheet> {
                                         builder: (context) => AlertDialog(
                                           title: Text(item.name),
                                           content: SizedBox(
-                                            width: _dialogMaxWidth(context, maxWidth: 760),
+                                            width: _dialogMaxWidth(context,
+                                                maxWidth: 760),
                                             child: SingleChildScrollView(
                                               child: SelectableText(
                                                 contents
-                                                    .map((e) => e.text ?? const JsonEncoder.withIndent('  ').convert(e.toJson()))
+                                                    .map((e) =>
+                                                        e.text ??
+                                                        const JsonEncoder
+                                                                    .withIndent(
+                                                                '  ')
+                                                            .convert(
+                                                                e.toJson()))
                                                     .join('\n\n'),
                                               ),
                                             ),
                                           ),
                                           actions: [
                                             TextButton(
-                                              onPressed: () => Navigator.of(context).pop(),
-                                              child: Text(l(context, '关闭', 'Close')),
+                                              onPressed: () =>
+                                                  Navigator.of(context).pop(),
+                                              child: Text(
+                                                  l(context, '关闭', 'Close')),
                                             ),
                                           ],
                                         ),
@@ -757,14 +803,17 @@ class _AppSettingsSheetState extends State<_AppSettingsSheet> {
                       child: filtered.isEmpty
                           ? Center(
                               child: Text(
-                                l(context, '没有匹配的 prompts。', 'No matching prompts.'),
-                                style: TextStyle(fontSize: 12.5, color: context.oc.muted),
+                                l(context, '没有匹配的 prompts。',
+                                    'No matching prompts.'),
+                                style: TextStyle(
+                                    fontSize: 12.5, color: context.oc.muted),
                               ),
                             )
                           : ListView.separated(
                               shrinkWrap: true,
                               itemCount: filtered.length,
-                              separatorBuilder: (_, __) => const Divider(height: 1),
+                              separatorBuilder: (_, __) =>
+                                  const Divider(height: 1),
                               itemBuilder: (context, index) {
                                 final item = filtered[index];
                                 return ListTile(
@@ -772,9 +821,11 @@ class _AppSettingsSheetState extends State<_AppSettingsSheet> {
                                   title: Text(item.name),
                                   subtitle: Text([
                                     item.serverId,
-                                    if ((item.description ?? '').isNotEmpty) item.description!,
+                                    if ((item.description ?? '').isNotEmpty)
+                                      item.description!,
                                   ].join('\n')),
-                                  isThreeLine: (item.description ?? '').isNotEmpty,
+                                  isThreeLine:
+                                      (item.description ?? '').isNotEmpty,
                                   trailing: const Icon(Icons.chevron_right),
                                   onTap: () => _showMcpPromptRunDialog(item),
                                 );
@@ -817,7 +868,8 @@ class _AppSettingsSheetState extends State<_AppSettingsSheet> {
                       padding: const EdgeInsets.only(bottom: 12),
                       child: Text(
                         prompt.description!,
-                        style: TextStyle(fontSize: 12.5, color: context.oc.muted),
+                        style:
+                            TextStyle(fontSize: 12.5, color: context.oc.muted),
                       ),
                     ),
                   for (final arg in prompt.arguments) ...[
@@ -1192,7 +1244,8 @@ class _AppSettingsSheetState extends State<_AppSettingsSheet> {
     await widget.controller.deleteGitRemoteCredential(credential.id);
   }
 
-  String _destinationLabel(BuildContext context, _SettingsDestination destination) {
+  String _destinationLabel(
+      BuildContext context, _SettingsDestination destination) {
     switch (destination) {
       case _SettingsDestination.overview:
         return l(context, '总览', 'Overview');
@@ -1316,9 +1369,11 @@ class _AppSettingsSheetState extends State<_AppSettingsSheet> {
                   icon: Icons.hub_outlined,
                   title: l(context, 'Models & Providers', 'Models & providers'),
                   subtitle: connection == null
-                      ? l(context, '当前还没有连接 provider。', 'No provider connected yet.')
+                      ? l(context, '当前还没有连接 provider。',
+                          'No provider connected yet.')
                       : '${connection.name} · ${current.model}',
-                  trailing: '$visibleModelCount ${l(context, "models", "models")}',
+                  trailing:
+                      '$visibleModelCount ${l(context, "models", "models")}',
                   onTap: () {
                     setState(() {
                       _destination = _SettingsDestination.models;
@@ -1346,7 +1401,8 @@ class _AppSettingsSheetState extends State<_AppSettingsSheet> {
                   icon: Icons.source_outlined,
                   title: l(context, 'Git & Credentials', 'Git & credentials'),
                   subtitle: gitSettings.identity.name.trim().isEmpty
-                      ? l(context, '还没有设置 Git 身份。', 'Git identity is not configured yet.')
+                      ? l(context, '还没有设置 Git 身份。',
+                          'Git identity is not configured yet.')
                       : '${gitSettings.identity.name} · ${gitSettings.identity.email}',
                   trailing:
                       '${gitSettings.sshKeys.length + gitSettings.remoteCredentials.length}',
@@ -1405,22 +1461,24 @@ class _AppSettingsSheetState extends State<_AppSettingsSheet> {
     final allGroups = _connectedModelGroups(
       current,
       state: state,
-    ).map((group) {
-      final matches = group.models
-          .where((item) => _matchesSettingsModelQuery(item, _modelsQuery))
-          .toList();
-      return _ProviderModelGroup(
-        provider: group.provider,
-        models: matches,
-      );
-    }).where((group) => group.models.isNotEmpty).toList();
+    )
+        .map((group) {
+          final matches = group.models
+              .where((item) => _matchesSettingsModelQuery(item, _modelsQuery))
+              .toList();
+          return _ProviderModelGroup(
+            provider: group.provider,
+            models: matches,
+          );
+        })
+        .where((group) => group.models.isNotEmpty)
+        .toList();
     var visibleModelCount = 0;
     var totalModelCount = 0;
     for (final group in allGroups) {
       totalModelCount += group.models.length;
-      visibleModelCount += group.models
-          .where((item) => _isModelVisible(current, item))
-          .length;
+      visibleModelCount +=
+          group.models.where((item) => _isModelVisible(current, item)).length;
       _expandedModelProviders.putIfAbsent(group.provider.id, () => true);
     }
     return _buildSettingsBody(
@@ -1587,16 +1645,19 @@ class _AppSettingsSheetState extends State<_AppSettingsSheet> {
                                 onTap: () {
                                   if (_modelsQuery.trim().isNotEmpty) return;
                                   setState(() {
-                                    _expandedModelProviders[providerId] = !expanded;
+                                    _expandedModelProviders[providerId] =
+                                        !expanded;
                                   });
                                 },
                                 child: Padding(
-                                  padding: const EdgeInsets.fromLTRB(12, 10, 12, 10),
+                                  padding:
+                                      const EdgeInsets.fromLTRB(12, 10, 12, 10),
                                   child: Row(
                                     children: [
                                       Expanded(
                                         child: Column(
-                                          crossAxisAlignment: CrossAxisAlignment.start,
+                                          crossAxisAlignment:
+                                              CrossAxisAlignment.start,
                                           children: [
                                             Text(
                                               provider.name,
@@ -1620,7 +1681,8 @@ class _AppSettingsSheetState extends State<_AppSettingsSheet> {
                                       Switch.adaptive(
                                         value: allVisible,
                                         onChanged: (value) =>
-                                            _setProviderModelsVisibility(group, value),
+                                            _setProviderModelsVisibility(
+                                                group, value),
                                       ),
                                       const SizedBox(width: 4),
                                       Icon(
@@ -1645,7 +1707,8 @@ class _AppSettingsSheetState extends State<_AppSettingsSheet> {
                                       vertical: 4,
                                     ),
                                     title: Row(
-                                      crossAxisAlignment: CrossAxisAlignment.start,
+                                      crossAxisAlignment:
+                                          CrossAxisAlignment.start,
                                       children: [
                                         Expanded(
                                           child: Text(
@@ -1662,7 +1725,8 @@ class _AppSettingsSheetState extends State<_AppSettingsSheet> {
                                             label: l(context, '免费', 'Free'),
                                           ),
                                         ],
-                                        if (_modelChoiceIsLatest(models[i])) ...[
+                                        if (_modelChoiceIsLatest(
+                                            models[i])) ...[
                                           const SizedBox(width: 6),
                                           OcModelTag(
                                             label: l(context, '最新', 'Latest'),
@@ -1681,7 +1745,8 @@ class _AppSettingsSheetState extends State<_AppSettingsSheet> {
                                       ),
                                     ),
                                     onChanged: (value) async {
-                                      await widget.controller.setModelVisibility(
+                                      await widget.controller
+                                          .setModelVisibility(
                                         providerId: models[i].providerId,
                                         modelId: models[i].id,
                                         visible: value,
@@ -1691,7 +1756,8 @@ class _AppSettingsSheetState extends State<_AppSettingsSheet> {
                                     },
                                   ),
                                   if (i != models.length - 1)
-                                    Divider(height: 1, color: context.oc.border),
+                                    Divider(
+                                        height: 1, color: context.oc.border),
                                 ],
                               ],
                             ],
@@ -1712,7 +1778,8 @@ class _AppSettingsSheetState extends State<_AppSettingsSheet> {
     final oc = context.oc;
     final servers = widget.controller.state.mcpServers;
     final statuses = widget.controller.state.mcpStatuses;
-    final connectedCount = statuses.values.where((item) => item.connected).length;
+    final connectedCount =
+        statuses.values.where((item) => item.connected).length;
     final filteredServers = servers.where((server) {
       if (_mcpQuery.trim().isEmpty) return true;
       final q = _mcpQuery.trim().toLowerCase();
@@ -1805,7 +1872,8 @@ class _AppSettingsSheetState extends State<_AppSettingsSheet> {
                 else ...[
                   for (final server in visibleServers) ...[
                     _buildMcpServerCard(context, server, statuses[server.id]),
-                    if (server != visibleServers.last) const SizedBox(height: 10),
+                    if (server != visibleServers.last)
+                      const SizedBox(height: 10),
                   ],
                   if (filteredServers.length > visibleServers.length) ...[
                     const SizedBox(height: 10),
@@ -1837,7 +1905,8 @@ class _AppSettingsSheetState extends State<_AppSettingsSheet> {
     );
   }
 
-  Widget _buildGitPage(BuildContext context, {required GitSettings gitSettings}) {
+  Widget _buildGitPage(BuildContext context,
+      {required GitSettings gitSettings}) {
     final sshKeys = _showAllSshKeys || gitSettings.sshKeys.length <= 2
         ? gitSettings.sshKeys
         : gitSettings.sshKeys.take(2).toList();
@@ -1888,7 +1957,8 @@ class _AppSettingsSheetState extends State<_AppSettingsSheet> {
           const SizedBox(height: 14),
           _buildGitSshSection(context, gitSettings, sshKeys),
           const SizedBox(height: 14),
-          _buildRemoteCredentialSection(context, gitSettings, remoteCredentials),
+          _buildRemoteCredentialSection(
+              context, gitSettings, remoteCredentials),
         ],
       ),
     );
@@ -2128,14 +2198,17 @@ class _AppSettingsSheetState extends State<_AppSettingsSheet> {
                             runSpacing: 8,
                             children: [
                               OutlinedButton(
-                                onPressed: gitSettings.defaultSshKey?.id == key.id
-                                    ? null
-                                    : () => widget.controller.setDefaultGitSshKey(key.id),
+                                onPressed:
+                                    gitSettings.defaultSshKey?.id == key.id
+                                        ? null
+                                        : () => widget.controller
+                                            .setDefaultGitSshKey(key.id),
                                 child: Text(l(context, '设为默认', 'Set default')),
                               ),
                               OutlinedButton(
                                 onPressed: () => _showPublicKeyDialog(key),
-                                child: Text(l(context, '查看公钥', 'View public key')),
+                                child:
+                                    Text(l(context, '查看公钥', 'View public key')),
                               ),
                               OutlinedButton(
                                 onPressed: () => _confirmDeleteKey(key),
@@ -2245,7 +2318,8 @@ class _AppSettingsSheetState extends State<_AppSettingsSheet> {
                           : gitSettings.sshKeys
                               .where((item) => item.id == credential.sshKeyId)
                               .cast<GitSshKey?>()
-                              .firstWhere((item) => item != null, orElse: () => null);
+                              .firstWhere((item) => item != null,
+                                  orElse: () => null);
                       final typeLabel = credential.type == 'sshKey'
                           ? 'SSH'
                           : credential.type == 'httpsBasic'
@@ -2284,19 +2358,22 @@ class _AppSettingsSheetState extends State<_AppSettingsSheet> {
                                 const SizedBox(height: 4),
                                 Text(
                                   '${l(context, '用户名', 'Username')}: ${credential.username}',
-                                  style: TextStyle(fontSize: 12, color: oc.muted),
+                                  style:
+                                      TextStyle(fontSize: 12, color: oc.muted),
                                 ),
                               ],
                               if (sshKey != null) ...[
                                 const SizedBox(height: 4),
                                 Text(
                                   '${l(context, 'SSH Key', 'SSH key')}: ${sshKey.name}',
-                                  style: TextStyle(fontSize: 12, color: oc.muted),
+                                  style:
+                                      TextStyle(fontSize: 12, color: oc.muted),
                                 ),
                               ],
                               const SizedBox(height: 10),
                               OutlinedButton(
-                                onPressed: () => _confirmDeleteRemoteCredential(credential),
+                                onPressed: () =>
+                                    _confirmDeleteRemoteCredential(credential),
                                 child: Text(l(context, '删除', 'Delete')),
                               ),
                             ],
@@ -2306,7 +2383,8 @@ class _AppSettingsSheetState extends State<_AppSettingsSheet> {
                     },
                   ),
                 ],
-                if (gitSettings.remoteCredentials.length > visibleCredentials.length)
+                if (gitSettings.remoteCredentials.length >
+                    visibleCredentials.length)
                   Align(
                     alignment: Alignment.centerLeft,
                     child: OutlinedButton.icon(

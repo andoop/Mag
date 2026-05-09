@@ -528,6 +528,14 @@ class _ToolPartTileState extends State<_ToolPartTile> {
     return null;
   }
 
+  bool _isCancelledTool() {
+    if (widget.metadata['cancelled'] == true) return true;
+    final error = widget.metadata['error']?.toString().toLowerCase() ?? '';
+    return error.contains('cancel') ||
+        error.contains('stopped') ||
+        error.contains('aborted');
+  }
+
   Map<String, dynamic>? _firstAttachmentOfType(String type) {
     for (final item in widget.attachments) {
       if (item['type'] == type) return item;
@@ -545,6 +553,11 @@ class _ToolPartTileState extends State<_ToolPartTile> {
         .trim();
   }
 
+  Map<String, dynamic>? _writeEditDiffAttachment() {
+    if (widget.toolName != 'write' && widget.toolName != 'edit') return null;
+    return _firstAttachmentOfType('diff_preview');
+  }
+
   Map<String, dynamic>? _toolStreamPreviewAttachment() {
     final isWrite = widget.toolName == 'write';
     final isEdit = widget.toolName == 'edit';
@@ -553,29 +566,51 @@ class _ToolPartTileState extends State<_ToolPartTile> {
     }
     final hasReplacement = widget.editContentPreview != null &&
         widget.editContentPreview!.isNotEmpty;
+    final diffAttachment = _writeEditDiffAttachment();
+    final diffAfterContent = diffAttachment?['afterContent'] as String?;
+    final rawWriteContent = widget.rawInput['content'] as String?;
+    final rawEditContent = widget.rawInput['newString'] as String?;
     final content = isWrite
-        ? widget.writeContentPreview
+        ? (widget.writeContentPreview ?? diffAfterContent ?? rawWriteContent)
         : (hasReplacement
             ? widget.editContentPreview
-            : widget.editOldContentPreview);
+            : (diffAfterContent ??
+                rawEditContent ??
+                widget.editOldContentPreview));
     if (content == null || content.isEmpty) return null;
     final path = _toolPreviewPath();
     return {
       'type': 'write_stream_preview',
       'path': path,
-      'filename':
-          path.isEmpty ? (isEdit ? 'edit preview' : 'write preview') : path,
+      'filename': path,
       'content': content,
       'status': widget.status,
       'previewKind': isEdit ? 'edit' : 'write',
-      'previewPhase': isEdit && !hasReplacement ? 'old' : 'new',
+      'previewPhase':
+          isEdit && !hasReplacement && diffAfterContent == null ? 'old' : 'new',
       'contentKey': isEdit
           ? (hasReplacement ? 'editContentPreview' : 'editOldContentPreview')
           : 'writeContentPreview',
+      'diffPreview':
+          diffAttachment?['fullPreview'] ?? diffAttachment?['preview'],
+      'diffKind': diffAttachment?['kind'],
       'inline': true,
       'messageID': widget.messageId,
       'partID': widget.partId,
     };
+  }
+
+  int? _toolPreviewLineCount() {
+    final diffAfterContent =
+        _writeEditDiffAttachment()?['afterContent'] as String?;
+    final rawWriteContent = widget.rawInput['content'] as String?;
+    final rawEditContent = widget.rawInput['newString'] as String?;
+    final content = widget.toolName == 'write'
+        ? (widget.writeContentPreview ?? diffAfterContent ?? rawWriteContent)
+        : (widget.editContentPreview ?? diffAfterContent ?? rawEditContent);
+    if (content == null) return null;
+    if (content.isEmpty) return 0;
+    return const LineSplitter().convert(content).length;
   }
 
   String _entryKindLabel(BuildContext context, bool isDirectory) {
@@ -734,6 +769,9 @@ class _ToolPartTileState extends State<_ToolPartTile> {
   }
 
   String? _localizedToolSummary(BuildContext context) {
+    if (_isCancelledTool()) {
+      return l(context, '本次工具调用已停止', 'Tool call stopped');
+    }
     final isRunning = widget.status == 'running' || widget.status == 'pending';
     if (isRunning) {
       final phaseSummary = _localizedRunningPhaseSummary(context);
@@ -783,6 +821,11 @@ class _ToolPartTileState extends State<_ToolPartTile> {
         if (path == null || path.isEmpty) return null;
         if (isRunning) {
           return l(context, '准备写入文件 $path', 'Preparing write to $path');
+        }
+        final lines = _toolPreviewLineCount();
+        if (lines != null) {
+          return l(context, '已写入文件 $path · $lines 行',
+              'Wrote $path · $lines line(s)');
         }
         return l(context, '已写入文件 $path', 'Wrote file $path');
       case 'edit':
@@ -1238,6 +1281,7 @@ class _ToolPartTileState extends State<_ToolPartTile> {
   }
 
   String? _normalizedOutputText(String? localizedSummary) {
+    if (_usesStructuredAttachmentDetails()) return null;
     final output = widget.output?.trim();
     if (output == null || output.isEmpty) return null;
     final firstLine = output.split('\n').first.trim();
@@ -1247,13 +1291,71 @@ class _ToolPartTileState extends State<_ToolPartTile> {
     return output;
   }
 
+  bool _usesStructuredAttachmentDetails() {
+    const attachmentFirstTools = {'grep', 'glob', 'read', 'browser'};
+    if (!attachmentFirstTools.contains(widget.toolName)) return false;
+    return widget.attachments.isNotEmpty;
+  }
+
+  String _localizedToolStatusLabel(BuildContext context) {
+    if (_isCancelledTool()) {
+      return l(context, '已停止', 'Stopped');
+    }
+    if (widget.status == 'completed') {
+      return l(context, '完成', 'Done');
+    }
+    if (widget.status == 'error') {
+      return l(context, '错误', 'Error');
+    }
+    if (widget.status == 'running' || widget.status == 'pending') {
+      switch (widget.toolName) {
+        case 'write':
+          return l(context, '生成中', 'Generating');
+        case 'edit':
+          return l(context, '更新中', 'Updating');
+        case 'read':
+        case 'skill':
+          return l(context, '读取中', 'Reading');
+        case 'grep':
+        case 'glob':
+          return l(context, '搜索中', 'Searching');
+        case 'list':
+          return l(context, '列出中', 'Listing');
+        case 'stat':
+          return l(context, '查看中', 'Inspecting');
+        case 'webfetch':
+          return l(context, '抓取中', 'Fetching');
+        case 'browser':
+          return l(context, '打开中', 'Opening');
+        case 'apply_patch':
+          return l(context, '应用中', 'Applying');
+        case 'delete':
+        case 'rename':
+        case 'move':
+        case 'copy':
+          return l(context, '准备中', 'Preparing');
+        case 'git':
+          return l(context, '执行中', 'Running');
+        case 'question':
+          return l(context, '待回答', 'Awaiting answer');
+        default:
+          return l(context, '处理中', 'Working');
+      }
+    }
+    return _toolStatusLabel(context, widget.status);
+  }
+
   _ToolCardModel _buildModel(BuildContext context) {
+    final cancelled = _isCancelledTool();
     final localizedSummary = _localizedToolSummary(context);
     final label = _localizedToolLabel(context);
     final outputText = _normalizedOutputText(localizedSummary);
     final primaryPreviewAttachment = _toolStreamPreviewAttachment();
     final resultAttachments = List<Map<String, dynamic>>.unmodifiable(
-      widget.attachments,
+      (widget.toolName == 'write' || widget.toolName == 'edit') &&
+              primaryPreviewAttachment != null
+          ? const <Map<String, dynamic>>[]
+          : widget.attachments,
     );
     final heavyContentKey = Object.hashAll([
       widget.partId,
@@ -1265,9 +1367,9 @@ class _ToolPartTileState extends State<_ToolPartTile> {
     ]);
     return _ToolCardModel(
       isRunning: widget.status == 'running' || widget.status == 'pending',
-      isError: widget.status == 'error',
+      isError: widget.status == 'error' && !cancelled,
       title: label,
-      statusLabel: _toolStatusLabel(context, widget.status),
+      statusLabel: _localizedToolStatusLabel(context),
       summary: localizedSummary ?? label,
       diffSuffix: _diffStatSuffix(),
       primaryPreviewAttachment: primaryPreviewAttachment,
@@ -1284,52 +1386,61 @@ class _ToolPartTileState extends State<_ToolPartTile> {
     final oc = context.oc;
     return Container(
       width: double.infinity,
-      padding: const EdgeInsets.fromLTRB(9, 8, 9, 8),
+      padding: const EdgeInsets.fromLTRB(10, 8, 10, 8),
       decoration: BoxDecoration(
-        color: oc.mutedPanel,
-        borderRadius: BorderRadius.circular(10),
+        color: oc.mutedPanel.withOpacity(context.isDarkMode ? 0.54 : 0.76),
+        borderRadius: BorderRadius.circular(13),
         border: Border.all(
           color: model.isError
-              ? Colors.red.withOpacity(context.isDarkMode ? 0.36 : 0.24)
-              : oc.softBorderColor,
+              ? Colors.red.withOpacity(context.isDarkMode ? 0.38 : 0.26)
+              : model.isRunning
+                  ? oc.accent.withOpacity(context.isDarkMode ? 0.26 : 0.18)
+                  : oc.softBorderColor.withOpacity(0.82),
         ),
-      ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          _ToolHeader(
-            model: model,
-            expanded: expanded,
-            onToggle: model.hasDetails
-                ? () => setState(() {
-                      _expanded = !expanded;
-                    })
-                : null,
-            onShowRaw: () => _openRawToolCallSheet(
-              context,
-              toolName: widget.toolName,
-              callId: widget.callId,
-              rawInput: widget.rawInput,
-              rawInputText: widget.rawInputText,
-              rawOutput: widget.rawOutput,
-            ),
-          ),
-          AnimatedSize(
-            duration: const Duration(milliseconds: 180),
-            curve: Curves.easeOutCubic,
-            alignment: Alignment.topCenter,
-            child: expanded && model.hasDetails
-                ? _ToolDetailsPanel(
-                    model: model,
-                    controller: widget.controller,
-                    workspace: widget.workspace,
-                    serverUri: widget.serverUri,
-                    onInsertPromptReference: widget.onInsertPromptReference,
-                    onSendPromptReference: widget.onSendPromptReference,
-                  )
-                : const SizedBox.shrink(),
+        boxShadow: [
+          BoxShadow(
+            color: Colors.black.withOpacity(context.isDarkMode ? 0.08 : 0.035),
+            blurRadius: 12,
+            offset: const Offset(0, 4),
           ),
         ],
+      ),
+      child: ClipRRect(
+        borderRadius: BorderRadius.circular(11),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            _ToolHeader(
+              model: model,
+              expanded: expanded,
+              onToggle: model.hasDetails
+                  ? () => setState(() {
+                        _expanded = !expanded;
+                      })
+                  : null,
+              onShowRaw: () => _openRawToolCallSheet(
+                context,
+                toolName: widget.toolName,
+                callId: widget.callId,
+                rawInput: widget.rawInput,
+                rawInputText: widget.rawInputText,
+                rawOutput: widget.rawOutput,
+              ),
+            ),
+            _SmoothExpansion(
+              open: expanded && model.hasDetails,
+              child: _ToolDetailsPanel(
+                model: model,
+                controller: widget.controller,
+                workspace: widget.workspace,
+                serverUri: widget.serverUri,
+                onCollapse: () => setState(() => _expanded = false),
+                onInsertPromptReference: widget.onInsertPromptReference,
+                onSendPromptReference: widget.onSendPromptReference,
+              ),
+            ),
+          ],
+        ),
       ),
     );
   }
@@ -1353,7 +1464,7 @@ class _ToolHeader extends StatelessWidget {
     final oc = context.oc;
     return InkWell(
       onTap: onToggle,
-      borderRadius: BorderRadius.circular(8),
+      borderRadius: BorderRadius.circular(10),
       child: Row(
         children: [
           _ToolStatusGlyph(model: model),
@@ -1368,9 +1479,9 @@ class _ToolHeader extends StatelessWidget {
                       child: Text(
                         model.title,
                         style: TextStyle(
-                          fontFamily: 'monospace',
-                          fontWeight: FontWeight.w600,
-                          fontSize: 11,
+                          fontWeight: FontWeight.w700,
+                          fontSize: 12,
+                          letterSpacing: 0.05,
                           color: oc.foreground,
                         ),
                         overflow: TextOverflow.ellipsis,
@@ -1384,22 +1495,26 @@ class _ToolHeader extends StatelessWidget {
                         model.diffSuffix!,
                         style: Theme.of(context).textTheme.labelSmall?.copyWith(
                               color: oc.foregroundHint,
-                              fontWeight: FontWeight.w600,
+                              fontSize: 10,
+                              fontWeight: FontWeight.w700,
+                              letterSpacing: 0.1,
                             ),
                       ),
                     ],
                   ],
                 ),
-                const SizedBox(height: 2),
-                Text(
-                  model.summary,
-                  style: Theme.of(context).textTheme.labelSmall?.copyWith(
-                        color: oc.foregroundHint,
-                        fontSize: 10.5,
-                        height: 1.15,
-                      ),
-                  overflow: TextOverflow.ellipsis,
-                ),
+                if (!expanded) ...[
+                  const SizedBox(height: 2),
+                  Text(
+                    model.summary,
+                    style: Theme.of(context).textTheme.labelSmall?.copyWith(
+                          color: oc.foregroundHint,
+                          fontSize: 10.5,
+                          height: 1.18,
+                        ),
+                    overflow: TextOverflow.ellipsis,
+                  ),
+                ],
               ],
             ),
           ),
@@ -1410,14 +1525,29 @@ class _ToolHeader extends StatelessWidget {
             quiet: true,
             onPressed: onShowRaw,
           ),
+          const SizedBox(width: 6),
           if (model.hasDetails)
-            Icon(
-              expanded ? Icons.expand_less : Icons.expand_more,
-              size: 16,
-              color: oc.foregroundHint,
+            Container(
+              width: 20,
+              height: 20,
+              alignment: Alignment.center,
+              decoration: BoxDecoration(
+                color: oc.panelBackground.withOpacity(0.34),
+                borderRadius: BorderRadius.circular(999),
+              ),
+              child: AnimatedRotation(
+                turns: expanded ? 0.5 : 0,
+                duration: const Duration(milliseconds: 180),
+                curve: Curves.easeInOutCubic,
+                child: Icon(
+                  Icons.expand_more,
+                  size: 16,
+                  color: oc.foregroundHint,
+                ),
+              ),
             )
           else
-            const SizedBox(width: 16),
+            const SizedBox(width: 20),
         ],
       ),
     );
@@ -1431,20 +1561,35 @@ class _ToolStatusGlyph extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    if (model.isRunning) {
-      return const SizedBox(
-        width: 11,
-        height: 11,
-        child: CircularProgressIndicator(strokeWidth: 1.4),
-      );
-    }
-    if (model.isError) {
-      return Icon(Icons.error_outline, size: 13, color: Colors.red.shade700);
-    }
-    return Icon(
-      Icons.check_circle_outline,
-      size: 13,
-      color: context.oc.foregroundHint,
+    final oc = context.oc;
+    final color = model.isError
+        ? Colors.red.shade700
+        : model.isRunning
+            ? oc.accent
+            : oc.foregroundHint;
+    return Container(
+      width: 18,
+      height: 18,
+      alignment: Alignment.center,
+      decoration: BoxDecoration(
+        color: color.withOpacity(context.isDarkMode ? 0.14 : 0.09),
+        borderRadius: BorderRadius.circular(999),
+        border: Border.all(color: color.withOpacity(0.26)),
+      ),
+      child: model.isRunning
+          ? SizedBox(
+              width: 9,
+              height: 9,
+              child: CircularProgressIndicator(
+                strokeWidth: 1.35,
+                color: color,
+              ),
+            )
+          : Icon(
+              model.isError ? Icons.priority_high_rounded : Icons.check_rounded,
+              size: 12,
+              color: color,
+            ),
     );
   }
 }
@@ -1462,23 +1607,15 @@ class _ToolStatusPill extends StatelessWidget {
         : model.isRunning
             ? oc.orange
             : oc.foregroundHint;
-    final Color background =
-        foreground.withOpacity(context.isDarkMode ? 0.14 : 0.1);
-    return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 5, vertical: 1.5),
-      decoration: BoxDecoration(
-        color: background,
-        borderRadius: BorderRadius.circular(999),
-      ),
-      child: Text(
-        model.statusLabel,
-        style: Theme.of(context).textTheme.labelSmall?.copyWith(
-              color: foreground,
-              fontSize: 9.5,
-              fontWeight: FontWeight.w700,
-              height: 1.05,
-            ),
-      ),
+    return Text(
+      model.statusLabel,
+      style: Theme.of(context).textTheme.labelSmall?.copyWith(
+            color: foreground,
+            fontSize: 9.5,
+            fontWeight: FontWeight.w700,
+            height: 1.05,
+            letterSpacing: 0.08,
+          ),
     );
   }
 }
@@ -1489,6 +1626,7 @@ class _ToolDetailsPanel extends StatelessWidget {
     required this.controller,
     required this.workspace,
     required this.serverUri,
+    required this.onCollapse,
     required this.onInsertPromptReference,
     required this.onSendPromptReference,
   });
@@ -1497,6 +1635,7 @@ class _ToolDetailsPanel extends StatelessWidget {
   final AppController controller;
   final WorkspaceInfo? workspace;
   final Uri? serverUri;
+  final VoidCallback onCollapse;
   final ValueChanged<String> onInsertPromptReference;
   final PromptReferenceAction onSendPromptReference;
 
@@ -1552,13 +1691,21 @@ class _ToolDetailsPanel extends StatelessWidget {
     if (children.isEmpty) return const SizedBox.shrink();
     return Padding(
       padding: const EdgeInsets.only(top: 8),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.stretch,
+      child: Stack(
         children: [
-          for (var i = 0; i < children.length; i++) ...[
-            if (i > 0) const SizedBox(height: 6),
-            children[i],
-          ],
+          Padding(
+            padding: const EdgeInsets.only(bottom: 30),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                for (var i = 0; i < children.length; i++) ...[
+                  if (i > 0) const SizedBox(height: 6),
+                  children[i],
+                ],
+              ],
+            ),
+          ),
+          _QuickCollapseButton(onPressed: onCollapse),
         ],
       ),
     );

@@ -782,6 +782,7 @@ JsonMap _buildDiffAttachment({
     'sourcePath': sourcePath,
     'preview': preview,
     'fullPreview': fullPreview,
+    'afterContent': after,
     'additions': counts['additions']!,
     'deletions': counts['deletions']!,
   };
