@@ -386,13 +386,16 @@ extension _HomePageComposer on _HomePageState {
       duration: const Duration(milliseconds: 180),
       curve: Curves.easeOut,
       decoration: BoxDecoration(
-        color: oc.pageBackground,
+        color: oc.pageBackground.withOpacity(context.isDarkMode ? 0.98 : 0.96),
         border: Border(top: BorderSide(color: oc.softBorderColor)),
         boxShadow: [
           BoxShadow(
-            color: oc.shadow,
-            blurRadius: 16,
-            offset: const Offset(0, -2),
+            color: context.isDarkMode
+                ? Colors.black.withOpacity(0.24)
+                : Colors.black.withOpacity(0.045),
+            blurRadius: 24,
+            spreadRadius: -8,
+            offset: const Offset(0, -10),
           ),
         ],
       ),
@@ -435,18 +438,11 @@ extension _HomePageComposer on _HomePageState {
                 ),
               SizedBox(height: isKeyboardOpen ? 4 : 6),
               Container(
-                decoration: BoxDecoration(
+                decoration: _chatSurfaceDecoration(
+                  context,
                   color: oc.panelBackground,
-                  borderRadius: BorderRadius.circular(24),
-                  border:
-                      Border.fromBorderSide(BorderSide(color: oc.borderColor)),
-                  boxShadow: [
-                    BoxShadow(
-                      color: oc.shadow,
-                      blurRadius: 12,
-                      offset: const Offset(0, 2),
-                    ),
-                  ],
+                  radius: 26,
+                  accent: _promptFocusNode.hasFocus,
                 ),
                 child: Column(
                   mainAxisSize: MainAxisSize.min,
@@ -664,8 +660,9 @@ extension _HomePageComposer on _HomePageState {
                           ? const SizedBox.shrink()
                           : Padding(
                               key: const ValueKey('composer-tools'),
-                              padding: const EdgeInsets.fromLTRB(8, 8, 8, 0),
+                              padding: const EdgeInsets.fromLTRB(12, 12, 12, 1),
                               child: SingleChildScrollView(
+                                clipBehavior: Clip.none,
                                 scrollDirection: Axis.horizontal,
                                 child: Row(
                                   children: [
@@ -676,7 +673,7 @@ extension _HomePageComposer on _HomePageState {
                                           'build',
                                       onTap: () => _openAgentPicker(context),
                                     ),
-                                    const SizedBox(width: 6),
+                                    const SizedBox(width: 8),
                                     _PromptTrayButton(
                                       icon: Icons.auto_awesome_outlined,
                                       label: currentModelChoice?.name ??
@@ -684,7 +681,7 @@ extension _HomePageComposer on _HomePageState {
                                       onTap: () => _openModelChooser(context),
                                     ),
                                     if (variantOptions.isNotEmpty) ...[
-                                      const SizedBox(width: 6),
+                                      const SizedBox(width: 8),
                                       _PromptTrayButton(
                                         icon: Icons.tune_outlined,
                                         label:
@@ -693,7 +690,7 @@ extension _HomePageComposer on _HomePageState {
                                             _openVariantPicker(context),
                                       ),
                                     ],
-                                    const SizedBox(width: 6),
+                                    const SizedBox(width: 8),
                                     _PromptTrayButton(
                                       icon: Icons.settings_outlined,
                                       label: l(context, '选项', 'Options'),
@@ -748,7 +745,7 @@ extension _HomePageComposer on _HomePageState {
                       children: [
                         Padding(
                           padding: EdgeInsets.fromLTRB(
-                              10, isKeyboardOpen ? 2 : 3, 10, 8),
+                              10, isKeyboardOpen ? 3 : 5, 10, 9),
                           child: CallbackShortcuts(
                             bindings: {
                               const SingleActivator(
@@ -774,24 +771,27 @@ extension _HomePageComposer on _HomePageState {
                               maxLines: isKeyboardOpen ? 4 : 3,
                               textInputAction: TextInputAction.newline,
                               style:
-                                  const TextStyle(fontSize: 14, height: 1.32),
+                                  const TextStyle(fontSize: 15, height: 1.36),
                               decoration: InputDecoration(
-                                hintText: l(context, '问我关于这个工作区的任何事，输入 @ 引用文件',
-                                    'Ask anything about this workspace, type @ to reference files'),
+                                hintText: l(context, '问任何事，输入 @ 引用文件',
+                                    'Ask anything, type @ to reference files'),
                                 border: InputBorder.none,
                                 contentPadding: EdgeInsets.fromLTRB(
-                                    38, isKeyboardOpen ? 7 : 8, 86, 11),
+                                    40, isKeyboardOpen ? 8 : 10, 88, 13),
                                 hintStyle: Theme.of(context)
                                     .textTheme
                                     .bodyMedium
-                                    ?.copyWith(color: oc.foregroundHint),
+                                    ?.copyWith(
+                                      color: oc.foregroundHint,
+                                      fontSize: 14.5,
+                                    ),
                               ),
                             ),
                           ),
                         ),
                         Positioned(
-                          left: 8,
-                          bottom: 8,
+                          left: 9,
+                          bottom: 9,
                           child: _CompactIconButton(
                             tooltip: l(context, '附件', 'Attach'),
                             onPressed: () =>
@@ -800,8 +800,8 @@ extension _HomePageComposer on _HomePageState {
                           ),
                         ),
                         Positioned(
-                          right: 8,
-                          bottom: 8,
+                          right: 9,
+                          bottom: 9,
                           child: Row(
                             mainAxisSize: MainAxisSize.min,
                             children: [
@@ -1398,32 +1398,40 @@ class _PromptTrayButton extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final oc = context.oc;
-    return OutlinedButton(
-      onPressed: onTap,
-      style: OutlinedButton.styleFrom(
-        backgroundColor: oc.panelBackground,
-        side: BorderSide(color: oc.borderColor),
-        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
-        padding: const EdgeInsets.symmetric(horizontal: 11, vertical: 7),
-        minimumSize: Size.zero,
-        tapTargetSize: MaterialTapTargetSize.shrinkWrap,
-        visualDensity: VisualDensity.compact,
-      ),
-      child: Row(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          Icon(icon, size: 15, color: oc.foreground),
-          const SizedBox(width: 6),
-          Text(
-            label,
-            overflow: TextOverflow.ellipsis,
-            style: TextStyle(
-              fontSize: 12,
-              fontWeight: FontWeight.w600,
-              color: oc.foreground,
+    return ConstrainedBox(
+      constraints: const BoxConstraints(minHeight: 34, maxWidth: 190),
+      child: OutlinedButton(
+        onPressed: onTap,
+        style: OutlinedButton.styleFrom(
+          backgroundColor: oc.composerOptionBg.withOpacity(0.82),
+          foregroundColor: oc.foreground,
+          side: BorderSide(color: oc.softBorderColor),
+          shape: const StadiumBorder(),
+          padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 9),
+          minimumSize: const Size(0, 34),
+          tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+          visualDensity: VisualDensity.standard,
+        ),
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Icon(icon, size: 15, color: oc.foregroundMuted),
+            const SizedBox(width: 7),
+            Flexible(
+              child: Text(
+                label,
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: TextStyle(
+                  fontSize: 12,
+                  fontWeight: FontWeight.w600,
+                  color: oc.foreground,
+                  letterSpacing: 0.05,
+                ),
+              ),
             ),
-          ),
-        ],
+          ],
+        ),
       ),
     );
   }

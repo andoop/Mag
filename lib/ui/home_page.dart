@@ -750,7 +750,7 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
       key: _scaffoldKey,
       drawer: _buildSessionDrawer(context, state),
       appBar: AppBar(
-        leadingWidth: 36,
+        leadingWidth: 32,
         leading: IconButton(
           tooltip: l(context, '项目', 'Projects'),
           visualDensity: VisualDensity.compact,
@@ -759,7 +759,7 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
           onPressed: () => widget.controller.leaveProject(),
           icon: const Icon(Icons.arrow_back_rounded, size: 21),
         ),
-        titleSpacing: 2,
+        titleSpacing: 0,
         title: _SessionAppBarTitle(
           title: state.session?.title.isNotEmpty == true
               ? state.session!.title

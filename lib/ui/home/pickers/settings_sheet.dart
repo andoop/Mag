@@ -19,6 +19,73 @@ double _dialogMaxWidth(
   return width < maxWidth ? width : maxWidth;
 }
 
+BoxDecoration _settingsSurfaceDecoration(
+  BuildContext context, {
+  required Color color,
+  double radius = 24,
+  bool elevated = true,
+  bool accent = false,
+}) {
+  final oc = context.oc;
+  final dark = context.isDarkMode;
+  return BoxDecoration(
+    color: color,
+    borderRadius: BorderRadius.circular(radius),
+    border: Border.all(
+      color:
+          accent ? oc.accent.withOpacity(dark ? 0.28 : 0.18) : oc.borderColor,
+    ),
+    boxShadow: elevated
+        ? [
+            BoxShadow(
+              color: dark
+                  ? Colors.black.withOpacity(0.28)
+                  : Colors.black.withOpacity(0.06),
+              blurRadius: 28,
+              spreadRadius: -10,
+              offset: const Offset(0, 14),
+            ),
+            BoxShadow(
+              color: Colors.white.withOpacity(dark ? 0.03 : 0.72),
+              blurRadius: 1,
+              offset: const Offset(0, 1),
+            ),
+          ]
+        : null,
+  );
+}
+
+InputDecoration _settingsInputDecoration(
+  BuildContext context, {
+  required String label,
+  String? hint,
+  IconData? icon,
+}) {
+  final oc = context.oc;
+  final radius = BorderRadius.circular(16);
+  return InputDecoration(
+    labelText: label,
+    hintText: hint,
+    prefixIcon: icon == null ? null : Icon(icon, size: 18),
+    filled: true,
+    fillColor:
+        oc.composerOptionBg.withOpacity(context.isDarkMode ? 0.62 : 0.72),
+    contentPadding: const EdgeInsets.symmetric(horizontal: 14, vertical: 13),
+    border: OutlineInputBorder(
+      borderRadius: radius,
+      borderSide: BorderSide(color: oc.softBorderColor),
+    ),
+    enabledBorder: OutlineInputBorder(
+      borderRadius: radius,
+      borderSide: BorderSide(color: oc.softBorderColor),
+    ),
+    focusedBorder: OutlineInputBorder(
+      borderRadius: radius,
+      borderSide: BorderSide(color: oc.accent.withOpacity(0.55)),
+    ),
+  );
+}
+
 Future<void> openAppSettingsSheet(
   BuildContext context, {
   required AppController controller,
@@ -27,8 +94,8 @@ Future<void> openAppSettingsSheet(
   return showModalBottomSheet<void>(
     context: context,
     isScrollControlled: true,
-    backgroundColor: context.oc.pageBackground,
-    barrierColor: Colors.transparent,
+    backgroundColor: Colors.transparent,
+    barrierColor: Colors.black.withOpacity(context.isDarkMode ? 0.16 : 0.08),
     builder: (context) => FractionallySizedBox(
       heightFactor: 0.92,
       child: _AppSettingsSheet(
@@ -1300,7 +1367,8 @@ class _AppSettingsSheetState extends State<_AppSettingsSheet> {
     required Widget child,
   }) {
     return ListView(
-      padding: const EdgeInsets.fromLTRB(0, 0, 0, 4),
+      physics: const BouncingScrollPhysics(),
+      padding: const EdgeInsets.fromLTRB(0, 0, 0, 8),
       children: [child],
     );
   }
@@ -1360,8 +1428,8 @@ class _AppSettingsSheetState extends State<_AppSettingsSheet> {
             title: l(context, '快速入口', 'Quick access'),
             subtitle: l(
               context,
-              '把高频动作放到前面，避免在一个长页面里来回滚动。',
-              'Bring frequent actions forward so you do not need to scroll a long page.',
+              '常用配置入口。',
+              'Common configuration shortcuts.',
             ),
             child: Column(
               children: [
@@ -1421,8 +1489,8 @@ class _AppSettingsSheetState extends State<_AppSettingsSheet> {
             title: l(context, 'Skills', 'Skills'),
             subtitle: l(
               context,
-              '工作区技能保持独立入口，不和模型/MCP 配置挤在一起。',
-              'Workspace skills stay on their own path instead of sharing the same long setup form.',
+              '查看当前工作区可用的 skills。',
+              'View skills available in the current workspace.',
             ),
             action: Align(
               alignment: Alignment.centerLeft,
@@ -1533,23 +1601,29 @@ class _AppSettingsSheetState extends State<_AppSettingsSheet> {
                       const SizedBox(height: 12),
                       TextField(
                         controller: _baseUrlController,
-                        decoration: InputDecoration(
-                          labelText: l(context, 'Base URL', 'Base URL'),
+                        decoration: _settingsInputDecoration(
+                          context,
+                          label: l(context, 'Base URL', 'Base URL'),
+                          icon: Icons.link_rounded,
                         ),
                       ),
                       const SizedBox(height: 12),
                       TextField(
                         controller: _apiKeyController,
                         obscureText: true,
-                        decoration: InputDecoration(
-                          labelText: l(context, 'API Key', 'API Key'),
+                        decoration: _settingsInputDecoration(
+                          context,
+                          label: l(context, 'API Key', 'API Key'),
+                          icon: Icons.key_rounded,
                         ),
                       ),
                       const SizedBox(height: 12),
                       TextField(
                         controller: _modelController,
-                        decoration: InputDecoration(
-                          labelText: l(context, '模型', 'Model'),
+                        decoration: _settingsInputDecoration(
+                          context,
+                          label: l(context, '模型', 'Model'),
+                          icon: Icons.auto_awesome_rounded,
                         ),
                       ),
                       const SizedBox(height: 12),
@@ -1631,16 +1705,18 @@ class _AppSettingsSheetState extends State<_AppSettingsSheet> {
                       return Padding(
                         padding: const EdgeInsets.only(bottom: 12),
                         child: Container(
-                          decoration: BoxDecoration(
-                            color: context.oc.mutedPanel,
-                            borderRadius: BorderRadius.circular(14),
-                            border: Border.all(color: context.oc.border),
+                          decoration: _settingsSurfaceDecoration(
+                            context,
+                            color: context.oc.composerOptionBg
+                                .withOpacity(context.isDarkMode ? 0.50 : 0.68),
+                            radius: 18,
+                            elevated: false,
                           ),
                           child: Column(
                             children: [
                               InkWell(
                                 borderRadius: const BorderRadius.vertical(
-                                  top: Radius.circular(14),
+                                  top: Radius.circular(18),
                                 ),
                                 onTap: () {
                                   if (_modelsQuery.trim().isNotEmpty) return;
@@ -1651,7 +1727,7 @@ class _AppSettingsSheetState extends State<_AppSettingsSheet> {
                                 },
                                 child: Padding(
                                   padding:
-                                      const EdgeInsets.fromLTRB(12, 10, 12, 10),
+                                      const EdgeInsets.fromLTRB(13, 11, 13, 11),
                                   child: Row(
                                     children: [
                                       Expanded(
@@ -1664,7 +1740,7 @@ class _AppSettingsSheetState extends State<_AppSettingsSheet> {
                                               style: TextStyle(
                                                 fontSize: 13.5,
                                                 fontWeight: FontWeight.w700,
-                                                color: context.oc.text,
+                                                color: context.oc.foreground,
                                               ),
                                             ),
                                             const SizedBox(height: 3),
@@ -1672,7 +1748,8 @@ class _AppSettingsSheetState extends State<_AppSettingsSheet> {
                                               '$visibleCount / ${models.length} ${l(context, '可见模型', 'visible models')}',
                                               style: TextStyle(
                                                 fontSize: 11.5,
-                                                color: context.oc.muted,
+                                                color:
+                                                    context.oc.foregroundMuted,
                                               ),
                                             ),
                                           ],
@@ -1697,7 +1774,9 @@ class _AppSettingsSheetState extends State<_AppSettingsSheet> {
                                 ),
                               ),
                               if (expanded) ...[
-                                Divider(height: 1, color: context.oc.border),
+                                Divider(
+                                    height: 1,
+                                    color: context.oc.softBorderColor),
                                 for (var i = 0; i < models.length; i++) ...[
                                   SwitchListTile.adaptive(
                                     value: _isModelVisible(current, models[i]),
@@ -1800,8 +1879,8 @@ class _AppSettingsSheetState extends State<_AppSettingsSheet> {
             title: l(context, 'MCP Servers', 'MCP servers'),
             subtitle: l(
               context,
-              '借鉴 opencode 的做法，把 server 状态、目录和操作集中在一个清晰区域里。',
-              'Inspired by opencode: keep server state, catalogs, and actions in one clear area.',
+              '管理远程 tools、resources 和 prompts。',
+              'Manage remote tools, resources, and prompts.',
             ),
             action: Wrap(
               spacing: 8,
@@ -1932,15 +2011,20 @@ class _AppSettingsSheetState extends State<_AppSettingsSheet> {
               children: [
                 TextField(
                   controller: _gitNameController,
-                  decoration: InputDecoration(
-                    labelText: l(context, 'Git 用户名', 'Git user name'),
+                  decoration: _settingsInputDecoration(
+                    context,
+                    label: l(context, 'Git 用户名', 'Git user name'),
+                    icon: Icons.person_outline_rounded,
                   ),
                 ),
                 const SizedBox(height: 12),
                 TextField(
                   controller: _gitEmailController,
-                  decoration: InputDecoration(
-                    labelText: l(context, 'Git 邮箱', 'Git email'),
+                  keyboardType: TextInputType.emailAddress,
+                  decoration: _settingsInputDecoration(
+                    context,
+                    label: l(context, 'Git 邮箱', 'Git email'),
+                    icon: Icons.alternate_email_rounded,
                   ),
                 ),
                 const SizedBox(height: 12),
@@ -2018,11 +2102,13 @@ class _AppSettingsSheetState extends State<_AppSettingsSheet> {
       if ((status?.error ?? '').isNotEmpty) status!.error!,
     ].join('\n');
     return Container(
-      padding: const EdgeInsets.all(12),
-      decoration: BoxDecoration(
-        color: oc.mutedPanel,
-        borderRadius: BorderRadius.circular(14),
-        border: Border.all(color: oc.border),
+      padding: const EdgeInsets.fromLTRB(13, 12, 13, 13),
+      decoration: _settingsSurfaceDecoration(
+        context,
+        color:
+            oc.composerOptionBg.withOpacity(context.isDarkMode ? 0.50 : 0.68),
+        radius: 18,
+        elevated: false,
       ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
@@ -2034,7 +2120,7 @@ class _AppSettingsSheetState extends State<_AppSettingsSheet> {
                   server.name,
                   style: TextStyle(
                     fontWeight: FontWeight.w700,
-                    color: oc.text,
+                    color: oc.foreground,
                   ),
                 ),
               ),
@@ -2053,7 +2139,7 @@ class _AppSettingsSheetState extends State<_AppSettingsSheet> {
             style: TextStyle(
               fontSize: 12.5,
               height: 1.35,
-              color: oc.muted,
+              color: oc.foregroundMuted,
             ),
           ),
           const SizedBox(height: 10),
@@ -2138,10 +2224,12 @@ class _AppSettingsSheetState extends State<_AppSettingsSheet> {
                   Container(
                     width: double.infinity,
                     margin: const EdgeInsets.only(bottom: 10),
-                    decoration: BoxDecoration(
-                      border: Border.all(color: oc.border),
-                      borderRadius: BorderRadius.circular(14),
-                      color: oc.surface.withOpacity(0.55),
+                    decoration: _settingsSurfaceDecoration(
+                      context,
+                      color: oc.composerOptionBg
+                          .withOpacity(context.isDarkMode ? 0.50 : 0.68),
+                      radius: 18,
+                      elevated: false,
                     ),
                     child: Padding(
                       padding: const EdgeInsets.all(12),
@@ -2156,7 +2244,7 @@ class _AppSettingsSheetState extends State<_AppSettingsSheet> {
                                   style: TextStyle(
                                     fontSize: 14,
                                     fontWeight: FontWeight.w600,
-                                    color: oc.text,
+                                    color: oc.foreground,
                                   ),
                                 ),
                               ),
@@ -2183,13 +2271,15 @@ class _AppSettingsSheetState extends State<_AppSettingsSheet> {
                           const SizedBox(height: 6),
                           Text(
                             '${key.algorithm}  ${key.fingerprint}',
-                            style: TextStyle(fontSize: 12, color: oc.muted),
+                            style: TextStyle(
+                                fontSize: 12, color: oc.foregroundMuted),
                           ),
                           if (key.comment.trim().isNotEmpty) ...[
                             const SizedBox(height: 4),
                             Text(
                               key.comment,
-                              style: TextStyle(fontSize: 12, color: oc.muted),
+                              style: TextStyle(
+                                  fontSize: 12, color: oc.foregroundMuted),
                             ),
                           ],
                           const SizedBox(height: 10),
@@ -2276,23 +2366,25 @@ class _AppSettingsSheetState extends State<_AppSettingsSheet> {
           ),
         ],
         child: Container(
-          decoration: BoxDecoration(
-            color: oc.surface.withOpacity(0.9),
-            borderRadius: BorderRadius.circular(12),
-            border: Border.all(color: oc.border),
+          decoration: _settingsSurfaceDecoration(
+            context,
+            color: oc.composerOptionBg
+                .withOpacity(context.isDarkMode ? 0.56 : 0.72),
+            radius: 16,
+            elevated: false,
           ),
           padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 9),
           child: Row(
             mainAxisSize: MainAxisSize.min,
             children: [
-              Icon(Icons.add_circle_outline, size: 18, color: oc.text),
+              Icon(Icons.add_circle_outline, size: 18, color: oc.foreground),
               const SizedBox(width: 8),
               Text(
                 l(context, '新增认证', 'Add credential'),
                 style: TextStyle(
                   fontSize: 13,
                   fontWeight: FontWeight.w600,
-                  color: oc.text,
+                  color: oc.foreground,
                 ),
               ),
             ],
@@ -2306,7 +2398,7 @@ class _AppSettingsSheetState extends State<_AppSettingsSheet> {
                 'SSH 远程如果没有单独配置，会回退到默认 SSH Key。',
                 'SSH remotes fall back to the default SSH key when no explicit binding exists.',
               ),
-              style: TextStyle(fontSize: 12.5, color: oc.muted),
+              style: TextStyle(fontSize: 12.5, color: oc.foregroundMuted),
             )
           : Column(
               children: [
@@ -2331,10 +2423,12 @@ class _AppSettingsSheetState extends State<_AppSettingsSheet> {
                       return Container(
                         width: double.infinity,
                         margin: const EdgeInsets.only(bottom: 10),
-                        decoration: BoxDecoration(
-                          border: Border.all(color: oc.border),
-                          borderRadius: BorderRadius.circular(14),
-                          color: oc.surface.withOpacity(0.55),
+                        decoration: _settingsSurfaceDecoration(
+                          context,
+                          color: oc.composerOptionBg
+                              .withOpacity(context.isDarkMode ? 0.50 : 0.68),
+                          radius: 18,
+                          elevated: false,
                         ),
                         child: Padding(
                           padding: const EdgeInsets.all(12),
@@ -2346,28 +2440,29 @@ class _AppSettingsSheetState extends State<_AppSettingsSheet> {
                                 style: TextStyle(
                                   fontSize: 14,
                                   fontWeight: FontWeight.w600,
-                                  color: oc.text,
+                                  color: oc.foreground,
                                 ),
                               ),
                               const SizedBox(height: 6),
                               Text(
                                 '$typeLabel  ${credential.host}$pathLabel',
-                                style: TextStyle(fontSize: 12, color: oc.muted),
+                                style: TextStyle(
+                                    fontSize: 12, color: oc.foregroundMuted),
                               ),
                               if (credential.username.trim().isNotEmpty) ...[
                                 const SizedBox(height: 4),
                                 Text(
                                   '${l(context, '用户名', 'Username')}: ${credential.username}',
-                                  style:
-                                      TextStyle(fontSize: 12, color: oc.muted),
+                                  style: TextStyle(
+                                      fontSize: 12, color: oc.foregroundMuted),
                                 ),
                               ],
                               if (sshKey != null) ...[
                                 const SizedBox(height: 4),
                                 Text(
                                   '${l(context, 'SSH Key', 'SSH key')}: ${sshKey.name}',
-                                  style:
-                                      TextStyle(fontSize: 12, color: oc.muted),
+                                  style: TextStyle(
+                                      fontSize: 12, color: oc.foregroundMuted),
                                 ),
                               ],
                               const SizedBox(height: 10),
@@ -2429,60 +2524,97 @@ class _AppSettingsSheetState extends State<_AppSettingsSheet> {
         return SafeArea(
           child: Padding(
             padding: EdgeInsets.fromLTRB(
-              12,
+              10,
               0,
-              12,
-              MediaQuery.of(context).viewInsets.bottom + 12,
+              10,
+              MediaQuery.of(context).viewInsets.bottom + 10,
             ),
             child: DecoratedBox(
-              decoration: BoxDecoration(
+              decoration: _settingsSurfaceDecoration(
+                context,
                 color: oc.surface,
-                borderRadius: BorderRadius.circular(20),
-                border: Border.all(color: oc.border),
-                boxShadow: [
-                  BoxShadow(
-                    color: oc.shadow,
-                    blurRadius: 20,
-                    offset: const Offset(0, 8),
-                  ),
-                ],
+                radius: 30,
               ),
               child: Padding(
-                padding: const EdgeInsets.fromLTRB(14, 0, 14, 14),
+                padding: const EdgeInsets.fromLTRB(16, 0, 16, 16),
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.stretch,
                   children: [
                     _compactPickerHandle(context),
-                    Row(
-                      children: [
-                        Expanded(
-                          child: Text(
-                            l(context, '设置', 'Settings'),
-                            style: TextStyle(
-                              fontSize: 16,
-                              fontWeight: FontWeight.w700,
-                              color: oc.text,
+                    Container(
+                      padding: const EdgeInsets.fromLTRB(14, 12, 8, 13),
+                      decoration: _settingsSurfaceDecoration(
+                        context,
+                        color: oc.panelBackground,
+                        radius: 24,
+                        accent: true,
+                        elevated: false,
+                      ),
+                      child: Row(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Container(
+                            width: 38,
+                            height: 38,
+                            decoration: BoxDecoration(
+                              color: oc.accent.withOpacity(
+                                  context.isDarkMode ? 0.16 : 0.10),
+                              borderRadius: BorderRadius.circular(15),
+                              border: Border.all(
+                                color: oc.accent.withOpacity(
+                                    context.isDarkMode ? 0.28 : 0.16),
+                              ),
+                            ),
+                            child: Icon(
+                              Icons.tune_rounded,
+                              size: 20,
+                              color: oc.accent,
                             ),
                           ),
-                        ),
-                        IconButton(
-                          onPressed: () => Navigator.of(context).pop(),
-                          icon: const Icon(Icons.close, size: 20),
-                          visualDensity: VisualDensity.compact,
-                        ),
-                      ],
-                    ),
-                    const SizedBox(height: 6),
-                    Text(
-                      l(
-                        context,
-                        '把高频设置拆成更清晰的目的地，减少在一个长页面里滚动。',
-                        'Split high-frequency settings into clearer destinations so you scroll less.',
-                      ),
-                      style: TextStyle(
-                        fontSize: 12.5,
-                        height: 1.35,
-                        color: oc.muted,
+                          const SizedBox(width: 13),
+                          Expanded(
+                            child: Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                Text(
+                                  l(context, '设置', 'Settings'),
+                                  style: Theme.of(context)
+                                      .textTheme
+                                      .titleMedium
+                                      ?.copyWith(
+                                        fontWeight: FontWeight.w700,
+                                        letterSpacing: -0.2,
+                                        color: oc.foreground,
+                                      ),
+                                ),
+                                const SizedBox(height: 5),
+                                Text(
+                                  l(
+                                    context,
+                                    '模型、MCP、Git 与凭据配置。',
+                                    'Models, MCP, Git, and credentials.',
+                                  ),
+                                  style: TextStyle(
+                                    fontSize: 12.5,
+                                    height: 1.35,
+                                    color: oc.foregroundMuted,
+                                  ),
+                                ),
+                              ],
+                            ),
+                          ),
+                          IconButton(
+                            onPressed: () => Navigator.of(context).pop(),
+                            icon: const Icon(Icons.close_rounded, size: 20),
+                            visualDensity: VisualDensity.compact,
+                            style: IconButton.styleFrom(
+                              tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                              backgroundColor:
+                                  oc.composerOptionBg.withOpacity(0.72),
+                              side: BorderSide(color: oc.softBorderColor),
+                            ),
+                          ),
+                        ],
                       ),
                     ),
                     const SizedBox(height: 12),
@@ -2554,12 +2686,13 @@ class _SettingsMetaChip extends StatelessWidget {
     final oc = context.oc;
     return DecoratedBox(
       decoration: BoxDecoration(
-        color: oc.panelBackground,
+        color:
+            oc.composerOptionBg.withOpacity(context.isDarkMode ? 0.58 : 0.74),
         borderRadius: BorderRadius.circular(999),
-        border: Border.all(color: oc.border),
+        border: Border.all(color: oc.softBorderColor),
       ),
       child: Padding(
-        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 7),
+        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
         child: Row(
           mainAxisSize: MainAxisSize.min,
           children: [
@@ -2569,8 +2702,9 @@ class _SettingsMetaChip extends StatelessWidget {
               label,
               style: TextStyle(
                 fontSize: 12,
-                fontWeight: FontWeight.w500,
-                color: oc.text,
+                fontWeight: FontWeight.w600,
+                color: oc.foreground,
+                letterSpacing: 0.02,
               ),
             ),
           ],
@@ -2597,16 +2731,22 @@ class _SettingsNavChip extends StatelessWidget {
   Widget build(BuildContext context) {
     final oc = context.oc;
     return Material(
-      color: selected ? oc.selectedFill : oc.panelBackground,
+      color: selected
+          ? oc.accent.withOpacity(context.isDarkMode ? 0.15 : 0.10)
+          : oc.composerOptionBg.withOpacity(context.isDarkMode ? 0.56 : 0.72),
       borderRadius: BorderRadius.circular(999),
       child: InkWell(
         onTap: onTap,
         borderRadius: BorderRadius.circular(999),
         child: Container(
-          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 9),
+          padding: const EdgeInsets.symmetric(horizontal: 13, vertical: 10),
           decoration: BoxDecoration(
             borderRadius: BorderRadius.circular(999),
-            border: Border.all(color: selected ? oc.accent : oc.border),
+            border: Border.all(
+              color: selected
+                  ? oc.accent.withOpacity(context.isDarkMode ? 0.44 : 0.32)
+                  : oc.softBorderColor,
+            ),
           ),
           child: Row(
             mainAxisSize: MainAxisSize.min,
@@ -2618,7 +2758,7 @@ class _SettingsNavChip extends StatelessWidget {
                 style: TextStyle(
                   fontSize: 12.5,
                   fontWeight: FontWeight.w600,
-                  color: selected ? oc.accent : oc.text,
+                  color: selected ? oc.accent : oc.foreground,
                 ),
               ),
             ],
@@ -2648,28 +2788,31 @@ class _SettingsDestinationCard extends StatelessWidget {
   Widget build(BuildContext context) {
     final oc = context.oc;
     return Material(
-      color: oc.mutedPanel,
-      borderRadius: BorderRadius.circular(14),
+      color: Colors.transparent,
+      borderRadius: BorderRadius.circular(18),
       child: InkWell(
         onTap: onTap,
-        borderRadius: BorderRadius.circular(14),
+        borderRadius: BorderRadius.circular(18),
         child: Container(
-          padding: const EdgeInsets.all(12),
-          decoration: BoxDecoration(
-            borderRadius: BorderRadius.circular(14),
-            border: Border.all(color: oc.border),
+          padding: const EdgeInsets.fromLTRB(13, 12, 12, 12),
+          decoration: _settingsSurfaceDecoration(
+            context,
+            color: oc.composerOptionBg
+                .withOpacity(context.isDarkMode ? 0.54 : 0.70),
+            radius: 18,
+            elevated: false,
           ),
           child: Row(
             children: [
               Container(
-                width: 36,
-                height: 36,
+                width: 38,
+                height: 38,
                 decoration: BoxDecoration(
-                  color: oc.surface,
-                  borderRadius: BorderRadius.circular(10),
-                  border: Border.all(color: oc.border),
+                  color: oc.panelBackground.withOpacity(0.86),
+                  borderRadius: BorderRadius.circular(14),
+                  border: Border.all(color: oc.softBorderColor),
                 ),
-                child: Icon(icon, size: 18, color: oc.text),
+                child: Icon(icon, size: 19, color: oc.accent),
               ),
               const SizedBox(width: 12),
               Expanded(
@@ -2681,7 +2824,7 @@ class _SettingsDestinationCard extends StatelessWidget {
                       style: TextStyle(
                         fontSize: 13.5,
                         fontWeight: FontWeight.w700,
-                        color: oc.text,
+                        color: oc.foreground,
                       ),
                     ),
                     const SizedBox(height: 4),
@@ -2690,7 +2833,7 @@ class _SettingsDestinationCard extends StatelessWidget {
                       style: TextStyle(
                         fontSize: 12,
                         height: 1.3,
-                        color: oc.muted,
+                        color: oc.foregroundMuted,
                       ),
                     ),
                   ],
@@ -2703,7 +2846,7 @@ class _SettingsDestinationCard extends StatelessWidget {
                   style: TextStyle(
                     fontSize: 12,
                     fontWeight: FontWeight.w600,
-                    color: oc.muted,
+                    color: oc.foregroundMuted,
                   ),
                 ),
               ],
@@ -2736,12 +2879,13 @@ class _SettingsSectionCard extends StatelessWidget {
   Widget build(BuildContext context) {
     final oc = context.oc;
     return Container(
-      decoration: BoxDecoration(
+      decoration: _settingsSurfaceDecoration(
+        context,
         color: oc.panelBackground,
-        borderRadius: BorderRadius.circular(18),
-        border: Border.all(color: oc.border),
+        radius: 24,
+        elevated: true,
       ),
-      padding: const EdgeInsets.all(14),
+      padding: const EdgeInsets.fromLTRB(15, 15, 15, 16),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
@@ -2749,16 +2893,20 @@ class _SettingsSectionCard extends StatelessWidget {
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
               Container(
-                width: 34,
-                height: 34,
+                width: 36,
+                height: 36,
                 decoration: BoxDecoration(
-                  color: oc.surface.withOpacity(0.9),
-                  borderRadius: BorderRadius.circular(12),
-                  border: Border.all(color: oc.border),
+                  color:
+                      oc.accent.withOpacity(context.isDarkMode ? 0.14 : 0.09),
+                  borderRadius: BorderRadius.circular(14),
+                  border: Border.all(
+                    color:
+                        oc.accent.withOpacity(context.isDarkMode ? 0.26 : 0.14),
+                  ),
                 ),
                 child: Icon(icon, size: 18, color: oc.accent),
               ),
-              const SizedBox(width: 10),
+              const SizedBox(width: 12),
               Expanded(
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
@@ -2768,7 +2916,8 @@ class _SettingsSectionCard extends StatelessWidget {
                       style: TextStyle(
                         fontSize: 14,
                         fontWeight: FontWeight.w700,
-                        color: oc.text,
+                        color: oc.foreground,
+                        letterSpacing: -0.05,
                       ),
                     ),
                     if (subtitle?.isNotEmpty == true) ...[
@@ -2778,7 +2927,7 @@ class _SettingsSectionCard extends StatelessWidget {
                         style: TextStyle(
                           fontSize: 12.5,
                           height: 1.35,
-                          color: oc.muted,
+                          color: oc.foregroundMuted,
                         ),
                       ),
                     ],

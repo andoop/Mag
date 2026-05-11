@@ -648,28 +648,150 @@ class _ProjectNameDialogState extends State<_ProjectNameDialog> {
     super.dispose();
   }
 
+  void _submit() {
+    final value = _controller.text.trim();
+    if (value.isEmpty) return;
+    Navigator.of(context).pop(value);
+  }
+
   @override
   Widget build(BuildContext context) {
-    return AlertDialog(
-      title: Text(widget.title),
-      content: TextField(
-        controller: _controller,
-        autofocus: true,
-        decoration: InputDecoration(
-          hintText: widget.hintText,
+    final oc = context.oc;
+    return Dialog(
+      insetPadding: const EdgeInsets.symmetric(horizontal: 22, vertical: 24),
+      backgroundColor: Colors.transparent,
+      elevation: 0,
+      child: Container(
+        width: double.infinity,
+        constraints: const BoxConstraints(maxWidth: 420),
+        padding: const EdgeInsets.fromLTRB(18, 18, 18, 16),
+        decoration: BoxDecoration(
+          color: oc.panelBackground,
+          borderRadius: BorderRadius.circular(26),
+          border: Border.all(color: oc.borderColor),
+          boxShadow: [
+            BoxShadow(
+              color: context.isDarkMode
+                  ? Colors.black.withOpacity(0.32)
+                  : Colors.black.withOpacity(0.08),
+              blurRadius: 28,
+              spreadRadius: -10,
+              offset: const Offset(0, 14),
+            ),
+          ],
         ),
-        onSubmitted: (value) => Navigator.of(context).pop(value.trim()),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Row(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Container(
+                  width: 38,
+                  height: 38,
+                  decoration: BoxDecoration(
+                    color:
+                        oc.accent.withOpacity(context.isDarkMode ? 0.16 : 0.10),
+                    borderRadius: BorderRadius.circular(15),
+                    border: Border.all(
+                      color: oc.accent
+                          .withOpacity(context.isDarkMode ? 0.28 : 0.16),
+                    ),
+                  ),
+                  child: Icon(
+                    Icons.create_new_folder_rounded,
+                    size: 20,
+                    color: oc.accent,
+                  ),
+                ),
+                const SizedBox(width: 13),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        widget.title,
+                        style:
+                            Theme.of(context).textTheme.titleMedium?.copyWith(
+                                  color: oc.foreground,
+                                  fontWeight: FontWeight.w700,
+                                  letterSpacing: -0.15,
+                                ),
+                      ),
+                      const SizedBox(height: 4),
+                      Text(
+                        l(
+                          context,
+                          '给这个工作区取一个清晰的名字，之后可以随时重命名。',
+                          'Give this workspace a clear name. You can rename it later.',
+                        ),
+                        style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                              color: oc.foregroundMuted,
+                              height: 1.35,
+                            ),
+                      ),
+                    ],
+                  ),
+                ),
+              ],
+            ),
+            const SizedBox(height: 18),
+            TextField(
+              controller: _controller,
+              autofocus: true,
+              textInputAction: TextInputAction.done,
+              style: const TextStyle(fontSize: 15, height: 1.25),
+              decoration: InputDecoration(
+                hintText: widget.hintText,
+                filled: true,
+                fillColor: oc.composerOptionBg.withOpacity(0.72),
+                contentPadding:
+                    const EdgeInsets.symmetric(horizontal: 14, vertical: 13),
+                border: OutlineInputBorder(
+                  borderRadius: BorderRadius.circular(16),
+                  borderSide: BorderSide(color: oc.softBorderColor),
+                ),
+                enabledBorder: OutlineInputBorder(
+                  borderRadius: BorderRadius.circular(16),
+                  borderSide: BorderSide(color: oc.softBorderColor),
+                ),
+                focusedBorder: OutlineInputBorder(
+                  borderRadius: BorderRadius.circular(16),
+                  borderSide: BorderSide(color: oc.accent.withOpacity(0.55)),
+                ),
+              ),
+              onSubmitted: (_) => _submit(),
+            ),
+            const SizedBox(height: 16),
+            Row(
+              children: [
+                TextButton(
+                  onPressed: () => Navigator.of(context).pop(),
+                  style: TextButton.styleFrom(
+                    shape: const StadiumBorder(),
+                    padding: const EdgeInsets.symmetric(
+                        horizontal: 14, vertical: 10),
+                  ),
+                  child: Text(l(context, '取消', 'Cancel')),
+                ),
+                const Spacer(),
+                FilledButton(
+                  onPressed: _submit,
+                  style: FilledButton.styleFrom(
+                    backgroundColor: oc.sendButtonBg,
+                    foregroundColor: oc.sendButtonFg,
+                    shape: const StadiumBorder(),
+                    padding: const EdgeInsets.symmetric(
+                        horizontal: 18, vertical: 11),
+                  ),
+                  child: Text(widget.confirmText),
+                ),
+              ],
+            ),
+          ],
+        ),
       ),
-      actions: [
-        TextButton(
-          onPressed: () => Navigator.of(context).pop(),
-          child: Text(l(context, '取消', 'Cancel')),
-        ),
-        FilledButton(
-          onPressed: () => Navigator.of(context).pop(_controller.text.trim()),
-          child: Text(widget.confirmText),
-        ),
-      ],
     );
   }
 }

@@ -118,6 +118,42 @@ String _formatTimelineTimestamp(int ms) {
 
 const Duration _kStreamingBubbleResizeDuration = Duration(milliseconds: 160);
 
+BoxDecoration _chatSurfaceDecoration(
+  BuildContext context, {
+  required Color color,
+  double radius = 24,
+  bool elevated = true,
+  bool accent = false,
+}) {
+  final oc = context.oc;
+  final dark = context.isDarkMode;
+  return BoxDecoration(
+    color: color,
+    borderRadius: BorderRadius.circular(radius),
+    border: Border.all(
+      color:
+          accent ? oc.accent.withOpacity(dark ? 0.28 : 0.18) : oc.borderColor,
+    ),
+    boxShadow: elevated
+        ? [
+            BoxShadow(
+              color: dark
+                  ? Colors.black.withOpacity(0.22)
+                  : Colors.black.withOpacity(0.045),
+              blurRadius: 22,
+              spreadRadius: -8,
+              offset: const Offset(0, 10),
+            ),
+            BoxShadow(
+              color: Colors.white.withOpacity(dark ? 0.03 : 0.82),
+              blurRadius: 1,
+              offset: const Offset(0, 1),
+            ),
+          ]
+        : null,
+  );
+}
+
 class _StreamingBubbleSize extends StatelessWidget {
   const _StreamingBubbleSize({
     required this.enabled,
@@ -553,11 +589,11 @@ class _AssistantTurnBubble extends StatelessWidget {
           child: _StreamingBubbleSize(
             enabled: isStreamingTurn,
             child: Container(
-              padding: const EdgeInsets.fromLTRB(13, 11, 13, 12),
-              decoration: BoxDecoration(
+              padding: const EdgeInsets.fromLTRB(14, 12, 14, 13),
+              decoration: _chatSurfaceDecoration(
+                context,
                 color: oc.agentBubble,
-                borderRadius: BorderRadius.circular(20),
-                border: Border.all(color: oc.softBorderColor),
+                radius: 24,
               ),
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
@@ -568,9 +604,9 @@ class _AssistantTurnBubble extends StatelessWidget {
                       Text(
                         firstBundle.message.agent,
                         style: Theme.of(context).textTheme.labelSmall?.copyWith(
-                              fontWeight: FontWeight.w600,
+                              fontWeight: FontWeight.w700,
                               color: oc.foregroundMuted,
-                              letterSpacing: 0.1,
+                              letterSpacing: 0.2,
                             ),
                       ),
                       const SizedBox(width: 6),
@@ -1003,11 +1039,18 @@ class _MessageBubbleState extends State<_MessageBubble> {
             child: _StreamingBubbleSize(
               enabled: widget.isStreamingAssistantMessage && !isUser,
               child: Container(
-                padding: const EdgeInsets.fromLTRB(13, 11, 13, 12),
-                decoration: BoxDecoration(
+                padding: EdgeInsets.fromLTRB(
+                  isUser ? 15 : 14,
+                  12,
+                  isUser ? 15 : 14,
+                  13,
+                ),
+                decoration: _chatSurfaceDecoration(
+                  context,
                   color: bubbleColor,
-                  borderRadius: BorderRadius.circular(20),
-                  border: Border.all(color: oc.softBorderColor),
+                  radius: isUser ? 24 : 24,
+                  elevated: !isUser,
+                  accent: isUser,
                 ),
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
@@ -1019,9 +1062,9 @@ class _MessageBubbleState extends State<_MessageBubble> {
                           label,
                           style:
                               Theme.of(context).textTheme.labelSmall?.copyWith(
-                                    fontWeight: FontWeight.w600,
+                                    fontWeight: FontWeight.w700,
                                     color: oc.foregroundMuted,
-                                    letterSpacing: 0.1,
+                                    letterSpacing: 0.2,
                                   ),
                         ),
                         const SizedBox(width: 6),
@@ -1127,25 +1170,36 @@ class _SessionAppBarTitle extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final oc = context.oc;
     return Row(
       children: [
-        SizedBox(
-          width: 18,
+        AnimatedContainer(
+          duration: const Duration(milliseconds: 160),
+          curve: Curves.easeOutCubic,
+          width: running ? 18 : 0,
           child: running
-              ? const SizedBox(
-                  width: 14,
-                  height: 14,
-                  child: CircularProgressIndicator(strokeWidth: 2),
+              ? SizedBox(
+                  width: 13,
+                  height: 13,
+                  child: CircularProgressIndicator(
+                    strokeWidth: 2,
+                    color: oc.accent,
+                  ),
                 )
               : null,
         ),
-        const SizedBox(width: 4),
+        if (running) const SizedBox(width: 5),
         Expanded(
           child: Text(
             title,
             maxLines: 2,
             overflow: TextOverflow.ellipsis,
-            style: const TextStyle(fontSize: 15, fontWeight: FontWeight.w600),
+            style: TextStyle(
+              fontSize: 15,
+              fontWeight: FontWeight.w700,
+              color: oc.foreground,
+              letterSpacing: -0.1,
+            ),
           ),
         ),
       ],
@@ -1179,37 +1233,70 @@ class _TimelineHeaderCard extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final oc = context.oc;
+    final dark = context.isDarkMode;
     return Container(
-      padding: const EdgeInsets.fromLTRB(16, 14, 16, 16),
-      decoration: BoxDecoration(
+      padding: const EdgeInsets.fromLTRB(16, 15, 16, 16),
+      decoration: _chatSurfaceDecoration(
+        context,
         color: oc.panelBackground,
-        borderRadius: BorderRadius.circular(22),
-        border: Border.fromBorderSide(BorderSide(color: oc.borderColor)),
-        boxShadow: [
-          BoxShadow(
-            color: oc.shadow,
-            blurRadius: 10,
-            offset: const Offset(0, 1),
-          ),
-        ],
+        radius: 26,
+        accent: true,
       ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Text(
-            sessionTitle,
-            style: const TextStyle(fontSize: 18, fontWeight: FontWeight.w700),
-          ),
-          const SizedBox(height: 4),
-          Text(
-            workspaceName,
-            style: Theme.of(context)
-                .textTheme
-                .bodySmall
-                ?.copyWith(color: oc.foregroundMuted),
+          Row(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Container(
+                width: 34,
+                height: 34,
+                decoration: BoxDecoration(
+                  color: oc.accent.withOpacity(dark ? 0.16 : 0.10),
+                  borderRadius: BorderRadius.circular(13),
+                  border: Border.all(
+                    color: oc.accent.withOpacity(dark ? 0.26 : 0.16),
+                  ),
+                ),
+                child: Icon(
+                  Icons.auto_awesome_rounded,
+                  size: 18,
+                  color: oc.accent,
+                ),
+              ),
+              const SizedBox(width: 12),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      sessionTitle,
+                      maxLines: 2,
+                      overflow: TextOverflow.ellipsis,
+                      style: Theme.of(context).textTheme.titleMedium?.copyWith(
+                            fontWeight: FontWeight.w700,
+                            height: 1.15,
+                            letterSpacing: -0.2,
+                            color: oc.foreground,
+                          ),
+                    ),
+                    const SizedBox(height: 5),
+                    Text(
+                      workspaceName,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                            color: oc.foregroundMuted,
+                            height: 1.2,
+                          ),
+                    ),
+                  ],
+                ),
+              ),
+            ],
           ),
           if (showMeta) ...[
-            const SizedBox(height: 10),
+            const SizedBox(height: 14),
             Wrap(
               spacing: 8,
               runSpacing: 8,
@@ -1441,35 +1528,69 @@ class _EmptyTimelineCard extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final oc = context.oc;
+    final dark = context.isDarkMode;
     return Container(
-      padding: const EdgeInsets.all(18),
-      decoration: BoxDecoration(
+      padding: const EdgeInsets.fromLTRB(18, 18, 18, 16),
+      decoration: _chatSurfaceDecoration(
+        context,
         color: oc.panelBackground,
-        borderRadius: BorderRadius.circular(22),
-        border: Border.fromBorderSide(BorderSide(color: oc.borderColor)),
-        boxShadow: [
-          BoxShadow(
-            color: oc.shadow,
-            blurRadius: 10,
-            offset: const Offset(0, 1),
-          ),
-        ],
+        radius: 26,
+        accent: true,
       ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Text(l(context, '开始对话', 'Start a conversation'),
-              style: const TextStyle(fontWeight: FontWeight.w700)),
-          const SizedBox(height: 6),
-          Text(
-            l(
-                context,
-                '这个区域现在按 Mag web 的结构只保留 timeline 内容。模型、provider、session、agent 都通过顶部入口切换。',
-                'This area now keeps only the timeline content, similar to Mag web. Model, provider, session, and agent are switched from the top controls.'),
-            style: Theme.of(context).textTheme.bodyMedium,
+          Row(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Container(
+                width: 38,
+                height: 38,
+                decoration: BoxDecoration(
+                  color: oc.accent.withOpacity(dark ? 0.16 : 0.10),
+                  borderRadius: BorderRadius.circular(15),
+                  border: Border.all(
+                    color: oc.accent.withOpacity(dark ? 0.28 : 0.16),
+                  ),
+                ),
+                child: Icon(
+                  Icons.chat_bubble_outline_rounded,
+                  size: 19,
+                  color: oc.accent,
+                ),
+              ),
+              const SizedBox(width: 13),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      l(context, '从一个好问题开始', 'Start with a good question'),
+                      style: Theme.of(context).textTheme.titleMedium?.copyWith(
+                            color: oc.foreground,
+                            fontWeight: FontWeight.w700,
+                            letterSpacing: -0.15,
+                          ),
+                    ),
+                    const SizedBox(height: 5),
+                    Text(
+                      l(
+                        context,
+                        '描述目标、贴上上下文，或用 @ 引用文件。Mag 会把工作区理解成一次清晰的对话。',
+                        'Describe the goal, add context, or reference files with @. Mag turns the workspace into a focused conversation.',
+                      ),
+                      style: Theme.of(context).textTheme.bodyMedium?.copyWith(
+                            color: oc.foregroundMuted,
+                            height: 1.42,
+                          ),
+                    ),
+                  ],
+                ),
+              ),
+            ],
           ),
           if (providerLabel != null || modelLabel != null) ...[
-            const SizedBox(height: 12),
+            const SizedBox(height: 16),
             Wrap(
               spacing: 8,
               runSpacing: 8,
@@ -1492,11 +1613,17 @@ class _EmptyTimelineCard extends StatelessWidget {
               ],
             ),
           ],
-          const SizedBox(height: 12),
-          OutlinedButton.icon(
+          const SizedBox(height: 15),
+          FilledButton.tonalIcon(
             onPressed: onSelectModel,
-            icon: const Icon(Icons.auto_awesome_outlined),
-            label: Text(l(context, '选择模型', 'Choose model')),
+            icon: const Icon(Icons.auto_awesome_outlined, size: 17),
+            label: Text(l(context, '调整模型', 'Tune model')),
+            style: FilledButton.styleFrom(
+              tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+              visualDensity: VisualDensity.compact,
+              shape: const StadiumBorder(),
+              padding: const EdgeInsets.symmetric(horizontal: 13, vertical: 9),
+            ),
           ),
         ],
       ),
@@ -1708,19 +1835,21 @@ class _TinyTag extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final oc = context.oc;
     return Container(
-      margin: const EdgeInsets.only(left: 6),
-      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+      padding: const EdgeInsets.symmetric(horizontal: 9, vertical: 4),
       decoration: BoxDecoration(
-        color: color,
+        color: color.withOpacity(context.isDarkMode ? 0.34 : 0.52),
         borderRadius: BorderRadius.circular(999),
+        border: Border.all(color: oc.softBorderColor),
       ),
       child: Text(
         label,
-        style: Theme.of(context)
-            .textTheme
-            .labelSmall
-            ?.copyWith(fontWeight: FontWeight.w600),
+        style: Theme.of(context).textTheme.labelSmall?.copyWith(
+              color: oc.foreground,
+              fontWeight: FontWeight.w600,
+              letterSpacing: 0.05,
+            ),
       ),
     );
   }
