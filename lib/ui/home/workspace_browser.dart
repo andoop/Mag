@@ -125,6 +125,32 @@ void _showWorkspaceHtmlOpenChoice(
                       );
                     },
             ),
+            ListTile(
+              leading: Icon(Icons.link_rounded, color: ctx.oc.accent),
+              title: Text(l(ctx, '复制访问地址', 'Copy access URL')),
+              subtitle: Text(
+                serverUri == null
+                    ? l(ctx, '本地服务未就绪', 'Local server not ready')
+                    : l(
+                        ctx,
+                        '复制带真实内网 IP 的 HTTP 地址',
+                        'Copy the HTTP URL with the real LAN IP',
+                      ),
+                style: Theme.of(ctx).textTheme.bodySmall,
+              ),
+              enabled: serverUri != null,
+              onTap: serverUri == null
+                  ? null
+                  : () {
+                      Navigator.of(ctx).pop();
+                      unawaited(_copyWorkspaceEntryAccessUrl(
+                        context,
+                        controller: controller,
+                        workspace: workspace,
+                        entry: entry,
+                      ));
+                    },
+            ),
             const SizedBox(height: 8),
           ],
         ),
@@ -239,6 +265,96 @@ Future<void> _copyWorkspaceEntryRelativePath(
   final copiedLabel = l(context, '相对路径已复制', 'Relative path copied');
   final messenger = ScaffoldMessenger.maybeOf(context);
   await Clipboard.setData(ClipboardData(text: entry.path));
+  messenger?.hideCurrentSnackBar();
+  messenger?.showSnackBar(SnackBar(content: Text(copiedLabel)));
+}
+
+bool _serverHostNeedsLanAddress(String host) {
+  final lower = host.toLowerCase();
+  return lower == 'localhost' ||
+      lower == '0.0.0.0' ||
+      lower == '::' ||
+      lower == '::1' ||
+      lower.startsWith('127.');
+}
+
+bool _isUsableLanIPv4(InternetAddress address) {
+  final bytes = address.rawAddress;
+  if (bytes.length != 4 || address.isLoopback) return false;
+  if (bytes[0] == 0 || bytes[0] == 127) return false;
+  if (bytes[0] == 169 && bytes[1] == 254) return false;
+  return true;
+}
+
+bool _isPrivateLanIPv4(InternetAddress address) {
+  final bytes = address.rawAddress;
+  if (!_isUsableLanIPv4(address)) return false;
+  return bytes[0] == 10 ||
+      (bytes[0] == 172 && bytes[1] >= 16 && bytes[1] <= 31) ||
+      (bytes[0] == 192 && bytes[1] == 168) ||
+      (bytes[0] == 100 && bytes[1] >= 64 && bytes[1] <= 127);
+}
+
+Future<InternetAddress?> _findLanIPv4Address() async {
+  final interfaces = await NetworkInterface.list(
+    includeLoopback: false,
+    type: InternetAddressType.IPv4,
+  );
+  final candidates = <InternetAddress>[
+    for (final networkInterface in interfaces)
+      for (final address in networkInterface.addresses)
+        if (_isUsableLanIPv4(address)) address,
+  ];
+  if (candidates.isEmpty) return null;
+  for (final address in candidates) {
+    if (_isPrivateLanIPv4(address)) return address;
+  }
+  return candidates.first;
+}
+
+Future<Uri?> _workspaceLanPreviewUrl({
+  required Uri serverUri,
+  required WorkspaceInfo workspace,
+  required String path,
+}) async {
+  final lanServerUri = _serverHostNeedsLanAddress(serverUri.host)
+      ? serverUri.replace(host: (await _findLanIPv4Address())?.address)
+      : serverUri;
+  if (_serverHostNeedsLanAddress(lanServerUri.host)) return null;
+  return _workspacePreviewUrl(
+    serverUri: lanServerUri,
+    workspace: workspace,
+    path: path,
+  );
+}
+
+Future<void> _copyWorkspaceEntryAccessUrl(
+  BuildContext context, {
+  required AppController controller,
+  required WorkspaceInfo workspace,
+  required WorkspaceEntry entry,
+}) async {
+  final serverUri = controller.state.serverUri;
+  final copiedLabel = l(context, '访问地址已复制', 'Access URL copied');
+  final serverNotReadyLabel = l(context, '本地服务未就绪', 'Local server not ready');
+  final noLanIpLabel = l(context, '未找到可用的内网 IP', 'No usable LAN IP found');
+  final messenger = ScaffoldMessenger.maybeOf(context);
+  if (serverUri == null) {
+    messenger?.hideCurrentSnackBar();
+    messenger?.showSnackBar(SnackBar(content: Text(serverNotReadyLabel)));
+    return;
+  }
+  final previewUrl = await _workspaceLanPreviewUrl(
+    serverUri: serverUri,
+    workspace: workspace,
+    path: entry.path,
+  );
+  if (previewUrl == null) {
+    messenger?.hideCurrentSnackBar();
+    messenger?.showSnackBar(SnackBar(content: Text(noLanIpLabel)));
+    return;
+  }
+  await Clipboard.setData(ClipboardData(text: previewUrl.toString()));
   messenger?.hideCurrentSnackBar();
   messenger?.showSnackBar(SnackBar(content: Text(copiedLabel)));
 }
@@ -518,6 +634,25 @@ void _showWorkspaceEntryMoreMenu(
                   unawaited(
                     _createWorkspaceWebShortcut(context, workspace, entry),
                   );
+                },
+              ),
+            if (!entry.isDirectory && _pathLooksHtmlFile(entry.path))
+              ListTile(
+                leading: Icon(Icons.link_rounded, color: ctx.oc.accent),
+                title: Text(l(ctx, '复制访问地址', 'Copy access URL')),
+                subtitle: Text(
+                  l(ctx, '复制带真实内网 IP 的 HTTP 地址',
+                      'Copy the HTTP URL with the real LAN IP'),
+                  style: Theme.of(ctx).textTheme.bodySmall,
+                ),
+                onTap: () {
+                  Navigator.pop(ctx);
+                  unawaited(_copyWorkspaceEntryAccessUrl(
+                    context,
+                    controller: controller,
+                    workspace: workspace,
+                    entry: entry,
+                  ));
                 },
               ),
             ListTile(

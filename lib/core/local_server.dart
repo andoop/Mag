@@ -41,15 +41,15 @@ class LocalServer {
   Uri? get baseUri {
     final server = _server;
     if (server == null) return null;
-    return Uri.parse('http://${server.address.address}:${server.port}');
+    return Uri.parse('http://127.0.0.1:${server.port}');
   }
 
   Future<Uri> start() async {
     final existing = _server;
     if (existing != null) {
-      return Uri.parse('http://${existing.address.address}:${existing.port}');
+      return Uri.parse('http://127.0.0.1:${existing.port}');
     }
-    _server = await HttpServer.bind(InternetAddress.loopbackIPv4, 0);
+    _server = await HttpServer.bind(InternetAddress.anyIPv4, 0);
     unawaited(_listen());
     return baseUri!;
   }
