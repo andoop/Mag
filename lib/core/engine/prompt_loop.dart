@@ -45,6 +45,8 @@ extension SessionEnginePrompt on SessionEngine {
       status: const SessionRunStatus(phase: SessionRunPhase.busy),
       directory: workspace.treeUri,
     );
+    String? terminalError;
+    MessageInfo? terminalAssistant;
     try {
       final modelConfig = await _loadResolvedModelConfig();
       final cacheLoadStartedAt = DateTime.now().millisecondsSinceEpoch;
@@ -392,6 +394,7 @@ extension SessionEnginePrompt on SessionEngine {
           parentMessageId: currentUserMessage.id,
         );
         await saveTrackedMessage(assistant);
+        terminalAssistant = assistant;
         await saveTrackedPart(
           MessagePart(
             id: newId('part'),
@@ -1177,10 +1180,32 @@ extension SessionEnginePrompt on SessionEngine {
       );
       rethrow;
     } catch (error) {
+      terminalError = error.toString();
       _debugLog('prompt', 'error: $error');
+      final failedAssistant = terminalAssistant;
+      if (failedAssistant != null) {
+        await _saveMessage(
+            workspace: workspace,
+            message: MessageInfo(
+              id: failedAssistant.id,
+              sessionId: failedAssistant.sessionId,
+              role: failedAssistant.role,
+              agent: failedAssistant.agent,
+              createdAt: failedAssistant.createdAt,
+              text: failedAssistant.text,
+              format: failedAssistant.format,
+              model: failedAssistant.model,
+              provider: failedAssistant.provider,
+              error: terminalError,
+              structuredOutput: failedAssistant.structuredOutput,
+              parentMessageId: failedAssistant.parentMessageId,
+              summary: failedAssistant.summary,
+              variant: failedAssistant.variant,
+            ));
+      }
       await _cleanupIncompleteToolParts(
           workspace: workspace, sessionId: session.id);
-      // Emit error event (mirrors mag: Session.Event.Error + set idle)
+      // Keep the terminal status as error so UI surfaces the failure after retry exhaustion.
       events.emit(ServerEvent(
         type: 'session.error',
         properties: {
@@ -1197,7 +1222,9 @@ extension SessionEnginePrompt on SessionEngine {
       _busy.remove(session.id);
       _emitSessionStatus(
         sessionId: session.id,
-        status: const SessionRunStatus.idle(),
+        status: terminalError == null
+            ? const SessionRunStatus.idle()
+            : SessionRunStatus.error(terminalError),
         directory: workspace.treeUri,
       );
     }

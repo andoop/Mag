@@ -50,6 +50,12 @@ int _retryDelay(int attempt) {
 
 bool _isRetryableError(Object error) {
   final msg = error.toString().toLowerCase();
+  if (msg.contains('insufficient_quota') ||
+      msg.contains('exceeded your current quota') ||
+      msg.contains('check your plan and billing') ||
+      msg.contains('billing details')) {
+    return false;
+  }
   if (msg.contains('429') || msg.contains('too many requests')) return true;
   if (msg.contains('overloaded') || msg.contains('rate limit')) return true;
   if (msg.contains('502') || msg.contains('503') || msg.contains('504')) {

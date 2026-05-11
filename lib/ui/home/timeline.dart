@@ -1543,6 +1543,14 @@ class _TimelineErrorCard extends StatelessWidget {
 
   final String message;
 
+  String _providerMessage() {
+    var value = message.trim();
+    while (value.startsWith('Exception: ')) {
+      value = value.substring('Exception: '.length).trimLeft();
+    }
+    return value.isEmpty ? message : value;
+  }
+
   String _title(BuildContext context) {
     final lower = message.toLowerCase();
     if (lower.contains('socketexception') ||
@@ -1557,6 +1565,17 @@ class _TimelineErrorCard extends StatelessWidget {
         lower.contains('stopped') ||
         lower.contains('aborted')) {
       return l(context, '已停止', 'Stopped');
+    }
+    if (lower.contains('model request failed') ||
+        lower.contains('provider') ||
+        lower.contains('api key') ||
+        lower.contains('quota') ||
+        lower.contains('billing') ||
+        lower.contains('not supported') ||
+        lower.contains('403') ||
+        lower.contains('401') ||
+        lower.contains('429')) {
+      return l(context, '模型请求失败', 'Model request failed');
     }
     return l(context, '生成未完成', 'Generation did not finish');
   }
@@ -1576,6 +1595,17 @@ class _TimelineErrorCard extends StatelessWidget {
         lower.contains('stopped') ||
         lower.contains('aborted')) {
       return l(context, '本次生成已停止。', 'This generation was stopped.');
+    }
+    if (lower.contains('model request failed') ||
+        lower.contains('provider') ||
+        lower.contains('api key') ||
+        lower.contains('quota') ||
+        lower.contains('billing') ||
+        lower.contains('not supported') ||
+        lower.contains('403') ||
+        lower.contains('401') ||
+        lower.contains('429')) {
+      return _providerMessage();
     }
     return l(context, '这次回复没有完成，可以重新发送或稍后再试。',
         'This response did not finish. Try sending again later.');

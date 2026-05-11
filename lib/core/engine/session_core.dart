@@ -300,6 +300,7 @@ class SessionEngine {
       status: const SessionRunStatus(phase: SessionRunPhase.compacting),
       directory: workspace.treeUri,
     );
+    String? terminalError;
     try {
       return await summarize(
         workspace: workspace,
@@ -308,6 +309,7 @@ class SessionEngine {
         currentAgent: session.agent,
       );
     } catch (error) {
+      terminalError = error.toString();
       events.emit(ServerEvent(
         type: 'session.error',
         properties: {
@@ -322,7 +324,9 @@ class SessionEngine {
       _busy.remove(session.id);
       _emitSessionStatus(
         sessionId: session.id,
-        status: const SessionRunStatus.idle(),
+        status: terminalError == null
+            ? const SessionRunStatus.idle()
+            : SessionRunStatus.error(terminalError),
         directory: workspace.treeUri,
       );
     }

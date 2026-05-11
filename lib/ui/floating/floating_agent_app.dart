@@ -176,6 +176,16 @@ class _FloatingAgentPageState extends State<_FloatingAgentPage> {
       });
       return;
     }
+    if (event.type == 'session.error') {
+      final message =
+          event.properties['message'] as String? ?? 'Unknown session error';
+      setState(() {
+        _status = SessionRunStatus.error(message);
+        _error = message;
+        _loading = false;
+      });
+      return;
+    }
     if (event.type == 'message.updated' ||
         event.type == 'message.part.updated' ||
         event.type == 'message.part.delta' ||
@@ -401,6 +411,13 @@ class _FloatingTimeline extends StatelessWidget {
       return _StateMessage(
         icon: Icons.error_outline_rounded,
         text: error.toString(),
+        onTap: onOpenMainApp,
+      );
+    }
+    if (status.hasError && messages.isEmpty) {
+      return _StateMessage(
+        icon: Icons.error_outline_rounded,
+        text: status.message!,
         onTap: onOpenMainApp,
       );
     }
