@@ -385,27 +385,13 @@ extension _HomePageComposer on _HomePageState {
     return AnimatedContainer(
       duration: const Duration(milliseconds: 180),
       curve: Curves.easeOut,
-      decoration: BoxDecoration(
-        color: oc.pageBackground.withOpacity(context.isDarkMode ? 0.98 : 0.96),
-        border: Border(top: BorderSide(color: oc.softBorderColor)),
-        boxShadow: [
-          BoxShadow(
-            color: context.isDarkMode
-                ? Colors.black.withOpacity(0.24)
-                : Colors.black.withOpacity(0.045),
-            blurRadius: 24,
-            spreadRadius: -8,
-            offset: const Offset(0, -10),
-          ),
-        ],
-      ),
       child: SafeArea(
         top: false,
         child: AnimatedPadding(
           duration: const Duration(milliseconds: 180),
           curve: Curves.easeOut,
           padding: EdgeInsets.fromLTRB(
-              12, isKeyboardOpen ? 4 : 8, 12, isKeyboardOpen ? 6 : 10),
+              10, isKeyboardOpen ? 4 : 5, 10, isKeyboardOpen ? 6 : 9),
           child: Column(
             mainAxisSize: MainAxisSize.min,
             children: [
@@ -437,315 +423,302 @@ extension _HomePageComposer on _HomePageState {
                   },
                 ),
               SizedBox(height: isKeyboardOpen ? 4 : 6),
-              Container(
-                decoration: _chatSurfaceDecoration(
-                  context,
-                  color: oc.panelBackground,
-                  radius: 26,
-                  accent: _promptFocusNode.hasFocus,
-                ),
-                child: Column(
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    if (_activePromptMention != null &&
-                        (_promptMentionSearching ||
-                            _promptMentionSuggestions.isNotEmpty)) ...[
-                      Padding(
-                        padding: const EdgeInsets.fromLTRB(8, 8, 8, 0),
-                        child: Container(
-                          constraints: const BoxConstraints(maxHeight: 220),
-                          decoration: BoxDecoration(
-                            color: oc.composerOptionBg,
-                            borderRadius: BorderRadius.circular(16),
-                            border: Border.all(color: oc.softBorderColor),
-                          ),
-                          child: Column(
-                            mainAxisSize: MainAxisSize.min,
-                            children: [
-                              Padding(
-                                padding:
-                                    const EdgeInsets.fromLTRB(12, 10, 12, 6),
-                                child: Row(
-                                  children: [
-                                    Icon(Icons.alternate_email,
-                                        size: 15, color: oc.foregroundHint),
-                                    const SizedBox(width: 6),
-                                    Expanded(
-                                      child: Text(
-                                        _activePromptMention!.query.isEmpty
-                                            ? l(context, '引用工作区文件或目录',
-                                                'Reference workspace files or folders')
-                                            : l(
-                                                context,
-                                                '搜索 "${_activePromptMention!.query}"',
-                                                'Search "${_activePromptMention!.query}"',
-                                              ),
-                                        style: Theme.of(context)
-                                            .textTheme
-                                            .labelSmall
-                                            ?.copyWith(
-                                                color: oc.foregroundHint,
-                                                fontWeight: FontWeight.w600),
+              Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  if (_activePromptMention != null &&
+                      (_promptMentionSearching ||
+                          _promptMentionSuggestions.isNotEmpty)) ...[
+                    Padding(
+                      padding: const EdgeInsets.fromLTRB(8, 8, 8, 0),
+                      child: Container(
+                        constraints: const BoxConstraints(maxHeight: 220),
+                        decoration: BoxDecoration(
+                          color: oc.composerOptionBg,
+                          borderRadius: BorderRadius.circular(16),
+                          border: Border.all(color: oc.softBorderColor),
+                        ),
+                        child: Column(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            Padding(
+                              padding: const EdgeInsets.fromLTRB(12, 10, 12, 6),
+                              child: Row(
+                                children: [
+                                  Icon(Icons.alternate_email,
+                                      size: 15, color: oc.foregroundHint),
+                                  const SizedBox(width: 6),
+                                  Expanded(
+                                    child: Text(
+                                      _activePromptMention!.query.isEmpty
+                                          ? l(context, '引用工作区文件或目录',
+                                              'Reference workspace files or folders')
+                                          : l(
+                                              context,
+                                              '搜索 "${_activePromptMention!.query}"',
+                                              'Search "${_activePromptMention!.query}"',
+                                            ),
+                                      style: Theme.of(context)
+                                          .textTheme
+                                          .labelSmall
+                                          ?.copyWith(
+                                              color: oc.foregroundHint,
+                                              fontWeight: FontWeight.w600),
+                                    ),
+                                  ),
+                                  if (_promptMentionSearching)
+                                    SizedBox(
+                                      width: 14,
+                                      height: 14,
+                                      child: CircularProgressIndicator(
+                                        strokeWidth: 1.6,
+                                        color: oc.foregroundHint,
                                       ),
                                     ),
-                                    if (_promptMentionSearching)
-                                      SizedBox(
-                                        width: 14,
-                                        height: 14,
-                                        child: CircularProgressIndicator(
-                                          strokeWidth: 1.6,
-                                          color: oc.foregroundHint,
+                                ],
+                              ),
+                            ),
+                            Flexible(
+                              child: _promptMentionSuggestions.isEmpty
+                                  ? Padding(
+                                      padding: const EdgeInsets.fromLTRB(
+                                          12, 4, 12, 12),
+                                      child: Align(
+                                        alignment: Alignment.centerLeft,
+                                        child: Text(
+                                          l(context, '没有匹配结果',
+                                              'No matches found'),
+                                          style: Theme.of(context)
+                                              .textTheme
+                                              .bodySmall
+                                              ?.copyWith(
+                                                  color: oc.foregroundMuted),
                                         ),
                                       ),
-                                  ],
-                                ),
-                              ),
-                              Flexible(
-                                child: _promptMentionSuggestions.isEmpty
-                                    ? Padding(
-                                        padding: const EdgeInsets.fromLTRB(
-                                            12, 4, 12, 12),
-                                        child: Align(
-                                          alignment: Alignment.centerLeft,
-                                          child: Text(
-                                            l(context, '没有匹配结果',
-                                                'No matches found'),
-                                            style: Theme.of(context)
-                                                .textTheme
-                                                .bodySmall
-                                                ?.copyWith(
-                                                    color: oc.foregroundMuted),
-                                          ),
-                                        ),
-                                      )
-                                    : ListView.separated(
-                                        padding: const EdgeInsets.fromLTRB(
-                                            6, 0, 6, 6),
-                                        shrinkWrap: true,
-                                        itemCount:
-                                            _promptMentionSuggestions.length,
-                                        separatorBuilder: (_, __) => Divider(
-                                            height: 1,
-                                            color: oc.softBorderColor),
-                                        itemBuilder: (context, index) {
-                                          final entry =
-                                              _promptMentionSuggestions[index];
-                                          final selected = index ==
-                                              _promptMentionSelectedIndex;
-                                          final fullPath = entry.path +
-                                              (entry.isDirectory &&
-                                                      !entry.path.endsWith('/')
-                                                  ? '/'
-                                                  : '');
-                                          final itemName = entry.isDirectory
-                                              ? entry.name.replaceAll(
-                                                  RegExp(r'/+$'), '')
-                                              : entry.name;
-                                          return InkWell(
-                                            borderRadius:
-                                                BorderRadius.circular(12),
-                                            onTap: () =>
-                                                _insertPromptMentionSuggestion(
-                                                    entry),
-                                            child: Padding(
+                                    )
+                                  : ListView.separated(
+                                      padding:
+                                          const EdgeInsets.fromLTRB(6, 0, 6, 6),
+                                      shrinkWrap: true,
+                                      itemCount:
+                                          _promptMentionSuggestions.length,
+                                      separatorBuilder: (_, __) => Divider(
+                                          height: 1, color: oc.softBorderColor),
+                                      itemBuilder: (context, index) {
+                                        final entry =
+                                            _promptMentionSuggestions[index];
+                                        final selected = index ==
+                                            _promptMentionSelectedIndex;
+                                        final fullPath = entry.path +
+                                            (entry.isDirectory &&
+                                                    !entry.path.endsWith('/')
+                                                ? '/'
+                                                : '');
+                                        final itemName = entry.isDirectory
+                                            ? entry.name
+                                                .replaceAll(RegExp(r'/+$'), '')
+                                            : entry.name;
+                                        return InkWell(
+                                          borderRadius:
+                                              BorderRadius.circular(12),
+                                          onTap: () =>
+                                              _insertPromptMentionSuggestion(
+                                                  entry),
+                                          child: Padding(
+                                            padding: const EdgeInsets.symmetric(
+                                                horizontal: 8, vertical: 10),
+                                            child: Container(
+                                              decoration: BoxDecoration(
+                                                color: selected
+                                                    ? oc.selectedFill
+                                                    : Colors.transparent,
+                                                borderRadius:
+                                                    BorderRadius.circular(10),
+                                              ),
                                               padding:
                                                   const EdgeInsets.symmetric(
                                                       horizontal: 8,
-                                                      vertical: 10),
-                                              child: Container(
-                                                decoration: BoxDecoration(
-                                                  color: selected
-                                                      ? oc.selectedFill
-                                                      : Colors.transparent,
-                                                  borderRadius:
-                                                      BorderRadius.circular(10),
-                                                ),
-                                                padding:
-                                                    const EdgeInsets.symmetric(
-                                                        horizontal: 8,
-                                                        vertical: 8),
-                                                child: Row(
-                                                  children: [
-                                                    Icon(
-                                                      entry.isDirectory
-                                                          ? Icons
-                                                              .folder_outlined
-                                                          : Icons
-                                                              .description_outlined,
-                                                      size: 16,
-                                                      color: selected
-                                                          ? oc.accent
-                                                          : oc.foregroundHint,
+                                                      vertical: 8),
+                                              child: Row(
+                                                children: [
+                                                  Icon(
+                                                    entry.isDirectory
+                                                        ? Icons.folder_outlined
+                                                        : Icons
+                                                            .description_outlined,
+                                                    size: 16,
+                                                    color: selected
+                                                        ? oc.accent
+                                                        : oc.foregroundHint,
+                                                  ),
+                                                  const SizedBox(width: 8),
+                                                  Expanded(
+                                                    child: Column(
+                                                      crossAxisAlignment:
+                                                          CrossAxisAlignment
+                                                              .start,
+                                                      children: [
+                                                        Text(
+                                                          itemName,
+                                                          maxLines: 1,
+                                                          overflow: TextOverflow
+                                                              .ellipsis,
+                                                          style: TextStyle(
+                                                            color:
+                                                                oc.foreground,
+                                                            fontSize: 13,
+                                                            height: 1.25,
+                                                            fontWeight: selected
+                                                                ? FontWeight
+                                                                    .w600
+                                                                : FontWeight
+                                                                    .w400,
+                                                          ),
+                                                        ),
+                                                        const SizedBox(
+                                                            height: 2),
+                                                        Text(
+                                                          fullPath,
+                                                          style: Theme.of(
+                                                                  context)
+                                                              .textTheme
+                                                              .bodySmall
+                                                              ?.copyWith(
+                                                                  fontSize:
+                                                                      11.5,
+                                                                  color: oc
+                                                                      .foregroundMuted),
+                                                        ),
+                                                        const SizedBox(
+                                                            height: 2),
+                                                        Text(
+                                                          entry.isDirectory
+                                                              ? l(context, '目录',
+                                                                  'Directory')
+                                                              : l(context, '文件',
+                                                                  'File'),
+                                                          style: Theme.of(
+                                                                  context)
+                                                              .textTheme
+                                                              .labelSmall
+                                                              ?.copyWith(
+                                                                  color: oc
+                                                                      .foregroundMuted),
+                                                        ),
+                                                      ],
                                                     ),
-                                                    const SizedBox(width: 8),
-                                                    Expanded(
-                                                      child: Column(
-                                                        crossAxisAlignment:
-                                                            CrossAxisAlignment
-                                                                .start,
-                                                        children: [
-                                                          Text(
-                                                            itemName,
-                                                            maxLines: 1,
-                                                            overflow:
-                                                                TextOverflow
-                                                                    .ellipsis,
-                                                            style: TextStyle(
-                                                              color:
-                                                                  oc.foreground,
-                                                              fontSize: 13,
-                                                              height: 1.25,
-                                                              fontWeight: selected
-                                                                  ? FontWeight
-                                                                      .w600
-                                                                  : FontWeight
-                                                                      .w400,
-                                                            ),
-                                                          ),
-                                                          const SizedBox(
-                                                              height: 2),
-                                                          Text(
-                                                            fullPath,
-                                                            style: Theme.of(
-                                                                    context)
-                                                                .textTheme
-                                                                .bodySmall
-                                                                ?.copyWith(
-                                                                    fontSize:
-                                                                        11.5,
-                                                                    color: oc
-                                                                        .foregroundMuted),
-                                                          ),
-                                                          const SizedBox(
-                                                              height: 2),
-                                                          Text(
-                                                            entry.isDirectory
-                                                                ? l(
-                                                                    context,
-                                                                    '目录',
-                                                                    'Directory')
-                                                                : l(
-                                                                    context,
-                                                                    '文件',
-                                                                    'File'),
-                                                            style: Theme.of(
-                                                                    context)
-                                                                .textTheme
-                                                                .labelSmall
-                                                                ?.copyWith(
-                                                                    color: oc
-                                                                        .foregroundMuted),
-                                                          ),
-                                                        ],
-                                                      ),
-                                                    ),
-                                                  ],
-                                                ),
+                                                  ),
+                                                ],
                                               ),
                                             ),
-                                          );
-                                        },
-                                      ),
-                              ),
-                            ],
-                          ),
+                                          ),
+                                        );
+                                      },
+                                    ),
+                            ),
+                          ],
                         ),
                       ),
-                    ],
-                    AnimatedSwitcher(
-                      duration: const Duration(milliseconds: 160),
-                      switchInCurve: Curves.easeOut,
-                      switchOutCurve: Curves.easeIn,
-                      child: isKeyboardOpen
-                          ? const SizedBox.shrink()
-                          : Padding(
-                              key: const ValueKey('composer-tools'),
-                              padding: const EdgeInsets.fromLTRB(12, 12, 12, 1),
-                              child: SingleChildScrollView(
-                                clipBehavior: Clip.none,
-                                scrollDirection: Axis.horizontal,
-                                child: Row(
-                                  children: [
-                                    _PromptTrayButton(
-                                      icon: Icons.psychology_outlined,
-                                      label: _selectedAgent ??
-                                          state.session?.agent ??
-                                          'build',
-                                      onTap: () => _openAgentPicker(context),
-                                    ),
+                    ),
+                  ],
+                  AnimatedSwitcher(
+                    duration: const Duration(milliseconds: 160),
+                    switchInCurve: Curves.easeOut,
+                    switchOutCurve: Curves.easeIn,
+                    child: isKeyboardOpen
+                        ? const SizedBox.shrink()
+                        : Padding(
+                            key: const ValueKey('composer-tools'),
+                            padding: const EdgeInsets.fromLTRB(6, 0, 6, 6),
+                            child: SingleChildScrollView(
+                              clipBehavior: Clip.none,
+                              scrollDirection: Axis.horizontal,
+                              child: Row(
+                                children: [
+                                  _PromptTrayButton(
+                                    icon: Icons.psychology_outlined,
+                                    label: _selectedAgent ??
+                                        state.session?.agent ??
+                                        'build',
+                                    onTap: () => _openAgentPicker(context),
+                                  ),
+                                  const SizedBox(width: 8),
+                                  _PromptTrayButton(
+                                    icon: Icons.auto_awesome_outlined,
+                                    label: currentModelChoice?.name ??
+                                        currentModel.model,
+                                    onTap: () => _openModelChooser(context),
+                                  ),
+                                  if (variantOptions.isNotEmpty) ...[
                                     const SizedBox(width: 8),
                                     _PromptTrayButton(
-                                      icon: Icons.auto_awesome_outlined,
-                                      label: currentModelChoice?.name ??
-                                          currentModel.model,
-                                      onTap: () => _openModelChooser(context),
-                                    ),
-                                    if (variantOptions.isNotEmpty) ...[
-                                      const SizedBox(width: 8),
-                                      _PromptTrayButton(
-                                        icon: Icons.tune_outlined,
-                                        label:
-                                            _variantTrayLabel(context, state),
-                                        onTap: () =>
-                                            _openVariantPicker(context),
-                                      ),
-                                    ],
-                                    const SizedBox(width: 8),
-                                    _PromptTrayButton(
-                                      icon: Icons.settings_outlined,
-                                      label: l(context, '选项', 'Options'),
-                                      onTap: () =>
-                                          _openComposerOptionsSheet(context),
+                                      icon: Icons.tune_outlined,
+                                      label: _variantTrayLabel(context, state),
+                                      onTap: () => _openVariantPicker(context),
                                     ),
                                   ],
-                                ),
+                                  const SizedBox(width: 8),
+                                  _PromptTrayButton(
+                                    icon: Icons.settings_outlined,
+                                    label: l(context, '选项', 'Options'),
+                                    onTap: () =>
+                                        _openComposerOptionsSheet(context),
+                                  ),
+                                ],
                               ),
                             ),
-                    ),
-                    if (_promptAttachments.isNotEmpty)
-                      Padding(
-                        padding: const EdgeInsets.fromLTRB(10, 8, 10, 0),
-                        child: Align(
-                          alignment: Alignment.centerLeft,
-                          child: Wrap(
-                            spacing: 8,
-                            runSpacing: 8,
-                            children: _promptAttachments
-                                .map(
-                                  (entry) => InputChip(
-                                    label: Text(
-                                      entry.name,
-                                      overflow: TextOverflow.ellipsis,
-                                    ),
-                                    avatar: Icon(
-                                      (entry.mimeType ?? '')
-                                              .startsWith('image/')
-                                          ? Icons.image_outlined
-                                          : (entry.mimeType ==
-                                                  'application/pdf')
-                                              ? Icons.picture_as_pdf_outlined
-                                              : Icons.attach_file,
-                                      size: 16,
-                                    ),
-                                    onDeleted: () {
-                                      setState(() {
-                                        _promptAttachments = _promptAttachments
-                                            .where((item) =>
-                                                item.path != entry.path)
-                                            .toList();
-                                      });
-                                    },
-                                  ),
-                                )
-                                .toList(),
                           ),
+                  ),
+                  if (_promptAttachments.isNotEmpty)
+                    Padding(
+                      padding: const EdgeInsets.fromLTRB(6, 5, 6, 6),
+                      child: Align(
+                        alignment: Alignment.centerLeft,
+                        child: Wrap(
+                          spacing: 8,
+                          runSpacing: 8,
+                          children: _promptAttachments
+                              .map(
+                                (entry) => InputChip(
+                                  label: Text(
+                                    entry.name,
+                                    overflow: TextOverflow.ellipsis,
+                                  ),
+                                  avatar: Icon(
+                                    (entry.mimeType ?? '').startsWith('image/')
+                                        ? Icons.image_outlined
+                                        : (entry.mimeType == 'application/pdf')
+                                            ? Icons.picture_as_pdf_outlined
+                                            : Icons.attach_file,
+                                    size: 16,
+                                  ),
+                                  onDeleted: () {
+                                    setState(() {
+                                      _promptAttachments = _promptAttachments
+                                          .where(
+                                              (item) => item.path != entry.path)
+                                          .toList();
+                                    });
+                                  },
+                                ),
+                              )
+                              .toList(),
                         ),
                       ),
-                    Stack(
+                    ),
+                  Container(
+                    decoration: _chatSurfaceDecoration(
+                      context,
+                      color: oc.panelBackground
+                          .withOpacity(context.isDarkMode ? 0.92 : 0.96),
+                      radius: 22,
+                      accent: _promptFocusNode.hasFocus,
+                    ),
+                    child: Stack(
                       children: [
                         Padding(
                           padding: EdgeInsets.fromLTRB(
-                              10, isKeyboardOpen ? 3 : 5, 10, 9),
+                              8, isKeyboardOpen ? 2 : 3, 8, 7),
                           child: CallbackShortcuts(
                             bindings: {
                               const SingleActivator(
@@ -768,40 +741,41 @@ extension _HomePageComposer on _HomePageState {
                               controller: _promptController,
                               focusNode: _promptFocusNode,
                               minLines: 1,
-                              maxLines: isKeyboardOpen ? 4 : 3,
+                              maxLines: isKeyboardOpen ? 3 : 2,
                               textInputAction: TextInputAction.newline,
                               style:
-                                  const TextStyle(fontSize: 15, height: 1.36),
+                                  const TextStyle(fontSize: 14, height: 1.32),
                               decoration: InputDecoration(
                                 hintText: l(context, '问任何事，输入 @ 引用文件',
                                     'Ask anything, type @ to reference files'),
                                 border: InputBorder.none,
                                 contentPadding: EdgeInsets.fromLTRB(
-                                    40, isKeyboardOpen ? 8 : 10, 88, 13),
+                                    36, isKeyboardOpen ? 7 : 8, 82, 10),
                                 hintStyle: Theme.of(context)
                                     .textTheme
                                     .bodyMedium
                                     ?.copyWith(
                                       color: oc.foregroundHint,
-                                      fontSize: 14.5,
+                                      fontSize: 13.5,
                                     ),
                               ),
                             ),
                           ),
                         ),
                         Positioned(
-                          left: 9,
-                          bottom: 9,
+                          left: 7,
+                          bottom: 7,
                           child: _CompactIconButton(
                             tooltip: l(context, '附件', 'Attach'),
                             onPressed: () =>
                                 _openPromptAttachmentPicker(context),
                             icon: Icons.add,
+                            quiet: true,
                           ),
                         ),
                         Positioned(
-                          right: 9,
-                          bottom: 9,
+                          right: 7,
+                          bottom: 7,
                           child: Row(
                             mainAxisSize: MainAxisSize.min,
                             children: [
@@ -844,15 +818,15 @@ extension _HomePageComposer on _HomePageState {
                                           },
                                   ),
                                 ),
-                                const SizedBox(width: 8),
+                                const SizedBox(width: 6),
                               ],
                               state.isBusy
                                   ? FilledButton(
                                       style: FilledButton.styleFrom(
                                         shape: const CircleBorder(),
                                         padding: const EdgeInsets.all(0),
-                                        minimumSize: const Size(36, 36),
-                                        fixedSize: const Size(36, 36),
+                                        minimumSize: const Size(32, 32),
+                                        fixedSize: const Size(32, 32),
                                         tapTargetSize:
                                             MaterialTapTargetSize.shrinkWrap,
                                         visualDensity: VisualDensity.compact,
@@ -862,14 +836,14 @@ extension _HomePageComposer on _HomePageState {
                                       onPressed: () =>
                                           widget.controller.cancelPrompt(),
                                       child: const Icon(Icons.stop,
-                                          color: Colors.white, size: 16),
+                                          color: Colors.white, size: 15),
                                     )
                                   : FilledButton(
                                       style: FilledButton.styleFrom(
                                         shape: const CircleBorder(),
                                         padding: const EdgeInsets.all(0),
-                                        minimumSize: const Size(36, 36),
-                                        fixedSize: const Size(36, 36),
+                                        minimumSize: const Size(32, 32),
+                                        fixedSize: const Size(32, 32),
                                         tapTargetSize:
                                             MaterialTapTargetSize.shrinkWrap,
                                         visualDensity: VisualDensity.compact,
@@ -930,15 +904,15 @@ extension _HomePageComposer on _HomePageState {
                                         );
                                       },
                                       child: const Icon(Icons.arrow_upward,
-                                          size: 16),
+                                          size: 15),
                                     ),
                             ],
                           ),
                         ),
                       ],
                     ),
-                  ],
-                ),
+                  ),
+                ],
               ),
             ],
           ),
@@ -1399,31 +1373,31 @@ class _PromptTrayButton extends StatelessWidget {
   Widget build(BuildContext context) {
     final oc = context.oc;
     return ConstrainedBox(
-      constraints: const BoxConstraints(minHeight: 34, maxWidth: 190),
+      constraints: const BoxConstraints(minHeight: 29, maxWidth: 160),
       child: OutlinedButton(
         onPressed: onTap,
         style: OutlinedButton.styleFrom(
-          backgroundColor: oc.composerOptionBg.withOpacity(0.82),
+          backgroundColor: oc.composerOptionBg.withOpacity(0.74),
           foregroundColor: oc.foreground,
           side: BorderSide(color: oc.softBorderColor),
           shape: const StadiumBorder(),
-          padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 9),
-          minimumSize: const Size(0, 34),
+          padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+          minimumSize: const Size(0, 29),
           tapTargetSize: MaterialTapTargetSize.shrinkWrap,
-          visualDensity: VisualDensity.standard,
+          visualDensity: VisualDensity.compact,
         ),
         child: Row(
           mainAxisSize: MainAxisSize.min,
           children: [
-            Icon(icon, size: 15, color: oc.foregroundMuted),
-            const SizedBox(width: 7),
+            Icon(icon, size: 14, color: oc.foregroundMuted),
+            const SizedBox(width: 5),
             Flexible(
               child: Text(
                 label,
                 maxLines: 1,
                 overflow: TextOverflow.ellipsis,
                 style: TextStyle(
-                  fontSize: 12,
+                  fontSize: 11.5,
                   fontWeight: FontWeight.w600,
                   color: oc.foreground,
                   letterSpacing: 0.05,

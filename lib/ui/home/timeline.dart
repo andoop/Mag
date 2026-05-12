@@ -1470,24 +1470,24 @@ class _ContextRingButton extends StatelessWidget {
         onTap: onPressed,
         borderRadius: BorderRadius.circular(999),
         child: SizedBox(
-          width: 36,
-          height: 36,
+          width: 32,
+          height: 32,
           child: Stack(
             alignment: Alignment.center,
             children: [
               SizedBox(
-                width: 36,
-                height: 36,
+                width: 32,
+                height: 32,
                 child: CircularProgressIndicator(
                   value: clampedRatio,
-                  strokeWidth: 2.2,
+                  strokeWidth: 2,
                   backgroundColor: oc.progressBg,
                   valueColor: AlwaysStoppedAnimation<Color>(progressColor),
                 ),
               ),
               Container(
-                width: 28,
-                height: 28,
+                width: 25,
+                height: 25,
                 decoration: BoxDecoration(
                   color: oc.panelBackground,
                   shape: BoxShape.circle,
@@ -1496,7 +1496,7 @@ class _ContextRingButton extends StatelessWidget {
                 ),
                 child: Icon(
                   compacted ? Icons.compress_outlined : Icons.memory_outlined,
-                  size: 15,
+                  size: 14,
                   color: oc.foreground,
                 ),
               ),
