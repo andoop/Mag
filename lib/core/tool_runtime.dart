@@ -6,6 +6,7 @@ import 'dart:typed_data';
 
 import 'package:path/path.dart' as p;
 
+import 'app_variable_store.dart';
 import 'database.dart';
 import 'git/exceptions/git_exceptions.dart';
 import 'git/git_service.dart';
@@ -215,7 +216,8 @@ class ToolRegistry {
     register(
       ToolDefinition(
         id: 'edit',
-        description: '${kEditToolDescription.trim()}$kMobileWorkspacePathSuffix',
+        description:
+            '${kEditToolDescription.trim()}$kMobileWorkspacePathSuffix',
         parameters: {
           'type': 'object',
           'properties': {
@@ -435,6 +437,32 @@ class ToolRegistry {
     );
     register(
       ToolDefinition(
+        id: 'variable',
+        description:
+            'List or read app variables explicitly authorized by the user in Settings. Use action=list first to discover names. Use action=read only when a task genuinely needs that variable value.',
+        parameters: {
+          'type': 'object',
+          'properties': {
+            'action': {
+              'type': 'string',
+              'enum': ['list', 'read'],
+              'description':
+                  'Use list to show available variables, read to fetch one value.',
+            },
+            'name': {
+              'type': 'string',
+              'description':
+                  'Variable name to read. Required when action is read.',
+            },
+          },
+          'required': ['action'],
+          'additionalProperties': false,
+        },
+        execute: _variableTool,
+      ),
+    );
+    register(
+      ToolDefinition(
         id: 'webfetch',
         description: '${kWebfetchToolDescription.trim()}$kMobileWebFetchSuffix',
         parameters: {
@@ -489,7 +517,8 @@ class ToolRegistry {
           'properties': {
             'serverId': {
               'type': 'string',
-              'description': 'Optional. Limit results to one configured MCP server.',
+              'description':
+                  'Optional. Limit results to one configured MCP server.',
             },
           },
           'additionalProperties': false,
@@ -522,7 +551,8 @@ class ToolRegistry {
           'properties': {
             'serverId': {
               'type': 'string',
-              'description': 'Optional. Limit results to one configured MCP server.',
+              'description':
+                  'Optional. Limit results to one configured MCP server.',
             },
           },
           'additionalProperties': false,
@@ -832,7 +862,10 @@ class ToolRegistry {
     String? modelId,
     List<ToolDefinitionModel> extraTools = const [],
   }) async {
-    final tools = [...availableForAgent(agent, modelId: modelId), ...extraTools];
+    final tools = [
+      ...availableForAgent(agent, modelId: modelId),
+      ...extraTools
+    ];
     final hasSkillTool = tools.any((item) => item.id == 'skill');
     if (!hasSkillTool) return tools;
     final skills = await SkillRegistry.instance.available(

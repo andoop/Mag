@@ -112,6 +112,79 @@ Future<ToolExecutionResult> _questionTool(
   );
 }
 
+Future<ToolExecutionResult> _variableTool(
+    JsonMap args, ToolRuntimeContext ctx) async {
+  final action = jsonStringCoerce(args['action'], 'list').trim();
+  final store = AppVariableStore(database: ctx.database);
+  final variables = await store.load();
+  final allowed = variables.where((item) => item.allowAiUse).toList();
+  if (action == 'list') {
+    final payload = allowed
+        .map(
+          (item) => {
+            'name': item.name,
+            'kind': item.kind,
+            'secret': item.secret,
+            if (item.note?.isNotEmpty == true) 'note': item.note,
+          },
+        )
+        .toList();
+    return ToolExecutionResult(
+      title: '${payload.length} variables',
+      output: const JsonEncoder.withIndent('  ').convert(payload),
+      metadata: {'variables': payload},
+    );
+  }
+  if (action != 'read') {
+    return ToolExecutionResult(
+      title: 'Variable',
+      output: 'Invalid action: $action',
+      metadata: const {},
+    );
+  }
+  final name = jsonStringCoerce(args['name'], '').trim().toUpperCase();
+  if (name.isEmpty) {
+    return ToolExecutionResult(
+      title: 'Variable',
+      output: 'Missing required variable name.',
+      metadata: const {},
+    );
+  }
+  AppVariable? match;
+  for (final variable in allowed) {
+    if (variable.name.toUpperCase() == name) {
+      match = variable;
+      break;
+    }
+  }
+  if (match == null) {
+    return ToolExecutionResult(
+      title: 'Variable not available',
+      output:
+          'Variable `$name` is not available. It may not exist or AI access is disabled in Settings.',
+      metadata: {'name': name, 'available': false},
+    );
+  }
+  final value = await store.readValue(match.id);
+  if (value == null || value.isEmpty) {
+    return ToolExecutionResult(
+      title: match.name,
+      output: 'Variable `${match.name}` has no saved value.',
+      metadata: {'name': match.name, 'available': false},
+    );
+  }
+  return ToolExecutionResult(
+    title: match.name,
+    output: value,
+    metadata: {
+      'name': match.name,
+      'kind': match.kind,
+      'secret': match.secret,
+      'available': true,
+    },
+  );
+}
+
 Future<ToolExecutionResult> _webFetchTool(
     JsonMap args, ToolRuntimeContext ctx) async {
   final url = Uri.parse(args['url'] as String? ?? '');
@@ -246,8 +319,8 @@ Future<ToolExecutionResult> _downloadTool(
       );
     }
     final bytes = await _readResponseBytes(response, _kDownloadMaxBytes);
-    final contentType =
-        response.headers.contentType?.mimeType ?? _downloadMimeFromPath(filePath);
+    final contentType = response.headers.contentType?.mimeType ??
+        _downloadMimeFromPath(filePath);
     await ctx.bridge.writeBytes(
       treeUri: ctx.workspace.treeUri,
       relativePath: filePath,
@@ -382,8 +455,8 @@ bool _looksTextDownload({
 Future<ToolExecutionResult> _listMcpResourcesTool(
     JsonMap args, ToolRuntimeContext ctx) async {
   final serverId = (args['serverId'] as String? ?? '').trim();
-  final resources = await ctx.mcpService
-      .listResources(serverId.isEmpty ? null : serverId);
+  final resources =
+      await ctx.mcpService.listResources(serverId.isEmpty ? null : serverId);
   final payload = resources.map((item) => item.toJson()).toList();
   return ToolExecutionResult(
     title: serverId.isEmpty
@@ -414,7 +487,8 @@ Future<ToolExecutionResult> _readMcpResourceTool(
   }
   return ToolExecutionResult(
     title: uri,
-    output: buffer.isEmpty ? 'MCP resource returned no text.' : buffer.toString(),
+    output:
+        buffer.isEmpty ? 'MCP resource returned no text.' : buffer.toString(),
     metadata: {
       'serverId': serverId,
       'uri': uri,
@@ -426,7 +500,8 @@ Future<ToolExecutionResult> _readMcpResourceTool(
 Future<ToolExecutionResult> _listMcpPromptsTool(
     JsonMap args, ToolRuntimeContext ctx) async {
   final serverId = (args['serverId'] as String? ?? '').trim();
-  final prompts = await ctx.mcpService.listPrompts(serverId.isEmpty ? null : serverId);
+  final prompts =
+      await ctx.mcpService.listPrompts(serverId.isEmpty ? null : serverId);
   final payload = prompts.map((item) => item.toJson()).toList();
   return ToolExecutionResult(
     title: serverId.isEmpty
@@ -444,7 +519,8 @@ Future<ToolExecutionResult> _getMcpPromptTool(
     JsonMap args, ToolRuntimeContext ctx) async {
   final serverId = (args['serverId'] as String? ?? '').trim();
   final name = (args['name'] as String? ?? '').trim();
-  final rawArguments = Map<String, dynamic>.from(args['arguments'] as Map? ?? const {});
+  final rawArguments =
+      Map<String, dynamic>.from(args['arguments'] as Map? ?? const {});
   final promptArguments = rawArguments.map(
     (key, value) => MapEntry(key, value?.toString() ?? ''),
   );
@@ -468,9 +544,13 @@ Future<ToolExecutionResult> _getMcpPromptTool(
 String _downloadMimeFromPath(String filePath) {
   final lower = filePath.toLowerCase();
   if (lower.endsWith('.txt')) return 'text/plain';
-  if (lower.endsWith('.md') || lower.endsWith('.markdown')) return 'text/markdown';
+  if (lower.endsWith('.md') || lower.endsWith('.markdown')) {
+    return 'text/markdown';
+  }
   if (lower.endsWith('.json')) return 'application/json';
-  if (lower.endsWith('.yaml') || lower.endsWith('.yml')) return 'application/yaml';
+  if (lower.endsWith('.yaml') || lower.endsWith('.yml')) {
+    return 'application/yaml';
+  }
   if (lower.endsWith('.xml')) return 'application/xml';
   if (lower.endsWith('.html') || lower.endsWith('.htm')) return 'text/html';
   if (lower.endsWith('.pdf')) return 'application/pdf';

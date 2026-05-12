@@ -3,6 +3,7 @@ part of '../../home_page.dart';
 enum _SettingsDestination {
   overview,
   models,
+  variables,
   mcp,
   git,
 }
@@ -91,14 +92,9 @@ Future<void> openAppSettingsSheet(
   required AppController controller,
   required ModelConfig modelConfig,
 }) {
-  return showModalBottomSheet<void>(
-    context: context,
-    isScrollControlled: true,
-    backgroundColor: Colors.transparent,
-    barrierColor: Colors.black.withOpacity(context.isDarkMode ? 0.16 : 0.08),
-    builder: (context) => FractionallySizedBox(
-      heightFactor: 0.92,
-      child: _AppSettingsSheet(
+  return Navigator.of(context).push<void>(
+    MaterialPageRoute<void>(
+      builder: (context) => _AppSettingsSheet(
         controller: controller,
         modelConfig: modelConfig,
       ),
@@ -1311,6 +1307,97 @@ class _AppSettingsSheetState extends State<_AppSettingsSheet> {
     await widget.controller.deleteGitRemoteCredential(credential.id);
   }
 
+  Future<void> _showAppVariableDialog() async {
+    final draft = await showDialog<_AppVariableDraft>(
+      context: context,
+      builder: (context) => const _AppVariableDialog(),
+    );
+    if (draft == null) return;
+    try {
+      await widget.controller.saveAppVariable(
+        name: draft.name,
+        value: draft.value,
+        kind: draft.kind,
+        secret: draft.secret,
+        allowAiUse: draft.allowAiUse,
+        note: draft.note,
+      );
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text(l(context, '变量已保存', 'Variable saved'))),
+      );
+    } catch (error) {
+      if (!mounted) return;
+      _showInfo(context, error.toString());
+    }
+  }
+
+  Future<void> _copyVariableName(AppVariable variable) async {
+    await Clipboard.setData(ClipboardData(text: variable.name));
+    if (!mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(content: Text(l(context, '变量名已复制', 'Variable name copied'))),
+    );
+  }
+
+  Future<void> _showVariableValue(AppVariable variable) async {
+    final value = await widget.controller.readAppVariableValue(variable.id);
+    if (!mounted) return;
+    await showDialog<void>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: Text(variable.name),
+        content: SelectableText(
+          value?.isNotEmpty == true
+              ? value!
+              : l(context, '未找到保存的值。', 'No saved value found.'),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(context).pop(),
+            child: Text(l(context, '关闭', 'Close')),
+          ),
+          if (value?.isNotEmpty == true)
+            FilledButton(
+              onPressed: () {
+                Clipboard.setData(ClipboardData(text: value!));
+                Navigator.of(context).pop();
+              },
+              child: Text(l(context, '复制值', 'Copy value')),
+            ),
+        ],
+      ),
+    );
+  }
+
+  Future<void> _deleteAppVariable(AppVariable variable) async {
+    final ok = await showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: Text(l(context, '删除变量', 'Delete variable')),
+        content: Text(
+          l(
+            context,
+            '确定删除 `${variable.name}` 吗？保存的值也会从安全存储中移除。',
+            'Delete `${variable.name}`? The stored value will also be removed from secure storage.',
+          ),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(context).pop(false),
+            child: Text(l(context, '取消', 'Cancel')),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.of(context).pop(true),
+            child: Text(l(context, '删除', 'Delete')),
+          ),
+        ],
+      ),
+    );
+    if (ok != true) return;
+    await widget.controller.deleteAppVariable(variable.id);
+  }
+
   String _destinationLabel(
       BuildContext context, _SettingsDestination destination) {
     switch (destination) {
@@ -1318,6 +1405,8 @@ class _AppSettingsSheetState extends State<_AppSettingsSheet> {
         return l(context, '总览', 'Overview');
       case _SettingsDestination.models:
         return l(context, '模型', 'Models');
+      case _SettingsDestination.variables:
+        return l(context, '变量', 'Variables');
       case _SettingsDestination.mcp:
         return 'MCP';
       case _SettingsDestination.git:
@@ -1331,6 +1420,8 @@ class _AppSettingsSheetState extends State<_AppSettingsSheet> {
         return Icons.dashboard_outlined;
       case _SettingsDestination.models:
         return Icons.hub_outlined;
+      case _SettingsDestination.variables:
+        return Icons.key_outlined;
       case _SettingsDestination.mcp:
         return Icons.extension_outlined;
       case _SettingsDestination.git:
@@ -1461,6 +1552,22 @@ class _AppSettingsSheetState extends State<_AppSettingsSheet> {
                   onTap: () {
                     setState(() {
                       _destination = _SettingsDestination.mcp;
+                    });
+                  },
+                ),
+                const SizedBox(height: 10),
+                _SettingsDestinationCard(
+                  icon: Icons.key_outlined,
+                  title: l(context, '变量与密钥', 'Variables & secrets'),
+                  subtitle: l(
+                    context,
+                    '保存 API Key、Token 或常用环境变量，敏感值写入系统安全存储。',
+                    'Save API keys, tokens, or common environment variables in secure storage.',
+                  ),
+                  trailing: '${widget.controller.state.appVariables.length}',
+                  onTap: () {
+                    setState(() {
+                      _destination = _SettingsDestination.variables;
                     });
                   },
                 ),
@@ -1853,6 +1960,114 @@ class _AppSettingsSheetState extends State<_AppSettingsSheet> {
     );
   }
 
+  Widget _buildVariablesPage(BuildContext context) {
+    final variables = widget.controller.state.appVariables;
+    final aiEnabledCount = variables.where((item) => item.allowAiUse).length;
+    return _buildSettingsBody(
+      context,
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          _SettingsSectionCard(
+            icon: Icons.key_outlined,
+            title: l(context, '变量与密钥', 'Variables & secrets'),
+            subtitle: l(
+              context,
+              '用于保存 API Key、Token、环境变量等。值存入系统安全存储，列表只保留名称和用途。',
+              'Store API keys, tokens, and environment variables. Values go to secure storage; the list only keeps names and usage metadata.',
+            ),
+            action: Wrap(
+              spacing: 8,
+              runSpacing: 8,
+              children: [
+                _SettingsMetaChip(
+                  icon: Icons.inventory_2_outlined,
+                  label: '${variables.length} ${l(context, '项', 'items')}',
+                ),
+                _SettingsMetaChip(
+                  icon: Icons.smart_toy_outlined,
+                  label:
+                      '$aiEnabledCount ${l(context, '允许 AI 使用', 'AI-enabled')}',
+                ),
+              ],
+            ),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                Container(
+                  padding: const EdgeInsets.all(12),
+                  decoration: _settingsSurfaceDecoration(
+                    context,
+                    color: context.oc.composerOptionBg
+                        .withOpacity(context.isDarkMode ? 0.54 : 0.70),
+                    radius: 18,
+                    elevated: false,
+                  ),
+                  child: Text(
+                    l(
+                      context,
+                      '建议只把确实要给 AI/工具链读取的变量打开“允许 AI 使用”。密钥不会自动展示，查看或复制值需要手动点开。',
+                      'Only enable AI access for variables that tools truly need. Secret values are never shown automatically; reveal or copy them explicitly.',
+                    ),
+                    style: TextStyle(
+                      fontSize: 12.5,
+                      height: 1.35,
+                      color: context.oc.foregroundMuted,
+                    ),
+                  ),
+                ),
+                const SizedBox(height: 12),
+                FilledButton.tonalIcon(
+                  onPressed: _showAppVariableDialog,
+                  icon: const Icon(Icons.add_rounded, size: 18),
+                  label: Text(l(context, '添加变量', 'Add variable')),
+                ),
+              ],
+            ),
+          ),
+          const SizedBox(height: 14),
+          _SettingsSectionCard(
+            icon: Icons.list_alt_outlined,
+            title: l(context, '已保存变量', 'Saved variables'),
+            subtitle: l(
+              context,
+              '密钥值默认隐藏，可按需查看、复制或删除。',
+              'Secret values are hidden by default and can be revealed, copied, or deleted when needed.',
+            ),
+            child: variables.isEmpty
+                ? Text(
+                    l(
+                      context,
+                      '还没有变量。可以先添加 OPENAI_API_KEY、ANTHROPIC_API_KEY 或部署 Token。',
+                      'No variables yet. Start with OPENAI_API_KEY, ANTHROPIC_API_KEY, or a deployment token.',
+                    ),
+                    style: TextStyle(fontSize: 12.5, color: context.oc.muted),
+                  )
+                : Column(
+                    children: [
+                      for (final variable in variables) ...[
+                        _AppVariableTile(
+                          variable: variable,
+                          onCopyName: () => _copyVariableName(variable),
+                          onReveal: () => _showVariableValue(variable),
+                          onDelete: () => _deleteAppVariable(variable),
+                          onAiAccessChanged: (value) =>
+                              widget.controller.setAppVariableAiAccess(
+                            variable.id,
+                            value,
+                          ),
+                        ),
+                        if (variable != variables.last)
+                          const SizedBox(height: 10),
+                      ],
+                    ],
+                  ),
+          ),
+        ],
+      ),
+    );
+  }
+
   Widget _buildMcpPage(BuildContext context) {
     final oc = context.oc;
     final servers = widget.controller.state.mcpServers;
@@ -2070,6 +2285,8 @@ class _AppSettingsSheetState extends State<_AppSettingsSheet> {
           current: current,
           connection: connection,
         );
+      case _SettingsDestination.variables:
+        return _buildVariablesPage(context);
       case _SettingsDestination.mcp:
         return _buildMcpPage(context);
       case _SettingsDestination.git:
@@ -2521,148 +2738,122 @@ class _AppSettingsSheetState extends State<_AppSettingsSheet> {
         final themeLabel = context.isDarkMode
             ? l(context, '夜间模式', 'Dark mode')
             : l(context, '日间模式', 'Light mode');
-        return SafeArea(
-          child: Padding(
-            padding: EdgeInsets.fromLTRB(
-              10,
-              0,
-              10,
-              MediaQuery.of(context).viewInsets.bottom + 10,
-            ),
-            child: DecoratedBox(
-              decoration: _settingsSurfaceDecoration(
-                context,
-                color: oc.surface,
-                radius: 30,
-              ),
-              child: Padding(
-                padding: const EdgeInsets.fromLTRB(16, 0, 16, 16),
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.stretch,
-                  children: [
-                    _compactPickerHandle(context),
-                    Container(
-                      padding: const EdgeInsets.fromLTRB(14, 12, 8, 13),
-                      decoration: _settingsSurfaceDecoration(
-                        context,
-                        color: oc.panelBackground,
-                        radius: 24,
-                        accent: true,
-                        elevated: false,
-                      ),
-                      child: Row(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          Container(
-                            width: 38,
-                            height: 38,
-                            decoration: BoxDecoration(
-                              color: oc.accent.withOpacity(
-                                  context.isDarkMode ? 0.16 : 0.10),
-                              borderRadius: BorderRadius.circular(15),
-                              border: Border.all(
-                                color: oc.accent.withOpacity(
-                                    context.isDarkMode ? 0.28 : 0.16),
-                              ),
-                            ),
-                            child: Icon(
-                              Icons.tune_rounded,
-                              size: 20,
-                              color: oc.accent,
-                            ),
-                          ),
-                          const SizedBox(width: 13),
-                          Expanded(
-                            child: Column(
-                              crossAxisAlignment: CrossAxisAlignment.start,
-                              children: [
-                                Text(
-                                  l(context, '设置', 'Settings'),
-                                  style: Theme.of(context)
-                                      .textTheme
-                                      .titleMedium
-                                      ?.copyWith(
-                                        fontWeight: FontWeight.w700,
-                                        letterSpacing: -0.2,
-                                        color: oc.foreground,
-                                      ),
-                                ),
-                                const SizedBox(height: 5),
-                                Text(
-                                  l(
-                                    context,
-                                    '模型、MCP、Git 与凭据配置。',
-                                    'Models, MCP, Git, and credentials.',
-                                  ),
-                                  style: TextStyle(
-                                    fontSize: 12.5,
-                                    height: 1.35,
-                                    color: oc.foregroundMuted,
-                                  ),
-                                ),
-                              ],
-                            ),
-                          ),
-                          IconButton(
-                            onPressed: () => Navigator.of(context).pop(),
-                            icon: const Icon(Icons.close_rounded, size: 20),
-                            visualDensity: VisualDensity.compact,
-                            style: IconButton.styleFrom(
-                              tapTargetSize: MaterialTapTargetSize.shrinkWrap,
-                              backgroundColor:
-                                  oc.composerOptionBg.withOpacity(0.72),
-                              side: BorderSide(color: oc.softBorderColor),
-                            ),
-                          ),
-                        ],
-                      ),
+        return Scaffold(
+          backgroundColor: oc.surface,
+          body: SafeArea(
+            child: Padding(
+              padding: const EdgeInsets.fromLTRB(16, 10, 16, 16),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: [
+                  Container(
+                    padding: const EdgeInsets.fromLTRB(14, 12, 8, 13),
+                    decoration: _settingsSurfaceDecoration(
+                      context,
+                      color: oc.panelBackground,
+                      radius: 24,
+                      accent: true,
+                      elevated: false,
                     ),
-                    const SizedBox(height: 12),
-                    Wrap(
-                      spacing: 8,
-                      runSpacing: 8,
+                    child: Row(
+                      crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
-                        _SettingsMetaChip(
-                          icon: context.isDarkMode
-                              ? Icons.dark_mode_outlined
-                              : Icons.light_mode_outlined,
-                          label: themeLabel,
-                        ),
-                        _SettingsMetaChip(
-                          icon: Icons.tune_rounded,
-                          label: current.model,
-                        ),
-                        if (connection != null)
-                          _SettingsMetaChip(
-                            icon: Icons.link_rounded,
-                            label: connection.name,
+                        IconButton(
+                          onPressed: () => Navigator.of(context).pop(),
+                          icon: const Icon(Icons.arrow_back_rounded, size: 20),
+                          visualDensity: VisualDensity.compact,
+                          style: IconButton.styleFrom(
+                            tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                            backgroundColor:
+                                oc.composerOptionBg.withOpacity(0.72),
+                            side: BorderSide(color: oc.softBorderColor),
                           ),
-                        _SettingsMetaChip(
-                          icon: Icons.extension_outlined,
-                          label: '$connectedMcp/${mcpServers.length} MCP',
+                        ),
+                        const SizedBox(width: 12),
+                        Expanded(
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Text(
+                                l(context, '设置', 'Settings'),
+                                style: Theme.of(context)
+                                    .textTheme
+                                    .titleMedium
+                                    ?.copyWith(
+                                      fontWeight: FontWeight.w700,
+                                      letterSpacing: -0.2,
+                                      color: oc.foreground,
+                                    ),
+                              ),
+                              const SizedBox(height: 5),
+                              Text(
+                                l(
+                                  context,
+                                  '模型、变量、MCP、Git 与凭据配置。',
+                                  'Models, variables, MCP, Git, and credentials.',
+                                ),
+                                style: TextStyle(
+                                  fontSize: 12.5,
+                                  height: 1.35,
+                                  color: oc.foregroundMuted,
+                                ),
+                              ),
+                            ],
+                          ),
                         ),
                       ],
                     ),
-                    const SizedBox(height: 14),
-                    _buildDestinationTabs(context),
-                    const SizedBox(height: 14),
-                    Expanded(
-                      child: AnimatedSwitcher(
-                        duration: const Duration(milliseconds: 180),
-                        child: KeyedSubtree(
-                          key: ValueKey(_destination),
-                          child: _buildCurrentDestinationPage(
-                            context,
-                            current: current,
-                            connection: connection,
-                            gitSettings: gitSettings,
-                            workspace: workspace,
-                          ),
+                  ),
+                  const SizedBox(height: 12),
+                  Wrap(
+                    spacing: 8,
+                    runSpacing: 8,
+                    children: [
+                      _SettingsMetaChip(
+                        icon: context.isDarkMode
+                            ? Icons.dark_mode_outlined
+                            : Icons.light_mode_outlined,
+                        label: themeLabel,
+                      ),
+                      _SettingsMetaChip(
+                        icon: Icons.tune_rounded,
+                        label: current.model,
+                      ),
+                      if (connection != null)
+                        _SettingsMetaChip(
+                          icon: Icons.link_rounded,
+                          label: connection.name,
+                        ),
+                      _SettingsMetaChip(
+                        icon: Icons.key_outlined,
+                        label:
+                            '${widget.controller.state.appVariables.length} ${l(context, '变量', 'variables')}',
+                      ),
+                      _SettingsMetaChip(
+                        icon: Icons.extension_outlined,
+                        label: '$connectedMcp/${mcpServers.length} MCP',
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 14),
+                  _buildDestinationTabs(context),
+                  const SizedBox(height: 14),
+                  Expanded(
+                    child: AnimatedSwitcher(
+                      duration: const Duration(milliseconds: 180),
+                      child: KeyedSubtree(
+                        key: ValueKey(_destination),
+                        child: _buildCurrentDestinationPage(
+                          context,
+                          current: current,
+                          connection: connection,
+                          gitSettings: gitSettings,
+                          workspace: workspace,
                         ),
                       ),
                     ),
-                  ],
-                ),
+                  ),
+                ],
               ),
             ),
           ),
@@ -2944,6 +3135,319 @@ class _SettingsSectionCard extends StatelessWidget {
           child,
         ],
       ),
+    );
+  }
+}
+
+class _AppVariableTile extends StatelessWidget {
+  const _AppVariableTile({
+    required this.variable,
+    required this.onCopyName,
+    required this.onReveal,
+    required this.onDelete,
+    required this.onAiAccessChanged,
+  });
+
+  final AppVariable variable;
+  final VoidCallback onCopyName;
+  final VoidCallback onReveal;
+  final VoidCallback onDelete;
+  final ValueChanged<bool> onAiAccessChanged;
+
+  @override
+  Widget build(BuildContext context) {
+    final oc = context.oc;
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.fromLTRB(12, 12, 8, 12),
+      decoration: _settingsSurfaceDecoration(
+        context,
+        color:
+            oc.composerOptionBg.withOpacity(context.isDarkMode ? 0.50 : 0.68),
+        radius: 18,
+        elevated: false,
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          Row(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Container(
+                width: 36,
+                height: 36,
+                decoration: BoxDecoration(
+                  color: oc.panelBackground.withOpacity(0.86),
+                  borderRadius: BorderRadius.circular(14),
+                  border: Border.all(color: oc.softBorderColor),
+                ),
+                child: Icon(
+                  variable.secret ? Icons.lock_outline : Icons.notes_outlined,
+                  size: 18,
+                  color: oc.accent,
+                ),
+              ),
+              const SizedBox(width: 12),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      variable.name,
+                      style: TextStyle(
+                        fontSize: 13.5,
+                        fontWeight: FontWeight.w700,
+                        color: oc.foreground,
+                      ),
+                    ),
+                    const SizedBox(height: 5),
+                    Wrap(
+                      spacing: 6,
+                      runSpacing: 6,
+                      children: [
+                        _SettingsMetaChip(
+                          icon: variable.secret
+                              ? Icons.visibility_off_outlined
+                              : Icons.text_fields_rounded,
+                          label: variable.secret
+                              ? l(context, '密钥', 'Secret')
+                              : l(context, '普通变量', 'Plain variable'),
+                        ),
+                        _SettingsMetaChip(
+                          icon: Icons.category_outlined,
+                          label: variable.kind,
+                        ),
+                      ],
+                    ),
+                    if (variable.note?.isNotEmpty == true) ...[
+                      const SizedBox(height: 6),
+                      Text(
+                        variable.note!,
+                        style: TextStyle(
+                          fontSize: 12,
+                          height: 1.35,
+                          color: oc.foregroundMuted,
+                        ),
+                      ),
+                    ],
+                  ],
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 10),
+          SwitchListTile.adaptive(
+            dense: true,
+            contentPadding: EdgeInsets.zero,
+            value: variable.allowAiUse,
+            onChanged: onAiAccessChanged,
+            title: Text(
+              l(context, '允许 AI 使用', 'Allow AI access'),
+              style: TextStyle(fontSize: 13, color: oc.foreground),
+            ),
+            subtitle: Text(
+              l(
+                context,
+                '只表示用户授权，具体工具读取时仍应显式请求。',
+                'Marks user authorization; tools should still request explicit access.',
+              ),
+              style: TextStyle(fontSize: 11.5, color: oc.foregroundMuted),
+            ),
+          ),
+          Wrap(
+            spacing: 8,
+            runSpacing: 8,
+            alignment: WrapAlignment.end,
+            children: [
+              OutlinedButton.icon(
+                onPressed: onCopyName,
+                icon: const Icon(Icons.copy_rounded, size: 16),
+                label: Text(l(context, '复制名称', 'Copy name')),
+              ),
+              OutlinedButton.icon(
+                onPressed: onReveal,
+                icon: const Icon(Icons.visibility_outlined, size: 16),
+                label: Text(l(context, '查看值', 'Reveal')),
+              ),
+              OutlinedButton.icon(
+                onPressed: onDelete,
+                icon: const Icon(Icons.delete_outline_rounded, size: 16),
+                label: Text(l(context, '删除', 'Delete')),
+              ),
+            ],
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _AppVariableDraft {
+  const _AppVariableDraft({
+    required this.name,
+    required this.value,
+    required this.kind,
+    required this.secret,
+    required this.allowAiUse,
+    this.note,
+  });
+
+  final String name;
+  final String value;
+  final String kind;
+  final bool secret;
+  final bool allowAiUse;
+  final String? note;
+}
+
+class _AppVariableDialog extends StatefulWidget {
+  const _AppVariableDialog();
+
+  @override
+  State<_AppVariableDialog> createState() => _AppVariableDialogState();
+}
+
+class _AppVariableDialogState extends State<_AppVariableDialog> {
+  final TextEditingController _nameController = TextEditingController();
+  final TextEditingController _valueController = TextEditingController();
+  final TextEditingController _noteController = TextEditingController();
+  String _kind = 'secret';
+  bool _secret = true;
+  bool _allowAiUse = false;
+  bool _obscure = true;
+
+  @override
+  void dispose() {
+    _nameController.dispose();
+    _valueController.dispose();
+    _noteController.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return AlertDialog(
+      title: Text(l(context, '添加变量', 'Add variable')),
+      content: SizedBox(
+        width: _dialogMaxWidth(context, maxWidth: 520),
+        child: SingleChildScrollView(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              TextField(
+                controller: _nameController,
+                textCapitalization: TextCapitalization.characters,
+                decoration: InputDecoration(
+                  labelText: l(context, '变量名', 'Variable name'),
+                  hintText: 'OPENAI_API_KEY',
+                ),
+              ),
+              const SizedBox(height: 12),
+              DropdownButtonFormField<String>(
+                value: _kind,
+                decoration: InputDecoration(
+                  labelText: l(context, '类型', 'Type'),
+                ),
+                items: [
+                  DropdownMenuItem(
+                    value: 'secret',
+                    child: Text(l(context, '密钥 / Token', 'Secret / token')),
+                  ),
+                  DropdownMenuItem(
+                    value: 'api-key',
+                    child: Text(l(context, 'AI API Key', 'AI API key')),
+                  ),
+                  DropdownMenuItem(
+                    value: 'env',
+                    child: Text(l(context, '环境变量', 'Environment variable')),
+                  ),
+                  DropdownMenuItem(
+                    value: 'plain',
+                    child: Text(l(context, '普通文本', 'Plain text')),
+                  ),
+                ],
+                onChanged: (value) {
+                  if (value == null) return;
+                  setState(() {
+                    _kind = value;
+                    _secret = value != 'plain';
+                  });
+                },
+              ),
+              const SizedBox(height: 12),
+              TextField(
+                controller: _valueController,
+                obscureText: _secret && _obscure,
+                decoration: InputDecoration(
+                  labelText: l(context, '值', 'Value'),
+                  suffixIcon: _secret
+                      ? IconButton(
+                          onPressed: () {
+                            setState(() {
+                              _obscure = !_obscure;
+                            });
+                          },
+                          icon: Icon(_obscure
+                              ? Icons.visibility_outlined
+                              : Icons.visibility_off_outlined),
+                        )
+                      : null,
+                ),
+              ),
+              const SizedBox(height: 12),
+              TextField(
+                controller: _noteController,
+                minLines: 1,
+                maxLines: 3,
+                decoration: InputDecoration(
+                  labelText: l(context, '备注（可选）', 'Note (optional)'),
+                  hintText: l(context, '例如：OpenAI 主账号',
+                      'Example: OpenAI primary account'),
+                ),
+              ),
+              const SizedBox(height: 8),
+              SwitchListTile.adaptive(
+                contentPadding: EdgeInsets.zero,
+                value: _allowAiUse,
+                onChanged: (value) {
+                  setState(() {
+                    _allowAiUse = value;
+                  });
+                },
+                title: Text(l(context, '允许 AI 使用', 'Allow AI access')),
+                subtitle: Text(
+                  l(
+                    context,
+                    '开启后表示你允许后续工具在明确需要时读取它。',
+                    'When enabled, future tools may read it when explicitly needed.',
+                  ),
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+      actions: [
+        TextButton(
+          onPressed: () => Navigator.of(context).pop(),
+          child: Text(l(context, '取消', 'Cancel')),
+        ),
+        FilledButton(
+          onPressed: () {
+            Navigator.of(context).pop(
+              _AppVariableDraft(
+                name: _nameController.text,
+                value: _valueController.text,
+                kind: _kind,
+                secret: _secret,
+                allowAiUse: _allowAiUse,
+                note: _noteController.text,
+              ),
+            );
+          },
+          child: Text(l(context, '保存', 'Save')),
+        ),
+      ],
     );
   }
 }

@@ -9,6 +9,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/scheduler.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
+import '../core/app_variable_store.dart';
 import '../core/database.dart';
 import '../core/debug_trace.dart';
 import '../core/git/git_settings_store.dart';
@@ -27,6 +28,7 @@ part 'app_controller_session.dart';
 part 'app_controller_provider.dart';
 part 'app_controller_mcp.dart';
 part 'app_controller_git.dart';
+part 'app_controller_variables.dart';
 part 'app_controller_workspace.dart';
 part 'app_controller_state.dart';
 
@@ -73,6 +75,7 @@ class AppState {
     this.mcpTools = const [],
     this.mcpResources = const [],
     this.mcpPrompts = const [],
+    this.appVariables = const [],
     this.recentModelKeys = const [],
     this.sessionStatuses = const {},
     this.error,
@@ -98,6 +101,7 @@ class AppState {
   final List<McpToolDefinition> mcpTools;
   final List<McpResourceDefinition> mcpResources;
   final List<McpPromptDefinition> mcpPrompts;
+  final List<AppVariable> appVariables;
   final List<String> recentModelKeys;
   final Map<String, SessionRunStatus> sessionStatuses;
   final String? error;
@@ -132,6 +136,7 @@ class AppState {
     List<McpToolDefinition>? mcpTools,
     List<McpResourceDefinition>? mcpResources,
     List<McpPromptDefinition>? mcpPrompts,
+    List<AppVariable>? appVariables,
     List<String>? recentModelKeys,
     Map<String, SessionRunStatus>? sessionStatuses,
     Object? error = _noChange,
@@ -159,6 +164,7 @@ class AppState {
       mcpTools: mcpTools ?? this.mcpTools,
       mcpResources: mcpResources ?? this.mcpResources,
       mcpPrompts: mcpPrompts ?? this.mcpPrompts,
+      appVariables: appVariables ?? this.appVariables,
       recentModelKeys: recentModelKeys ?? this.recentModelKeys,
       sessionStatuses: sessionStatuses ?? this.sessionStatuses,
       error: identical(error, _noChange) ? this.error : error as String?,
@@ -171,7 +177,8 @@ class AppController extends ChangeNotifier {
       : _db = AppDatabase.instance,
         _workspaceBridge = WorkspaceBridge.instance,
         _events = LocalEventBus(),
-        _gitSettingsStore = GitSettingsStore(database: AppDatabase.instance) {
+        _gitSettingsStore = GitSettingsStore(database: AppDatabase.instance),
+        _appVariableStore = AppVariableStore(database: AppDatabase.instance) {
     _mcpService = McpService(database: _db, emitEvent: _events.emit);
     _engine = SessionEngine(
       database: _db,
@@ -197,6 +204,7 @@ class AppController extends ChangeNotifier {
   final WorkspaceBridge _workspaceBridge;
   final LocalEventBus _events;
   final GitSettingsStore _gitSettingsStore;
+  final AppVariableStore _appVariableStore;
   late final McpService _mcpService;
   late final SessionEngine _engine;
   late final LocalServer _server;
@@ -263,6 +271,7 @@ class AppController extends ChangeNotifier {
     final mcpServers = await _client!.listMcpServers();
     final mcpStatuses = await _client!.listMcpStatuses();
     final gitSettings = await _gitSettingsStore.load();
+    final appVariables = await _appVariableStore.load();
     final recentModelKeys = await _loadRecentModelKeys();
     state = state.copyWith(
       serverUri: serverUri,
@@ -275,6 +284,7 @@ class AppController extends ChangeNotifier {
       mcpTools: const [],
       mcpResources: const [],
       mcpPrompts: const [],
+      appVariables: appVariables,
       agents: agents,
       recentModelKeys: recentModelKeys,
     );
