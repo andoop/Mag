@@ -16,9 +16,31 @@ class _WebPreviewSheet extends StatefulWidget {
 }
 
 class _WebPreviewSheetState extends State<_WebPreviewSheet> {
+  late final _HtmlRuntimeHost _runtime = _HtmlRuntimeHost(
+    context: context,
+    serverUri: Uri.tryParse(widget.url),
+  );
   late final WebViewController _controller = WebViewController()
     ..setJavaScriptMode(JavaScriptMode.unrestricted)
+    ..addJavaScriptChannel(
+      _HtmlRuntimeHost.channelName,
+      onMessageReceived: (message) =>
+          _runtime.handleMessage(_controller, message.message),
+    )
+    ..setNavigationDelegate(
+      NavigationDelegate(
+        onPageFinished: (_) {
+          _controller.runJavaScript(_magNativeBootstrap(_runtime.runtimeId));
+        },
+      ),
+    )
     ..loadRequest(Uri.parse(widget.url));
+
+  @override
+  void dispose() {
+    _runtime.dispose();
+    super.dispose();
+  }
 
   @override
   Widget build(BuildContext context) {

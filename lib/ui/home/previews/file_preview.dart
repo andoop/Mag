@@ -561,7 +561,10 @@ class _WriteStreamPreviewBodyState extends State<_WriteStreamPreviewBody> {
             radius: 12,
             elevated: false,
           ),
-          child: _WorkspaceHtmlPreview(html: _renderedContent),
+          child: _WorkspaceHtmlPreview(
+            html: _renderedContent,
+            serverUri: widget.controller.state.serverUri,
+          ),
         ),
       );
     }
@@ -1062,7 +1065,11 @@ class _FilePreviewSheetState extends State<_FilePreviewSheet> {
                                                   widget.onSendPromptReference,
                                             ),
                                           )
-                                        : _WorkspaceHtmlPreview(html: fullText),
+                                        : _WorkspaceHtmlPreview(
+                                            html: fullText,
+                                            serverUri: widget
+                                                .controller.state.serverUri,
+                                          ),
                                   ),
                                 )
                               : sourceColumn,

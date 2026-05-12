@@ -34,6 +34,9 @@ class MainActivity : FlutterActivity() {
         private const val BG_NOTIF_CHANNEL_ID = "mag_background"
         private const val FLOATING_NOTIF_CHANNEL_ID = "floating_agent"
         private const val BG_NOTIF_ID = 1002
+        private const val PICK_DEVICE_FILES_REQUEST = 4201
+        private const val CAPTURE_DEVICE_PHOTO_REQUEST = 4202
+        private const val DEVICE_CAMERA_PERMISSION_REQUEST = 4203
         private const val ACTION_WORKSPACE_WEB_SHORTCUT =
             "com.magent.mobile_agent.OPEN_WORKSPACE_WEB_SHORTCUT"
         private const val EXTRA_WORKSPACE_ID = "workspaceId"
@@ -55,6 +58,16 @@ class MainActivity : FlutterActivity() {
     private val gitNetworkBridge: GitNetworkBridge by lazy {
         GitNetworkBridge(this, workspaceExecutor)
     }
+    private val filesCapabilityProvider: DeviceFilesCapabilityProvider by lazy {
+        DeviceFilesCapabilityProvider(this, PICK_DEVICE_FILES_REQUEST)
+    }
+    private val mediaCapabilityProvider: DeviceMediaCapabilityProvider by lazy {
+        DeviceMediaCapabilityProvider(
+            this,
+            CAPTURE_DEVICE_PHOTO_REQUEST,
+            DEVICE_CAMERA_PERMISSION_REQUEST,
+        )
+    }
     private var shortcutChannel: MethodChannel? = null
     private var pendingShortcutLaunch: Map<String, Any?>? = null
 
@@ -64,6 +77,8 @@ class MainActivity : FlutterActivity() {
             .setMethodCallHandler(::handleWorkspaceCall)
         MethodChannel(flutterEngine.dartExecutor.binaryMessenger, "mobile_agent/floating_window")
             .setMethodCallHandler(::handleFloatingWindowCall)
+        MethodChannel(flutterEngine.dartExecutor.binaryMessenger, "mobile_agent/device_capabilities")
+            .setMethodCallHandler(::handleDeviceCapabilityCall)
         shortcutChannel = MethodChannel(flutterEngine.dartExecutor.binaryMessenger, "mobile_agent/shortcuts")
             .also { it.setMethodCallHandler(::handleShortcutCall) }
         pendingShortcutLaunch = shortcutPayloadFromIntent(intent)
@@ -125,6 +140,21 @@ class MainActivity : FlutterActivity() {
             "copyEntry" -> runWorkspaceCall(result) { handleCopyEntry(call) }
             "resolveFilesystemPath" -> runWorkspaceCall(result) { handleResolveFilesystemPath(call) }
             else -> result.notImplemented()
+        }
+    }
+
+    private fun handleDeviceCapabilityCall(call: MethodCall, result: MethodChannel.Result) {
+        if (call.method != "invoke") {
+            result.notImplemented()
+            return
+        }
+        val args = call.arguments as? Map<*, *> ?: emptyMap<Any, Any>()
+        val capabilityId = args["capabilityId"] as? String ?: ""
+        val input = args["input"] as? Map<*, *> ?: emptyMap<Any, Any>()
+        when (capabilityId) {
+            "files.pick" -> filesCapabilityProvider.invoke(input, result)
+            "media.capturePhoto" -> mediaCapabilityProvider.invoke(input, result)
+            else -> result.error("unsupported_capability", "Unsupported capability: $capabilityId", null)
         }
     }
 
@@ -756,6 +786,8 @@ class MainActivity : FlutterActivity() {
 
     override fun onActivityResult(requestCode: Int, resultCode: Int, data: Intent?) {
         super.onActivityResult(requestCode, resultCode, data)
+        if (filesCapabilityProvider.onActivityResult(requestCode, resultCode, data)) return
+        if (mediaCapabilityProvider.onActivityResult(requestCode, resultCode, data)) return
         if (requestCode != PICK_WORKSPACE_REQUEST) return
         val result = pendingResult ?: return
         pendingResult = null
@@ -773,6 +805,15 @@ class MainActivity : FlutterActivity() {
                 "displayName" to (root?.name ?: "Workspace"),
             )
         )
+    }
+
+    override fun onRequestPermissionsResult(
+        requestCode: Int,
+        permissions: Array<out String>,
+        grantResults: IntArray,
+    ) {
+        super.onRequestPermissionsResult(requestCode, permissions, grantResults)
+        if (mediaCapabilityProvider.onRequestPermissionsResult(requestCode, grantResults)) return
     }
 
     private fun resolveDocument(treeUri: String, relativePath: String): DocumentFile? {

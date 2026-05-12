@@ -8,6 +8,7 @@ import 'dart:math' as math;
 import 'agents.dart';
 import 'database.dart';
 import 'debug_trace.dart';
+import 'device_capability_registry.dart';
 import 'mcp_service.dart';
 import 'models.dart';
 import 'prompt_system.dart';

@@ -3,6 +3,7 @@ import 'dart:convert';
 import 'dart:io';
 
 import 'database.dart';
+import 'device_capability_registry.dart';
 import 'mcp_service.dart';
 import 'models.dart';
 import 'session_engine.dart';
@@ -224,6 +225,16 @@ class LocalServer {
             request.response, items.map((item) => item.toJson()).toList());
         return;
       }
+      if (path == '/device-capability' && request.method == 'GET') {
+        await _json(
+          request.response,
+          DeviceCapabilityRegistry.instance
+              .available()
+              .map((item) => item.toJson())
+              .toList(),
+        );
+        return;
+      }
       if (path == '/question' && request.method == 'GET') {
         final items = await database.listQuestionRequests();
         await _json(
@@ -251,7 +262,9 @@ class LocalServer {
       if (path == '/mcp/server' && request.method == 'GET') {
         await _json(
           request.response,
-          (await mcpService.listServers()).map((item) => item.toJson()).toList(),
+          (await mcpService.listServers())
+              .map((item) => item.toJson())
+              .toList(),
         );
         return;
       }
@@ -267,7 +280,9 @@ class LocalServer {
         final serverId = request.uri.queryParameters['serverId'];
         await _json(
           request.response,
-          (await mcpService.listTools(serverId)).map((item) => item.toJson()).toList(),
+          (await mcpService.listTools(serverId))
+              .map((item) => item.toJson())
+              .toList(),
         );
         return;
       }
@@ -285,7 +300,9 @@ class LocalServer {
         final serverId = request.uri.queryParameters['serverId'];
         await _json(
           request.response,
-          (await mcpService.listPrompts(serverId)).map((item) => item.toJson()).toList(),
+          (await mcpService.listPrompts(serverId))
+              .map((item) => item.toJson())
+              .toList(),
         );
         return;
       }
@@ -294,7 +311,9 @@ class LocalServer {
         final server = McpServerConfig.fromJson(body);
         await _json(
           request.response,
-          (await mcpService.saveServer(server)).map((item) => item.toJson()).toList(),
+          (await mcpService.saveServer(server))
+              .map((item) => item.toJson())
+              .toList(),
         );
         return;
       }
@@ -331,7 +350,8 @@ class LocalServer {
           segments[1] == 'server' &&
           segments[3] == 'refresh' &&
           request.method == 'POST') {
-        await _json(request.response, (await mcpService.refreshServer(segments[2])).toJson());
+        await _json(request.response,
+            (await mcpService.refreshServer(segments[2])).toJson());
         return;
       }
       if (segments.length == 4 &&
@@ -358,7 +378,8 @@ class LocalServer {
         final serverId = body['serverId'] as String? ?? '';
         final uri = body['uri'] as String? ?? '';
         final result = await mcpService.readResource(serverId, uri);
-        await _json(request.response, result.map((item) => item.toJson()).toList());
+        await _json(
+            request.response, result.map((item) => item.toJson()).toList());
         return;
       }
       if (path == '/mcp/prompt/get' && request.method == 'POST') {
@@ -367,7 +388,8 @@ class LocalServer {
         final promptName = body['promptName'] as String? ?? '';
         final arguments = Map<String, String>.from(
           (body['arguments'] as Map?)?.map(
-                (key, value) => MapEntry(key.toString(), value?.toString() ?? ''),
+                (key, value) =>
+                    MapEntry(key.toString(), value?.toString() ?? ''),
               ) ??
               const <String, String>{},
         );
@@ -376,7 +398,8 @@ class LocalServer {
           promptName,
           arguments: arguments,
         );
-        await _json(request.response, result.map((item) => item.toJson()).toList());
+        await _json(
+            request.response, result.map((item) => item.toJson()).toList());
         return;
       }
       if (segments.length == 4 &&
@@ -437,6 +460,31 @@ class LocalServer {
           return;
         }
         await _json(request.response, true);
+        return;
+      }
+      if (segments.length == 4 &&
+          segments.first == 'html-runtime' &&
+          segments[2] == 'file' &&
+          request.method == 'GET') {
+        final file = HtmlRuntimeFileStore.instance.getFile(
+          segments[1],
+          segments[3],
+        );
+        if (file == null) {
+          request.response.statusCode = 404;
+          await _json(request.response, {'error': 'Runtime file not found'});
+          return;
+        }
+        try {
+          request.response.headers.contentType =
+              ContentType.parse(file.mimeType);
+        } catch (_) {
+          request.response.headers.contentType = _contentTypeForPath(file.name);
+        }
+        request.response.headers
+            .set(HttpHeaders.cacheControlHeader, 'no-store');
+        request.response.add(await File(file.path).readAsBytes());
+        await request.response.close();
         return;
       }
       if (segments.length >= 3 &&

@@ -10,6 +10,7 @@ part 'models/workspace.dart';
 part 'models/session.dart';
 part 'models/permissions.dart';
 part 'models/tool.dart';
+part 'models/device_capability.dart';
 part 'models/provider_info.dart';
 part 'models/provider_auth.dart';
 part 'models/provider_config.dart';

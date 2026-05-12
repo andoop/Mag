@@ -42,11 +42,13 @@ class SessionEngine {
         .map((item) => item.toToolModel())
         .toList()
       ..sort((a, b) => a.id.compareTo(b.id));
+    final deviceTools = DeviceCapabilityRegistry.instance.directAiTools()
+      ..sort((a, b) => a.id.compareTo(b.id));
     return toolRegistry.availableForWorkspaceAgent(
       workspace,
       agent,
       modelId: modelId,
-      extraTools: mcpTools,
+      extraTools: [...mcpTools, ...deviceTools],
     );
   }
 

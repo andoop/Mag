@@ -45,6 +45,8 @@ extension SessionEngineConversation on SessionEngine {
         availableSkills: availableSkills,
         format: latestUser?.format,
         allAgents: listAgents(),
+        deviceCapabilities:
+            DeviceCapabilityRegistry.instance.promptCatalog(zh: zh),
         isZh: zh,
       ),
     );

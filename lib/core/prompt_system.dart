@@ -25,6 +25,7 @@ class PromptContext {
     this.maxSteps,
     required this.format,
     this.allAgents = const [],
+    this.deviceCapabilities = const [],
     this.isZh = false,
   });
 
@@ -43,6 +44,7 @@ class PromptContext {
   final int? maxSteps;
   final MessageFormat? format;
   final List<AgentDefinition> allAgents;
+  final List<String> deviceCapabilities;
   final bool isZh;
 }
 
@@ -216,6 +218,14 @@ class PromptAssembler {
         (zh
             ? '名字形如 `mcp.<serverId>.<toolName>` 的工具来自远程 MCP server，可直接调用。'
             : 'Tools named like `mcp.<serverId>.<toolName>` come from remote MCP servers and can be called directly.'),
+      if (context.deviceCapabilities.isNotEmpty) ...[
+        '',
+        zh ? '# 端上能力' : '# Device Capabilities',
+        zh
+            ? '这些能力由当前设备宿主提供，可能需要用户手势和一次性授权；不要假设网页或工具拥有泛化系统权限。'
+            : 'These capabilities are provided by the current device host and may require a user gesture plus one-time approval; do not assume generic system access.',
+        ...context.deviceCapabilities,
+      ],
       kToolCallingRulesPrompt.trim(),
     ];
 

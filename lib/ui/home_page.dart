@@ -18,8 +18,10 @@ import 'package:webview_flutter/webview_flutter.dart';
 
 import '../core/models.dart';
 import '../core/debug_trace.dart';
+import '../core/device_capability_registry.dart';
 import '../core/skill_registry.dart';
 import '../core/workspace_bridge.dart';
+import '../platform/device_capability_bridge.dart';
 import '../platform/floating_window_bridge.dart';
 import '../platform/shortcut_bridge.dart';
 import '../sdk/local_server_client.dart';
