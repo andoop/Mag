@@ -138,6 +138,7 @@ class _CompactIconButton extends StatelessWidget {
     this.tooltip,
     this.small = false,
     this.quiet = false,
+    this.iconColor,
   });
 
   final IconData icon;
@@ -145,13 +146,14 @@ class _CompactIconButton extends StatelessWidget {
   final String? tooltip;
   final bool small;
   final bool quiet;
+  final Color? iconColor;
 
   @override
   Widget build(BuildContext context) {
     final oc = context.oc;
     final buttonSize = small ? 26.0 : 32.0;
     final padding = small ? 4.0 : 6.0;
-    final iconSize = small ? 14.0 : 17.0;
+    final iconSize = small ? 14.0 : 16.0;
     return IconButton(
       tooltip: tooltip,
       onPressed: onPressed,
@@ -162,6 +164,9 @@ class _CompactIconButton extends StatelessWidget {
       iconSize: iconSize,
       style: IconButton.styleFrom(
         tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+        fixedSize: Size(buttonSize, buttonSize),
+        minimumSize: Size(buttonSize, buttonSize),
+        maximumSize: Size(buttonSize, buttonSize),
         backgroundColor: quiet
             ? oc.panelBackground.withOpacity(0.34)
             : oc.panelBackground.withOpacity(0.78),
@@ -169,7 +174,7 @@ class _CompactIconButton extends StatelessWidget {
           color: quiet ? oc.borderColor.withOpacity(0.55) : oc.borderColor,
         ),
       ),
-      icon: Icon(icon),
+      icon: Icon(icon, color: iconColor),
     );
   }
 }

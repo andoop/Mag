@@ -110,6 +110,9 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
   bool _isAutoScrolling = false;
   bool _pendingTimelineSync = false;
   bool _timelineSyncScheduled = false;
+  // Mutated from the composer part while voice input is active.
+  // ignore: prefer_final_fields
+  String _voiceInputPrefix = '';
   bool _timelineUserInteracting = false;
   double? _lastProgrammaticScrollTarget;
   int _lastProgrammaticScrollAt = 0;
@@ -183,6 +186,7 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
     _scrollToBottomButtonDebounce?.cancel();
     _promptController.removeListener(_handlePromptComposerChanged);
     _promptFocusNode.removeListener(_handlePromptComposerChanged);
+    unawaited(widget.controller.stopVoiceInput());
     _promptController.dispose();
     _promptFocusNode.dispose();
     _schemaController.dispose();

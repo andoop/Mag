@@ -3,9 +3,28 @@ part of '../../home_page.dart';
 enum _SettingsDestination {
   overview,
   models,
+  voice,
   variables,
   mcp,
   git,
+}
+
+_SettingsDestination _settingsDestinationFromId(String value) {
+  switch (value.trim().toLowerCase()) {
+    case 'models':
+      return _SettingsDestination.models;
+    case 'voice':
+      return _SettingsDestination.voice;
+    case 'variables':
+      return _SettingsDestination.variables;
+    case 'mcp':
+      return _SettingsDestination.mcp;
+    case 'git':
+      return _SettingsDestination.git;
+    case 'overview':
+    default:
+      return _SettingsDestination.overview;
+  }
 }
 
 double _dialogMaxWidth(
@@ -91,12 +110,14 @@ Future<void> openAppSettingsSheet(
   BuildContext context, {
   required AppController controller,
   required ModelConfig modelConfig,
+  String initialDestination = 'overview',
 }) {
   return Navigator.of(context).push<void>(
     MaterialPageRoute<void>(
       builder: (context) => _AppSettingsSheet(
         controller: controller,
         modelConfig: modelConfig,
+        initialDestination: initialDestination,
       ),
     ),
   );
@@ -106,10 +127,12 @@ class _AppSettingsSheet extends StatefulWidget {
   const _AppSettingsSheet({
     required this.controller,
     required this.modelConfig,
+    required this.initialDestination,
   });
 
   final AppController controller;
   final ModelConfig modelConfig;
+  final String initialDestination;
 
   @override
   State<_AppSettingsSheet> createState() => _AppSettingsSheetState();
@@ -119,9 +142,18 @@ class _AppSettingsSheetState extends State<_AppSettingsSheet> {
   late final TextEditingController _baseUrlController;
   late final TextEditingController _apiKeyController;
   late final TextEditingController _modelController;
+  late final TextEditingController _voiceQwenApiKeyController;
+  late final TextEditingController _voiceQwenEndpointController;
+  late final TextEditingController _voiceQwenModelController;
+  late final TextEditingController _voiceDoubaoApiKeyController;
+  late final TextEditingController _voiceDoubaoAppKeyController;
+  late final TextEditingController _voiceDoubaoAccessKeyController;
+  late final TextEditingController _voiceDoubaoResourceIdController;
+  late final TextEditingController _voiceDoubaoEndpointController;
+  late final TextEditingController _voiceLanguageController;
   late final TextEditingController _gitNameController;
   late final TextEditingController _gitEmailController;
-  _SettingsDestination _destination = _SettingsDestination.overview;
+  late _SettingsDestination _destination;
   String _mcpQuery = '';
   String _modelsQuery = '';
   bool _showAllMcpServers = false;
@@ -132,12 +164,32 @@ class _AppSettingsSheetState extends State<_AppSettingsSheet> {
   @override
   void initState() {
     super.initState();
+    _destination = _settingsDestinationFromId(widget.initialDestination);
     final connection = widget.modelConfig.currentConnection;
     final gitSettings =
         widget.controller.state.gitSettings ?? GitSettings.defaults();
+    final voiceConfig = widget.controller.state.voiceConfig;
     _baseUrlController = TextEditingController(text: connection?.baseUrl ?? '');
     _apiKeyController = TextEditingController(text: connection?.apiKey ?? '');
     _modelController = TextEditingController(text: widget.modelConfig.model);
+    _voiceQwenApiKeyController =
+        TextEditingController(text: voiceConfig.qwen.apiKey);
+    _voiceQwenEndpointController =
+        TextEditingController(text: voiceConfig.qwen.endpoint);
+    _voiceQwenModelController =
+        TextEditingController(text: voiceConfig.qwen.model);
+    _voiceDoubaoApiKeyController =
+        TextEditingController(text: voiceConfig.doubao.apiKey);
+    _voiceDoubaoAppKeyController =
+        TextEditingController(text: voiceConfig.doubao.appKey);
+    _voiceDoubaoAccessKeyController =
+        TextEditingController(text: voiceConfig.doubao.accessKey);
+    _voiceDoubaoResourceIdController =
+        TextEditingController(text: voiceConfig.doubao.resourceId);
+    _voiceDoubaoEndpointController =
+        TextEditingController(text: voiceConfig.doubao.endpoint);
+    _voiceLanguageController =
+        TextEditingController(text: voiceConfig.language);
     _gitNameController = TextEditingController(text: gitSettings.identity.name);
     _gitEmailController =
         TextEditingController(text: gitSettings.identity.email);
@@ -148,6 +200,15 @@ class _AppSettingsSheetState extends State<_AppSettingsSheet> {
     _baseUrlController.dispose();
     _apiKeyController.dispose();
     _modelController.dispose();
+    _voiceQwenApiKeyController.dispose();
+    _voiceQwenEndpointController.dispose();
+    _voiceQwenModelController.dispose();
+    _voiceDoubaoApiKeyController.dispose();
+    _voiceDoubaoAppKeyController.dispose();
+    _voiceDoubaoAccessKeyController.dispose();
+    _voiceDoubaoResourceIdController.dispose();
+    _voiceDoubaoEndpointController.dispose();
+    _voiceLanguageController.dispose();
     _gitNameController.dispose();
     _gitEmailController.dispose();
     super.dispose();
@@ -216,6 +277,54 @@ class _AppSettingsSheetState extends State<_AppSettingsSheet> {
           content: Text(
             l(context, '模型目录已刷新', 'Model catalog refreshed'),
           ),
+        ),
+      );
+    } catch (error) {
+      if (!mounted) return;
+      _showInfo(context, error.toString());
+    }
+  }
+
+  Future<void> _saveVoiceSettings({
+    bool? enabled,
+    VoiceRealtimeProvider? provider,
+    bool? serverVad,
+  }) async {
+    final current = widget.controller.state.voiceConfig;
+    final next = current.copyWith(
+      enabled: enabled ?? current.enabled,
+      provider: provider ?? current.provider,
+      language: _voiceLanguageController.text.trim().isEmpty
+          ? 'zh'
+          : _voiceLanguageController.text.trim(),
+      serverVad: serverVad ?? current.serverVad,
+      qwen: current.qwen.copyWith(
+        apiKey: _voiceQwenApiKeyController.text.trim(),
+        endpoint: _voiceQwenEndpointController.text.trim().isEmpty
+            ? const QwenVoiceConfig().endpoint
+            : _voiceQwenEndpointController.text.trim(),
+        model: _voiceQwenModelController.text.trim().isEmpty
+            ? const QwenVoiceConfig().model
+            : _voiceQwenModelController.text.trim(),
+      ),
+      doubao: current.doubao.copyWith(
+        apiKey: _voiceDoubaoApiKeyController.text.trim(),
+        appKey: _voiceDoubaoAppKeyController.text.trim(),
+        accessKey: _voiceDoubaoAccessKeyController.text.trim(),
+        resourceId: _voiceDoubaoResourceIdController.text.trim().isEmpty
+            ? const DoubaoVoiceConfig().resourceId
+            : _voiceDoubaoResourceIdController.text.trim(),
+        endpoint: _voiceDoubaoEndpointController.text.trim().isEmpty
+            ? const DoubaoVoiceConfig().endpoint
+            : _voiceDoubaoEndpointController.text.trim(),
+      ),
+    );
+    try {
+      await widget.controller.saveVoiceConfig(next);
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(l(context, '语音输入设置已保存', 'Voice input settings saved')),
         ),
       );
     } catch (error) {
@@ -1405,6 +1514,8 @@ class _AppSettingsSheetState extends State<_AppSettingsSheet> {
         return l(context, '总览', 'Overview');
       case _SettingsDestination.models:
         return l(context, '模型', 'Models');
+      case _SettingsDestination.voice:
+        return l(context, '语音', 'Voice');
       case _SettingsDestination.variables:
         return l(context, '变量', 'Variables');
       case _SettingsDestination.mcp:
@@ -1420,6 +1531,8 @@ class _AppSettingsSheetState extends State<_AppSettingsSheet> {
         return Icons.dashboard_outlined;
       case _SettingsDestination.models:
         return Icons.hub_outlined;
+      case _SettingsDestination.voice:
+        return Icons.mic_none_rounded;
       case _SettingsDestination.variables:
         return Icons.key_outlined;
       case _SettingsDestination.mcp:
@@ -1536,6 +1649,23 @@ class _AppSettingsSheetState extends State<_AppSettingsSheet> {
                   onTap: () {
                     setState(() {
                       _destination = _SettingsDestination.models;
+                    });
+                  },
+                ),
+                const SizedBox(height: 10),
+                _SettingsDestinationCard(
+                  icon: Icons.mic_none_rounded,
+                  title: l(context, '语音输入', 'Voice input'),
+                  subtitle: widget.controller.state.voiceConfig.enabled
+                      ? '${widget.controller.state.voiceConfig.providerId} · ${widget.controller.state.voiceConfig.language}'
+                      : l(context, '未启用实时语音输入。',
+                          'Realtime voice input is disabled.'),
+                  trailing: widget.controller.state.voiceConfig.enabled
+                      ? l(context, '已启用', 'Enabled')
+                      : l(context, '关闭', 'Off'),
+                  onTap: () {
+                    setState(() {
+                      _destination = _SettingsDestination.voice;
                     });
                   },
                 ),
@@ -1960,6 +2090,208 @@ class _AppSettingsSheetState extends State<_AppSettingsSheet> {
     );
   }
 
+  Widget _buildVoicePage(BuildContext context) {
+    final config = widget.controller.state.voiceConfig;
+    final selectedProvider = config.provider;
+    return _buildSettingsBody(
+      context,
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          _SettingsSectionCard(
+            icon: Icons.mic_none_rounded,
+            title: l(context, '实时语音输入', 'Realtime voice input'),
+            subtitle: l(
+              context,
+              '语音 Provider 独立于聊天模型。第一版支持 Qwen ASR Realtime 和豆包流式语音识别。',
+              'Voice providers are independent from chat models. This version supports Qwen ASR Realtime and Doubao streaming ASR.',
+            ),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                SwitchListTile.adaptive(
+                  contentPadding: EdgeInsets.zero,
+                  value: config.enabled,
+                  title: Text(l(context, '启用语音输入', 'Enable voice input')),
+                  subtitle: Text(
+                    l(
+                      context,
+                      '启用后 composer 会显示麦克风按钮。',
+                      'When enabled, the composer shows a microphone button.',
+                    ),
+                  ),
+                  onChanged: (value) => _saveVoiceSettings(enabled: value),
+                ),
+                const SizedBox(height: 8),
+                DropdownButtonFormField<VoiceRealtimeProvider>(
+                  value: selectedProvider,
+                  decoration: _settingsInputDecoration(
+                    context,
+                    label: l(context, '语音 Provider', 'Voice provider'),
+                    icon: Icons.cloud_outlined,
+                  ),
+                  items: [
+                    DropdownMenuItem(
+                      value: VoiceRealtimeProvider.qwen,
+                      child: Text(
+                          l(context, 'Qwen ASR Realtime', 'Qwen ASR Realtime')),
+                    ),
+                    DropdownMenuItem(
+                      value: VoiceRealtimeProvider.doubao,
+                      child:
+                          Text(l(context, '豆包 / 火山引擎', 'Doubao / Volcengine')),
+                    ),
+                  ],
+                  onChanged: (value) {
+                    if (value == null) return;
+                    _saveVoiceSettings(provider: value);
+                  },
+                ),
+                const SizedBox(height: 12),
+                TextField(
+                  controller: _voiceLanguageController,
+                  decoration: _settingsInputDecoration(
+                    context,
+                    label: l(context, '语言', 'Language'),
+                    hint: 'zh',
+                    icon: Icons.translate_rounded,
+                  ),
+                ),
+                const SizedBox(height: 8),
+                SwitchListTile.adaptive(
+                  contentPadding: EdgeInsets.zero,
+                  value: config.serverVad,
+                  title: Text(l(context, '服务端 VAD', 'Server VAD')),
+                  subtitle: Text(
+                    l(
+                      context,
+                      '让语音服务自动判断说话边界。',
+                      'Let the voice service detect speech boundaries automatically.',
+                    ),
+                  ),
+                  onChanged: (value) => _saveVoiceSettings(serverVad: value),
+                ),
+              ],
+            ),
+          ),
+          const SizedBox(height: 14),
+          _SettingsSectionCard(
+            icon: Icons.auto_awesome_outlined,
+            title: l(context, 'Qwen ASR Realtime', 'Qwen ASR Realtime'),
+            subtitle: l(
+              context,
+              '使用 DashScope WebSocket 实时转写，默认中国区 endpoint。',
+              'Uses DashScope WebSocket realtime transcription, defaulting to the China endpoint.',
+            ),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                TextField(
+                  controller: _voiceQwenApiKeyController,
+                  obscureText: true,
+                  decoration: _settingsInputDecoration(
+                    context,
+                    label: 'DashScope API Key',
+                    icon: Icons.key_rounded,
+                  ),
+                ),
+                const SizedBox(height: 12),
+                TextField(
+                  controller: _voiceQwenEndpointController,
+                  decoration: _settingsInputDecoration(
+                    context,
+                    label: 'Endpoint',
+                    icon: Icons.link_rounded,
+                  ),
+                ),
+                const SizedBox(height: 12),
+                TextField(
+                  controller: _voiceQwenModelController,
+                  decoration: _settingsInputDecoration(
+                    context,
+                    label: l(context, '模型', 'Model'),
+                    icon: Icons.memory_rounded,
+                  ),
+                ),
+              ],
+            ),
+          ),
+          const SizedBox(height: 14),
+          _SettingsSectionCard(
+            icon: Icons.graphic_eq_rounded,
+            title: l(context, '豆包 / 火山引擎', 'Doubao / Volcengine'),
+            subtitle: l(
+              context,
+              '支持新版 X-Api-Key，也兼容 App Key + Access Key。',
+              'Supports the newer X-Api-Key and the App Key + Access Key pair.',
+            ),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                TextField(
+                  controller: _voiceDoubaoApiKeyController,
+                  obscureText: true,
+                  decoration: _settingsInputDecoration(
+                    context,
+                    label: 'X-Api-Key',
+                    icon: Icons.key_rounded,
+                  ),
+                ),
+                const SizedBox(height: 12),
+                TextField(
+                  controller: _voiceDoubaoAppKeyController,
+                  obscureText: true,
+                  decoration: _settingsInputDecoration(
+                    context,
+                    label: 'X-Api-App-Key',
+                    icon: Icons.badge_outlined,
+                  ),
+                ),
+                const SizedBox(height: 12),
+                TextField(
+                  controller: _voiceDoubaoAccessKeyController,
+                  obscureText: true,
+                  decoration: _settingsInputDecoration(
+                    context,
+                    label: 'X-Api-Access-Key',
+                    icon: Icons.vpn_key_outlined,
+                  ),
+                ),
+                const SizedBox(height: 12),
+                TextField(
+                  controller: _voiceDoubaoResourceIdController,
+                  decoration: _settingsInputDecoration(
+                    context,
+                    label: 'X-Api-Resource-Id',
+                    icon: Icons.inventory_2_outlined,
+                  ),
+                ),
+                const SizedBox(height: 12),
+                TextField(
+                  controller: _voiceDoubaoEndpointController,
+                  decoration: _settingsInputDecoration(
+                    context,
+                    label: 'Endpoint',
+                    icon: Icons.link_rounded,
+                  ),
+                ),
+              ],
+            ),
+          ),
+          const SizedBox(height: 14),
+          Align(
+            alignment: Alignment.centerRight,
+            child: FilledButton.icon(
+              onPressed: () => _saveVoiceSettings(),
+              icon: const Icon(Icons.save_outlined),
+              label: Text(l(context, '保存语音设置', 'Save voice settings')),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
   Widget _buildVariablesPage(BuildContext context) {
     final variables = widget.controller.state.appVariables;
     final aiEnabledCount = variables.where((item) => item.allowAiUse).length;
@@ -2285,6 +2617,8 @@ class _AppSettingsSheetState extends State<_AppSettingsSheet> {
           current: current,
           connection: connection,
         );
+      case _SettingsDestination.voice:
+        return _buildVoicePage(context);
       case _SettingsDestination.variables:
         return _buildVariablesPage(context);
       case _SettingsDestination.mcp:
@@ -2789,8 +3123,8 @@ class _AppSettingsSheetState extends State<_AppSettingsSheet> {
                               Text(
                                 l(
                                   context,
-                                  '模型、变量、MCP、Git 与凭据配置。',
-                                  'Models, variables, MCP, Git, and credentials.',
+                                  '模型、语音、变量、MCP、Git 与凭据配置。',
+                                  'Models, voice, variables, MCP, Git, and credentials.',
                                 ),
                                 style: TextStyle(
                                   fontSize: 12.5,

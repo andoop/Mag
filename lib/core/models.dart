@@ -14,6 +14,7 @@ part 'models/device_capability.dart';
 part 'models/provider_info.dart';
 part 'models/provider_auth.dart';
 part 'models/provider_config.dart';
+part 'models/voice_config.dart';
 part 'models/mcp.dart';
 part 'models/git_settings.dart';
 part 'models/app_variables.dart';

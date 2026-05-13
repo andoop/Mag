@@ -1472,35 +1472,32 @@ class _ContextRingButton extends StatelessWidget {
         child: SizedBox(
           width: 32,
           height: 32,
-          child: Stack(
-            alignment: Alignment.center,
-            children: [
-              SizedBox(
-                width: 32,
-                height: 32,
-                child: CircularProgressIndicator(
-                  value: clampedRatio,
-                  strokeWidth: 2,
-                  backgroundColor: oc.progressBg,
-                  valueColor: AlwaysStoppedAnimation<Color>(progressColor),
+          child: Container(
+            decoration: BoxDecoration(
+              color: oc.panelBackground.withOpacity(0.78),
+              shape: BoxShape.circle,
+              border: Border.fromBorderSide(BorderSide(color: oc.borderColor)),
+            ),
+            child: Stack(
+              alignment: Alignment.center,
+              children: [
+                SizedBox(
+                  width: 22,
+                  height: 22,
+                  child: CircularProgressIndicator(
+                    value: clampedRatio,
+                    strokeWidth: 1.8,
+                    backgroundColor: oc.progressBg,
+                    valueColor: AlwaysStoppedAnimation<Color>(progressColor),
+                  ),
                 ),
-              ),
-              Container(
-                width: 25,
-                height: 25,
-                decoration: BoxDecoration(
-                  color: oc.panelBackground,
-                  shape: BoxShape.circle,
-                  border:
-                      Border.fromBorderSide(BorderSide(color: oc.borderColor)),
-                ),
-                child: Icon(
+                Icon(
                   compacted ? Icons.compress_outlined : Icons.memory_outlined,
-                  size: 14,
+                  size: 16,
                   color: oc.foreground,
                 ),
-              ),
-            ],
+              ],
+            ),
           ),
         ),
       ),

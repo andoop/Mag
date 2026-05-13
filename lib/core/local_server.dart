@@ -259,6 +259,21 @@ class LocalServer {
         await _json(request.response, config.toJson());
         return;
       }
+      if (path == '/settings/voice' && request.method == 'GET') {
+        final config = VoiceRealtimeConfig.fromJson(
+          await database.getSetting(kVoiceRealtimeConfigKey) ??
+              VoiceRealtimeConfig.defaults().toJson(),
+        );
+        await _json(request.response, config.toJson());
+        return;
+      }
+      if (path == '/settings/voice' && request.method == 'POST') {
+        final body = await _readJson(request);
+        final config = VoiceRealtimeConfig.fromJson(body);
+        await database.putSetting(kVoiceRealtimeConfigKey, config.toJson());
+        await _json(request.response, config.toJson());
+        return;
+      }
       if (path == '/mcp/server' && request.method == 'GET') {
         await _json(
           request.response,

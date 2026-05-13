@@ -1,12 +1,14 @@
 import UIKit
 import Flutter
 import UniformTypeIdentifiers
+import AVFoundation
 
 @UIApplicationMain
 @objc class AppDelegate: FlutterAppDelegate {
   private var workspaceBridge: IOSWorkspaceBridge?
   private var gitBridge: IOSGitNetworkBridge?
   private var shortcutBridge: IOSShortcutBridge?
+  private var voiceAudioBridge: IOSVoiceAudioBridge?
   // Kept alive for the lifetime of the app so PiP state persists.
   private var floatingWindowPlugin: AnyObject?
 
@@ -27,6 +29,10 @@ import UniformTypeIdentifiers
       let shortcutBridge = IOSShortcutBridge()
       shortcutBridge.attach(binaryMessenger: controller.binaryMessenger)
       self.shortcutBridge = shortcutBridge
+
+      voiceAudioBridge = IOSVoiceAudioBridge(
+        binaryMessenger: controller.binaryMessenger
+      )
 
       // Floating window — native PiP on iOS 15+, no-op stub on earlier versions.
       // The plugin object is kept alive in floatingWindowPlugin for PiP state to persist.
@@ -146,6 +152,136 @@ private final class IOSShortcutBridge {
       "path": path,
       "title": values["title"] ?? workspaceName
     ]
+  }
+}
+
+private final class IOSVoiceAudioBridge: NSObject, FlutterStreamHandler {
+  private let channel: FlutterMethodChannel
+  private let eventChannel: FlutterEventChannel
+  private var eventSink: FlutterEventSink?
+  private let engine = AVAudioEngine()
+  private var converter: AVAudioConverter?
+  private var targetFormat: AVAudioFormat?
+
+  init(binaryMessenger: FlutterBinaryMessenger) {
+    channel = FlutterMethodChannel(
+      name: "mobile_agent/voice_audio",
+      binaryMessenger: binaryMessenger
+    )
+    eventChannel = FlutterEventChannel(
+      name: "mobile_agent/voice_audio_stream",
+      binaryMessenger: binaryMessenger
+    )
+    super.init()
+    channel.setMethodCallHandler(handle)
+    eventChannel.setStreamHandler(self)
+  }
+
+  func onListen(withArguments arguments: Any?, eventSink events: @escaping FlutterEventSink) -> FlutterError? {
+    eventSink = events
+    return nil
+  }
+
+  func onCancel(withArguments arguments: Any?) -> FlutterError? {
+    eventSink = nil
+    return nil
+  }
+
+  private func handle(_ call: FlutterMethodCall, result: @escaping FlutterResult) {
+    switch call.method {
+    case "hasPermission":
+      result(AVAudioSession.sharedInstance().recordPermission == .granted)
+    case "requestPermission":
+      AVAudioSession.sharedInstance().requestRecordPermission { granted in
+        DispatchQueue.main.async {
+          result(granted)
+        }
+      }
+    case "start":
+      let args = call.arguments as? [String: Any]
+      let sampleRate = args?["sampleRate"] as? Int ?? 16000
+      start(sampleRate: sampleRate, result: result)
+    case "stop":
+      stop()
+      result(nil)
+    default:
+      result(FlutterMethodNotImplemented)
+    }
+  }
+
+  private func start(sampleRate: Int, result: @escaping FlutterResult) {
+    guard AVAudioSession.sharedInstance().recordPermission == .granted else {
+      result(FlutterError(code: "microphone_denied", message: "Microphone permission denied", details: nil))
+      return
+    }
+    if engine.isRunning {
+      result(nil)
+      return
+    }
+    do {
+      let session = AVAudioSession.sharedInstance()
+      try session.setCategory(.playAndRecord, mode: .measurement, options: [.duckOthers, .defaultToSpeaker])
+      try session.setActive(true)
+
+      let input = engine.inputNode
+      let sourceFormat = input.outputFormat(forBus: 0)
+      guard let target = AVAudioFormat(
+        commonFormat: .pcmFormatInt16,
+        sampleRate: Double(sampleRate),
+        channels: 1,
+        interleaved: true
+      ) else {
+        result(FlutterError(code: "audio_format", message: "Unable to create target audio format", details: nil))
+        return
+      }
+      targetFormat = target
+      converter = AVAudioConverter(from: sourceFormat, to: target)
+      input.removeTap(onBus: 0)
+      input.installTap(onBus: 0, bufferSize: 2048, format: sourceFormat) { [weak self] buffer, _ in
+        self?.emit(buffer: buffer)
+      }
+      engine.prepare()
+      try engine.start()
+      result(nil)
+    } catch {
+      result(FlutterError(code: "audio_start_failed", message: error.localizedDescription, details: nil))
+    }
+  }
+
+  private func emit(buffer: AVAudioPCMBuffer) {
+    guard let converter = converter, let targetFormat = targetFormat else { return }
+    let ratio = targetFormat.sampleRate / buffer.format.sampleRate
+    let capacity = AVAudioFrameCount(Double(buffer.frameLength) * ratio) + 1
+    guard let outBuffer = AVAudioPCMBuffer(pcmFormat: targetFormat, frameCapacity: capacity) else {
+      return
+    }
+    var error: NSError?
+    var consumed = false
+    let status = converter.convert(to: outBuffer, error: &error) { _, outStatus in
+      if consumed {
+        outStatus.pointee = .noDataNow
+        return nil
+      }
+      consumed = true
+      outStatus.pointee = .haveData
+      return buffer
+    }
+    guard status != .error, outBuffer.frameLength > 0 else { return }
+    let byteCount = Int(outBuffer.frameLength) * Int(targetFormat.streamDescription.pointee.mBytesPerFrame)
+    guard let data = outBuffer.int16ChannelData?[0] else { return }
+    let bytes = FlutterStandardTypedData(bytes: Data(bytes: data, count: byteCount))
+    DispatchQueue.main.async { [weak self] in
+      self?.eventSink?(bytes)
+    }
+  }
+
+  func stop() {
+    if engine.isRunning {
+      engine.inputNode.removeTap(onBus: 0)
+      engine.stop()
+    }
+    converter = nil
+    targetFormat = nil
   }
 }
 

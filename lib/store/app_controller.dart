@@ -19,6 +19,8 @@ import '../core/models.dart';
 import '../core/prompt_system.dart';
 import '../core/session_engine.dart';
 import '../core/tool_runtime.dart';
+import '../core/voice/realtime_voice_client.dart';
+import '../platform/voice_audio_bridge.dart';
 import '../core/workspace_bridge.dart';
 import '../sdk/local_server_client.dart';
 import 'project_recents_store.dart';
@@ -29,6 +31,7 @@ part 'app_controller_provider.dart';
 part 'app_controller_mcp.dart';
 part 'app_controller_git.dart';
 part 'app_controller_variables.dart';
+part 'app_controller_voice.dart';
 part 'app_controller_workspace.dart';
 part 'app_controller_state.dart';
 
@@ -76,6 +79,10 @@ class AppState {
     this.mcpResources = const [],
     this.mcpPrompts = const [],
     this.appVariables = const [],
+    this.voiceConfig = const VoiceRealtimeConfig(),
+    this.voiceConnecting = false,
+    this.voiceRecording = false,
+    this.voiceError,
     this.recentModelKeys = const [],
     this.sessionStatuses = const {},
     this.error,
@@ -102,6 +109,10 @@ class AppState {
   final List<McpResourceDefinition> mcpResources;
   final List<McpPromptDefinition> mcpPrompts;
   final List<AppVariable> appVariables;
+  final VoiceRealtimeConfig voiceConfig;
+  final bool voiceConnecting;
+  final bool voiceRecording;
+  final String? voiceError;
   final List<String> recentModelKeys;
   final Map<String, SessionRunStatus> sessionStatuses;
   final String? error;
@@ -137,6 +148,10 @@ class AppState {
     List<McpResourceDefinition>? mcpResources,
     List<McpPromptDefinition>? mcpPrompts,
     List<AppVariable>? appVariables,
+    VoiceRealtimeConfig? voiceConfig,
+    bool? voiceConnecting,
+    bool? voiceRecording,
+    Object? voiceError = _noChange,
     List<String>? recentModelKeys,
     Map<String, SessionRunStatus>? sessionStatuses,
     Object? error = _noChange,
@@ -165,6 +180,12 @@ class AppState {
       mcpResources: mcpResources ?? this.mcpResources,
       mcpPrompts: mcpPrompts ?? this.mcpPrompts,
       appVariables: appVariables ?? this.appVariables,
+      voiceConfig: voiceConfig ?? this.voiceConfig,
+      voiceConnecting: voiceConnecting ?? this.voiceConnecting,
+      voiceRecording: voiceRecording ?? this.voiceRecording,
+      voiceError: identical(voiceError, _noChange)
+          ? this.voiceError
+          : voiceError as String?,
       recentModelKeys: recentModelKeys ?? this.recentModelKeys,
       sessionStatuses: sessionStatuses ?? this.sessionStatuses,
       error: identical(error, _noChange) ? this.error : error as String?,
@@ -219,6 +240,9 @@ class AppController extends ChangeNotifier {
   final _StreamPerfStats _streamPerf = _StreamPerfStats();
   Timer? _partDeltaFlushTimer;
   Timer? _partDeltaMaxLatencyTimer;
+  VoiceRealtimeClient? _voiceClient;
+  StreamSubscription<VoiceRealtimeUpdate>? _voiceUpdateSubscription;
+  StreamSubscription<Uint8List>? _voiceAudioSubscription;
   bool _partDeltaFrameScheduled = false; // ignore: prefer_final_fields
   int _lastFlushDurationMs = 0; // ignore: prefer_final_fields
   int _lastDeltaFlushStartedAtMs = 0; // ignore: prefer_final_fields
@@ -272,6 +296,7 @@ class AppController extends ChangeNotifier {
     final mcpStatuses = await _client!.listMcpStatuses();
     final gitSettings = await _gitSettingsStore.load();
     final appVariables = await _appVariableStore.load();
+    final voiceConfig = await _client!.loadVoiceConfig();
     final recentModelKeys = await _loadRecentModelKeys();
     state = state.copyWith(
       serverUri: serverUri,
@@ -285,6 +310,7 @@ class AppController extends ChangeNotifier {
       mcpResources: const [],
       mcpPrompts: const [],
       appVariables: appVariables,
+      voiceConfig: voiceConfig,
       agents: agents,
       recentModelKeys: recentModelKeys,
     );
@@ -519,6 +545,7 @@ class AppController extends ChangeNotifier {
   Future<void> disposeController() async {
     _partDeltaFlushTimer?.cancel();
     _partDeltaMaxLatencyTimer?.cancel();
+    await stopVoiceInput();
     await _subscription?.cancel();
     await _events.close();
     await _server.stop();

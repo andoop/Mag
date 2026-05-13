@@ -68,6 +68,9 @@ class MainActivity : FlutterActivity() {
             DEVICE_CAMERA_PERMISSION_REQUEST,
         )
     }
+    private val voiceAudioBridge: VoiceAudioBridge by lazy {
+        VoiceAudioBridge(this)
+    }
     private var shortcutChannel: MethodChannel? = null
     private var pendingShortcutLaunch: Map<String, Any?>? = null
 
@@ -83,6 +86,7 @@ class MainActivity : FlutterActivity() {
             .also { it.setMethodCallHandler(::handleShortcutCall) }
         pendingShortcutLaunch = shortcutPayloadFromIntent(intent)
         gitNetworkBridge.attach(flutterEngine)
+        voiceAudioBridge.attach(flutterEngine)
     }
 
     override fun onNewIntent(intent: Intent) {
@@ -814,6 +818,7 @@ class MainActivity : FlutterActivity() {
     ) {
         super.onRequestPermissionsResult(requestCode, permissions, grantResults)
         if (mediaCapabilityProvider.onRequestPermissionsResult(requestCode, grantResults)) return
+        if (voiceAudioBridge.onRequestPermissionsResult(requestCode, grantResults)) return
     }
 
     private fun resolveDocument(treeUri: String, relativePath: String): DocumentFile? {
