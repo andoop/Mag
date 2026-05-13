@@ -134,8 +134,50 @@ class DeviceCapabilityRegistry {
               ? '需要用户手势和一次性授权'
               : 'requires user gesture and one-time approval')
           : (zh ? '无需额外授权' : 'no extra approval');
-      return '- `${item.id}` v${item.version}: ${item.descriptionForAi} ($gate).';
+      final summary = _promptSummary(item, zh: zh);
+      final example = _promptExample(item, zh: zh);
+      return zh
+          ? '- `${item.id}` v${item.version}: $summary（$gate）。$example'
+          : '- `${item.id}` v${item.version}: $summary ($gate). $example';
     }).toList(growable: false);
+  }
+
+  String _promptSummary(DeviceCapabilityDefinition item, {required bool zh}) {
+    switch (item.id) {
+      case 'files.pick':
+        return zh
+            ? '选择本地文件并返回临时可访问 URL。网页里不要直接调用能力 ID，要用 `window.MagNative.pickFiles(...)`。'
+            : 'Pick local files and return temporary runtime URLs. In web pages, do not call the capability ID directly; use `window.MagNative.pickFiles(...)`.';
+      case 'media.capturePhoto':
+        return zh
+            ? '调用设备相机拍照并返回临时图片 URL。网页里不要直接调用 `media.capturePhoto()`，要用 `window.MagNative.capturePhoto()`。'
+            : 'Open the device camera and return a temporary image URL. In web pages, do not call `media.capturePhoto()` directly; use `window.MagNative.capturePhoto()`.';
+      case 'files.save':
+        return zh
+            ? '把生成的内容保存到用户选择的位置；当前 HTML 运行时尚未启用。'
+            : 'Save generated content to a user-selected destination; not enabled in the HTML runtime yet.';
+      case 'share.openSheet':
+        return zh
+            ? '打开系统分享面板分享文本或文件；当前 HTML 运行时尚未启用。'
+            : 'Open the system share sheet for text or files; not enabled in the HTML runtime yet.';
+      default:
+        return item.descriptionForAi;
+    }
+  }
+
+  String _promptExample(DeviceCapabilityDefinition item, {required bool zh}) {
+    switch (item.id) {
+      case 'files.pick':
+        return zh
+            ? '示例：`const files = await window.MagNative.pickFiles({ multiple: true, accept: "image/*" })`。'
+            : 'Example: `const files = await window.MagNative.pickFiles({ multiple: true, accept: "image/*" })`.';
+      case 'media.capturePhoto':
+        return zh
+            ? '示例：`const photo = await window.MagNative.capturePhoto()`，或使用 `<input type="file" accept="image/*" capture>`。'
+            : 'Example: `const photo = await window.MagNative.capturePhoto()`, or use `<input type="file" accept="image/*" capture>`.';
+      default:
+        return zh ? '示例：按暴露的 Web API 调用。' : 'Example: use the exposed web API.';
+    }
   }
 
   String get _currentPlatform {
