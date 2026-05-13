@@ -110,6 +110,27 @@ extension SessionEngineConversation on SessionEngine {
     if (visibleMessages.isEmpty) {
       visibleMessages = messages;
     }
+    final retainedImageMessageIds = <String>{};
+    var retainedHistoricalImageTurns = 0;
+    for (final message in visibleMessages.reversed) {
+      if (message.role != SessionRole.user) continue;
+      final messageParts = partsByMessage[message.id] ?? const <MessagePart>[];
+      final hasDataImage = messageParts.any((part) {
+        if (part.type != PartType.file) return false;
+        final mime = part.data['mime'] as String? ?? '';
+        final url = part.data['url'] as String? ?? '';
+        return mime.startsWith('image/') && url.startsWith('data:');
+      });
+      if (!hasDataImage) continue;
+      if (message.id == latestUserId) {
+        retainedImageMessageIds.add(message.id);
+        continue;
+      }
+      if (retainedHistoricalImageTurns < 2) {
+        retainedImageMessageIds.add(message.id);
+        retainedHistoricalImageTurns++;
+      }
+    }
     final conversation = <Map<String, dynamic>>[];
     for (var i = 0; i < visibleMessages.length; i++) {
       final message = visibleMessages[i];
@@ -126,8 +147,12 @@ extension SessionEngineConversation on SessionEngine {
       if (message.role == SessionRole.user) {
         final switchedFromPlan =
             currentAgent == 'build' && message.agent == 'plan';
-        final userContent = _userMessageContent(message, messageParts);
         final isLatestUser = message.id == latestUserId;
+        final userContent = _userMessageContent(
+          message,
+          messageParts,
+          includeImageData: retainedImageMessageIds.contains(message.id),
+        );
         if (userContent is String) {
           var text = promptAssembler.applyUserReminder(
             agent: message.agent,
@@ -344,7 +369,11 @@ extension SessionEngineConversation on SessionEngine {
     return items;
   }
 
-  dynamic _userMessageContent(MessageInfo message, List<MessagePart> parts) {
+  dynamic _userMessageContent(
+    MessageInfo message,
+    List<MessagePart> parts, {
+    bool includeImageData = true,
+  }) {
     final blocks = <Map<String, dynamic>>[];
     for (final part in parts) {
       if (part.type == PartType.text) {
@@ -376,6 +405,14 @@ extension SessionEngineConversation on SessionEngine {
                 mime.startsWith('audio/') ||
                 mime.startsWith('video/') ||
                 mime == 'application/pdf')) {
+          if (mime.startsWith('image/') && !includeImageData) {
+            blocks.add({
+              'type': 'text',
+              'text':
+                  '[Image omitted from context: $filename, $mime, attached earlier]',
+            });
+            continue;
+          }
           blocks.add({
             'type': 'file',
             'mediaType': mime,

@@ -139,7 +139,7 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
   // ignore: prefer_final_fields
   int _promptMentionRequestId = 0;
   // ignore: prefer_final_fields
-  List<WorkspaceEntry> _promptAttachments = const [];
+  List<_ComposerAttachment> _promptAttachments = const [];
   bool _pendingScrollToBottomButtonVisible = false;
 
   /// 会话切换时必须重建时间线；不能仅依赖 [_stateRenderKey]，否则新建/切换会话后可能与旧 key 碰撞而不调用 setState，界面仍显示旧消息。

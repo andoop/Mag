@@ -31,13 +31,13 @@ class DeviceCapabilityBridge {
   static const MethodChannel _channel =
       MethodChannel('mobile_agent/device_capabilities');
 
-  static bool get isSupported => Platform.isAndroid;
+  static bool get isSupported => Platform.isAndroid || Platform.isIOS;
 
   static Future<dynamic> invoke(
       String capabilityId, Map<String, dynamic> input) {
     if (!isSupported) {
       throw UnsupportedError(
-          'Device capabilities are only supported on Android.');
+          'Device capabilities are only supported on Android and iOS.');
     }
     return _channel.invokeMethod<dynamic>('invoke', {
       'capabilityId': capabilityId,

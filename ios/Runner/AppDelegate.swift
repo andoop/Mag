@@ -2,12 +2,14 @@ import UIKit
 import Flutter
 import UniformTypeIdentifiers
 import AVFoundation
+import PhotosUI
 
 @UIApplicationMain
 @objc class AppDelegate: FlutterAppDelegate {
   private var workspaceBridge: IOSWorkspaceBridge?
   private var gitBridge: IOSGitNetworkBridge?
   private var shortcutBridge: IOSShortcutBridge?
+  private var deviceCapabilityBridge: IOSDeviceCapabilityBridge?
   private var voiceAudioBridge: IOSVoiceAudioBridge?
   // Kept alive for the lifetime of the app so PiP state persists.
   private var floatingWindowPlugin: AnyObject?
@@ -29,6 +31,10 @@ import AVFoundation
       let shortcutBridge = IOSShortcutBridge()
       shortcutBridge.attach(binaryMessenger: controller.binaryMessenger)
       self.shortcutBridge = shortcutBridge
+
+      let deviceCapabilityBridge = IOSDeviceCapabilityBridge(controller: controller)
+      deviceCapabilityBridge.attach(binaryMessenger: controller.binaryMessenger)
+      self.deviceCapabilityBridge = deviceCapabilityBridge
 
       voiceAudioBridge = IOSVoiceAudioBridge(
         binaryMessenger: controller.binaryMessenger
@@ -66,6 +72,236 @@ import AVFoundation
       return true
     }
     return super.application(app, open: url, options: options)
+  }
+}
+
+private final class IOSDeviceCapabilityBridge: NSObject, UIImagePickerControllerDelegate, UINavigationControllerDelegate {
+  private weak var controller: FlutterViewController?
+  private var pendingResult: FlutterResult?
+  private var pendingCapability: String?
+
+  init(controller: FlutterViewController) {
+    self.controller = controller
+    super.init()
+  }
+
+  func attach(binaryMessenger: FlutterBinaryMessenger) {
+    let channel = FlutterMethodChannel(
+      name: "mobile_agent/device_capabilities",
+      binaryMessenger: binaryMessenger
+    )
+    channel.setMethodCallHandler { [weak self] call, result in
+      guard let self else {
+        result(FlutterError(code: "device_capability_error", message: "Device capability bridge unavailable", details: nil))
+        return
+      }
+      guard call.method == "invoke" else {
+        result(FlutterMethodNotImplemented)
+        return
+      }
+      let args = call.arguments as? [String: Any] ?? [:]
+      let capabilityId = args["capabilityId"] as? String ?? ""
+      let input = args["input"] as? [String: Any] ?? [:]
+      switch capabilityId {
+      case "files.pick":
+        self.pickFiles(input: input, result: result)
+      case "media.capturePhoto":
+        self.capturePhoto(result: result)
+      default:
+        result(FlutterError(code: "unsupported_capability", message: "Unsupported capability: \(capabilityId)", details: nil))
+      }
+    }
+  }
+
+  private func pickFiles(input: [String: Any], result: @escaping FlutterResult) {
+    guard begin(capability: "files.pick", result: result) else {
+      return
+    }
+    guard let controller else {
+      finish(error: FlutterError(code: "picker_unavailable", message: "Root view controller unavailable", details: nil))
+      return
+    }
+    guard #available(iOS 14.0, *) else {
+      finish(error: FlutterError(code: "picker_unavailable", message: "Image picking requires iOS 14 or newer", details: nil))
+      return
+    }
+    let accept = input["accept"] as? String ?? ""
+    guard accept.isEmpty || accept.contains("image") else {
+      finish(error: FlutterError(code: "unsupported_accept", message: "Only image picking is supported on iOS.", details: nil))
+      return
+    }
+    var configuration = PHPickerConfiguration(photoLibrary: .shared())
+    configuration.filter = .images
+    configuration.selectionLimit = (input["multiple"] as? Bool ?? false) ? 0 : 1
+    let picker = PHPickerViewController(configuration: configuration)
+    picker.delegate = self
+    controller.present(picker, animated: true)
+  }
+
+  private func capturePhoto(result: @escaping FlutterResult) {
+    guard begin(capability: "media.capturePhoto", result: result) else {
+      return
+    }
+    guard let controller else {
+      finish(error: FlutterError(code: "camera_unavailable", message: "Root view controller unavailable", details: nil))
+      return
+    }
+    guard UIImagePickerController.isSourceTypeAvailable(.camera) else {
+      finish(error: FlutterError(code: "camera_unavailable", message: "No camera is available.", details: nil))
+      return
+    }
+    let picker = UIImagePickerController()
+    picker.sourceType = .camera
+    picker.mediaTypes = [UTType.image.identifier]
+    picker.delegate = self
+    controller.present(picker, animated: true)
+  }
+
+  private func begin(capability: String, result: @escaping FlutterResult) -> Bool {
+    guard pendingResult == nil else {
+      result(FlutterError(code: "busy", message: "Another device capability is already active.", details: nil))
+      return false
+    }
+    pendingCapability = capability
+    pendingResult = result
+    return true
+  }
+
+  private func finish(result: Any? = nil, error: FlutterError? = nil) {
+    guard let pending = pendingResult else {
+      return
+    }
+    pendingResult = nil
+    pendingCapability = nil
+    if let error {
+      pending(error)
+    } else {
+      pending(result)
+    }
+  }
+
+  func imagePickerControllerDidCancel(_ picker: UIImagePickerController) {
+    picker.dismiss(animated: true)
+    if pendingCapability == "media.capturePhoto" {
+      finish(result: nil)
+    }
+  }
+
+  func imagePickerController(
+    _ picker: UIImagePickerController,
+    didFinishPickingMediaWithInfo info: [UIImagePickerController.InfoKey : Any]
+  ) {
+    picker.dismiss(animated: true)
+    guard pendingCapability == "media.capturePhoto" else {
+      return
+    }
+    guard
+      let image = info[.originalImage] as? UIImage,
+      let data = image.jpegData(compressionQuality: 0.92)
+    else {
+      finish(error: FlutterError(code: "capture_failed", message: "Unable to read captured photo.", details: nil))
+      return
+    }
+    do {
+      let payload = try writeImageData(
+        data,
+        suggestedName: nil,
+        typeIdentifier: UTType.jpeg.identifier,
+        prefix: "photo"
+      )
+      finish(result: payload)
+    } catch {
+      finish(error: FlutterError(code: "capture_failed", message: error.localizedDescription, details: nil))
+    }
+  }
+
+  private func preferredImageTypeIdentifier(_ provider: NSItemProvider) -> String? {
+    for identifier in provider.registeredTypeIdentifiers {
+      if let type = UTType(identifier), type.conforms(to: .image) {
+        return identifier
+      }
+    }
+    return provider.hasItemConformingToTypeIdentifier(UTType.image.identifier)
+      ? UTType.image.identifier
+      : nil
+  }
+
+  private func writeImageData(
+    _ data: Data,
+    suggestedName: String?,
+    typeIdentifier: String,
+    prefix: String
+  ) throws -> [String: Any] {
+    let type = UTType(typeIdentifier) ?? .jpeg
+    let ext = type.preferredFilenameExtension ?? "jpg"
+    let mimeType = type.preferredMIMEType ?? "image/jpeg"
+    let displayName = sanitizedFileName(
+      suggestedName?.isEmpty == false ? suggestedName! : "\(prefix)-\(Int(Date().timeIntervalSince1970 * 1000)).\(ext)",
+      fallbackExtension: ext
+    )
+    let dir = try cacheDirectory(name: "device-capabilities/images")
+    let fileName = "\(Int(Date().timeIntervalSince1970 * 1000))-\(UUID().uuidString).\(ext)"
+    let url = dir.appendingPathComponent(fileName)
+    try data.write(to: url, options: .atomic)
+    return [
+      "path": url.path,
+      "name": displayName,
+      "mimeType": mimeType,
+      "size": data.count,
+    ]
+  }
+
+  private func cacheDirectory(name: String) throws -> URL {
+    let base = FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask).first!
+    let dir = base.appendingPathComponent(name, isDirectory: true)
+    try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+    return dir
+  }
+
+  private func sanitizedFileName(_ value: String, fallbackExtension ext: String) -> String {
+    let allowed = CharacterSet(charactersIn: "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789._-")
+    let sanitized = String(value.unicodeScalars.map {
+      allowed.contains($0) ? Character($0) : Character("_")
+    })
+    let name = sanitized.isEmpty ? "image.\(ext)" : sanitized
+    return name.contains(".") ? name : "\(name).\(ext)"
+  }
+}
+
+@available(iOS 14.0, *)
+private extension IOSDeviceCapabilityBridge: PHPickerViewControllerDelegate {
+  func picker(_ picker: PHPickerViewController, didFinishPicking results: [PHPickerResult]) {
+    picker.dismiss(animated: true)
+    guard pendingCapability == "files.pick" else {
+      return
+    }
+    if results.isEmpty {
+      finish(result: [])
+      return
+    }
+    var payloads = Array<[String: Any]?>(repeating: nil, count: results.count)
+    let group = DispatchGroup()
+    for (index, item) in results.enumerated() {
+      guard let typeIdentifier = preferredImageTypeIdentifier(item.itemProvider) else {
+        continue
+      }
+      group.enter()
+      item.itemProvider.loadDataRepresentation(forTypeIdentifier: typeIdentifier) { [weak self] data, _ in
+        defer { group.leave() }
+        guard let self, let data, !data.isEmpty else {
+          return
+        }
+        payloads[index] = try? self.writeImageData(
+          data,
+          suggestedName: item.itemProvider.suggestedName,
+          typeIdentifier: typeIdentifier,
+          prefix: "image"
+        )
+      }
+    }
+    group.notify(queue: .main) { [weak self] in
+      self?.finish(result: payloads.compactMap { $0 })
+    }
   }
 }
 

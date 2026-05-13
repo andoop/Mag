@@ -2,6 +2,64 @@ part of '../home_page.dart';
 
 // ignore_for_file: invalid_use_of_protected_member
 
+enum _ComposerAttachmentSource { workspace, deviceFile, camera }
+
+enum _ComposerAttachmentAction { chooseImage, capturePhoto, workspaceFile }
+
+class _ComposerAttachment {
+  const _ComposerAttachment({
+    required this.id,
+    required this.source,
+    required this.path,
+    required this.name,
+    required this.mimeType,
+    this.size,
+    this.workspaceEntry,
+  });
+
+  factory _ComposerAttachment.workspace(WorkspaceEntry entry) {
+    final mimeType = entry.mimeType ??
+        (entry.isDirectory ? 'application/x-directory' : 'text/plain');
+    return _ComposerAttachment(
+      id: 'workspace:${entry.path}',
+      source: _ComposerAttachmentSource.workspace,
+      path: entry.path,
+      name: entry.name,
+      mimeType: mimeType,
+      workspaceEntry: entry,
+    );
+  }
+
+  factory _ComposerAttachment.localImage(
+    DeviceCapabilityFile file, {
+    required _ComposerAttachmentSource source,
+  }) {
+    return _ComposerAttachment(
+      id: '${source.name}:${file.path}',
+      source: source,
+      path: file.path,
+      name: file.name,
+      mimeType: file.mimeType.isEmpty ? 'image/jpeg' : file.mimeType,
+      size: file.size,
+    );
+  }
+
+  final String id;
+  final _ComposerAttachmentSource source;
+  final String path;
+  final String name;
+  final String mimeType;
+  final int? size;
+  final WorkspaceEntry? workspaceEntry;
+
+  String get dedupeKey =>
+      source == _ComposerAttachmentSource.camera ? id : '${source.name}:$path';
+
+  bool get isWorkspace => source == _ComposerAttachmentSource.workspace;
+  bool get isImage => mimeType.startsWith('image/');
+  bool get isDirectory => workspaceEntry?.isDirectory ?? false;
+}
+
 extension _HomePageComposer on _HomePageState {
   void _handlePromptComposerChanged() {
     final match = _currentPromptMentionMatch();
@@ -273,6 +331,172 @@ extension _HomePageComposer on _HomePageState {
     _promptFocusNode.requestFocus();
   }
 
+  Future<void> _openAttachmentActions(BuildContext context) async {
+    final action = await showModalBottomSheet<_ComposerAttachmentAction>(
+      context: context,
+      builder: (sheetContext) {
+        final oc = sheetContext.oc;
+        Widget tile({
+          required IconData icon,
+          required String title,
+          required String subtitle,
+          required _ComposerAttachmentAction action,
+        }) {
+          return ListTile(
+            leading: Container(
+              width: 36,
+              height: 36,
+              decoration: BoxDecoration(
+                color: oc.composerOptionBg,
+                borderRadius: BorderRadius.circular(12),
+                border: Border.fromBorderSide(
+                  BorderSide(color: oc.softBorderColor),
+                ),
+              ),
+              child: Icon(icon, size: 18, color: oc.foreground),
+            ),
+            title: Text(title),
+            subtitle: Text(subtitle),
+            onTap: () => Navigator.of(sheetContext).pop(action),
+          );
+        }
+
+        return SafeArea(
+          child: Padding(
+            padding: const EdgeInsets.fromLTRB(12, 8, 12, 12),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Container(
+                  width: 38,
+                  height: 4,
+                  margin: const EdgeInsets.only(bottom: 8),
+                  decoration: BoxDecoration(
+                    color: oc.borderColor,
+                    borderRadius: BorderRadius.circular(999),
+                  ),
+                ),
+                tile(
+                  icon: Icons.image_outlined,
+                  title: l(sheetContext, '选择图片', 'Choose image'),
+                  subtitle: l(sheetContext, '从设备相册或文件中选择图片',
+                      'Pick images from this device'),
+                  action: _ComposerAttachmentAction.chooseImage,
+                ),
+                tile(
+                  icon: Icons.photo_camera_outlined,
+                  title: l(sheetContext, '拍照', 'Take photo'),
+                  subtitle: l(sheetContext, '打开相机拍摄一张图片',
+                      'Open the camera and attach a photo'),
+                  action: _ComposerAttachmentAction.capturePhoto,
+                ),
+                tile(
+                  icon: Icons.folder_outlined,
+                  title: l(sheetContext, '工作区文件', 'Workspace file'),
+                  subtitle: l(sheetContext, '选择项目里的文件作为附件',
+                      'Attach files from the current workspace'),
+                  action: _ComposerAttachmentAction.workspaceFile,
+                ),
+              ],
+            ),
+          ),
+        );
+      },
+    );
+    if (!mounted || action == null) return;
+    final currentContext = this.context;
+    switch (action) {
+      case _ComposerAttachmentAction.chooseImage:
+        await _pickPromptImages(currentContext);
+        break;
+      case _ComposerAttachmentAction.capturePhoto:
+        await _capturePromptPhoto(currentContext);
+        break;
+      case _ComposerAttachmentAction.workspaceFile:
+        await _openPromptAttachmentPicker(currentContext);
+        break;
+    }
+  }
+
+  Future<void> _pickPromptImages(BuildContext context) async {
+    if (!DeviceCapabilityBridge.isSupported) {
+      _showInfo(
+        context,
+        l(context, '当前平台暂不支持选择设备图片',
+            'Choosing device images is not supported on this platform.'),
+      );
+      return;
+    }
+    try {
+      final files = await DeviceCapabilityBridge.pickFiles(
+        accept: 'image/*',
+        multiple: true,
+      );
+      final attachments = files
+          .where((file) => file.mimeType.startsWith('image/'))
+          .map(
+            (file) => _ComposerAttachment.localImage(
+              file,
+              source: _ComposerAttachmentSource.deviceFile,
+            ),
+          )
+          .toList();
+      if (attachments.isEmpty) return;
+      if (!mounted) return;
+      setState(() {
+        _promptAttachments = _mergePromptAttachments([
+          ..._promptAttachments,
+          ...attachments,
+        ]);
+      });
+    } catch (error) {
+      if (!mounted || !context.mounted) return;
+      _showInfo(context, error.toString());
+    }
+  }
+
+  Future<void> _capturePromptPhoto(BuildContext context) async {
+    if (!DeviceCapabilityBridge.isSupported) {
+      _showInfo(
+        context,
+        l(context, '当前平台暂不支持拍照附件',
+            'Camera attachments are not supported on this platform.'),
+      );
+      return;
+    }
+    try {
+      final file = await DeviceCapabilityBridge.capturePhoto();
+      if (file == null) return;
+      final attachment = _ComposerAttachment.localImage(
+        file,
+        source: _ComposerAttachmentSource.camera,
+      );
+      if (!mounted) return;
+      setState(() {
+        _promptAttachments = _mergePromptAttachments([
+          ..._promptAttachments,
+          attachment,
+        ]);
+      });
+    } catch (error) {
+      if (!mounted || !context.mounted) return;
+      _showInfo(context, error.toString());
+    }
+  }
+
+  List<_ComposerAttachment> _mergePromptAttachments(
+    Iterable<_ComposerAttachment> attachments,
+  ) {
+    final seen = <String>{};
+    final out = <_ComposerAttachment>[];
+    for (final attachment in attachments) {
+      if (seen.add(attachment.dedupeKey)) {
+        out.add(attachment);
+      }
+    }
+    return out;
+  }
+
   Future<void> _openPromptAttachmentPicker(BuildContext context) async {
     final workspace = widget.controller.state.workspace;
     if (workspace == null) {
@@ -283,7 +507,9 @@ extension _HomePageComposer on _HomePageState {
       return;
     }
     final initial = <String, WorkspaceEntry>{
-      for (final entry in _promptAttachments) entry.path: entry,
+      for (final attachment in _promptAttachments)
+        if (attachment.workspaceEntry != null)
+          attachment.workspaceEntry!.path: attachment.workspaceEntry!,
     };
     final selected = await showModalBottomSheet<List<WorkspaceEntry>>(
       context: context,
@@ -457,7 +683,13 @@ extension _HomePageComposer on _HomePageState {
     );
     if (!mounted || selected == null) return;
     setState(() {
-      _promptAttachments = selected;
+      final localAttachments = _promptAttachments
+          .where((attachment) => !attachment.isWorkspace)
+          .toList();
+      _promptAttachments = _mergePromptAttachments([
+        ...localAttachments,
+        ...selected.map(_ComposerAttachment.workspace),
+      ]);
     });
   }
 
@@ -473,11 +705,12 @@ extension _HomePageComposer on _HomePageState {
       });
     }
     for (final entry in _promptAttachments) {
-      final mime = entry.mimeType ??
-          (entry.isDirectory ? 'application/x-directory' : 'text/plain');
+      final mime = entry.mimeType;
       final source = <String, dynamic>{
         'type': 'file',
+        'origin': entry.source.name,
         'path': entry.path,
+        if (entry.size != null) 'size': entry.size,
       };
       final base = <String, dynamic>{
         'type': PartType.file.name,
@@ -491,10 +724,12 @@ extension _HomePageComposer on _HomePageState {
           mime.startsWith('audio/') ||
           mime.startsWith('video/') ||
           mime == 'application/pdf') {
-        final bytes = await widget.controller.loadWorkspaceBytes(
-          treeUri: workspace.treeUri,
-          relativePath: entry.path,
-        );
+        final bytes = entry.isWorkspace
+            ? await widget.controller.loadWorkspaceBytes(
+                treeUri: workspace.treeUri,
+                relativePath: entry.path,
+              )
+            : await File(entry.path).readAsBytes();
         base['url'] = 'data:$mime;base64,${base64Encode(bytes)}';
       } else if (mime == 'text/plain' ||
           mime == 'text/markdown' ||
@@ -503,10 +738,12 @@ extension _HomePageComposer on _HomePageState {
           mime == 'application/x-directory') {
         final content = entry.isDirectory
             ? 'Directory: ${entry.path}'
-            : await widget.controller.loadWorkspaceText(
-                treeUri: workspace.treeUri,
-                relativePath: entry.path,
-              );
+            : entry.isWorkspace
+                ? await widget.controller.loadWorkspaceText(
+                    treeUri: workspace.treeUri,
+                    relativePath: entry.path,
+                  )
+                : await File(entry.path).readAsString();
         source['text'] = {
           'value': content,
           'start': 0,
@@ -516,6 +753,61 @@ extension _HomePageComposer on _HomePageState {
       parts.add(base);
     }
     return parts;
+  }
+
+  bool _currentModelSupportsImageInput(AppState state) {
+    final modalities =
+        state.modelConfig?.currentModelModalities?.input ?? const <String>[];
+    return modalities.any((item) => item.toLowerCase() == 'image');
+  }
+
+  String _attachmentSourceLabel(
+    BuildContext context,
+    _ComposerAttachment attachment,
+  ) {
+    switch (attachment.source) {
+      case _ComposerAttachmentSource.workspace:
+        return l(context, '工作区', 'Workspace');
+      case _ComposerAttachmentSource.deviceFile:
+        return l(context, '相册', 'Device');
+      case _ComposerAttachmentSource.camera:
+        return l(context, '拍照', 'Camera');
+    }
+  }
+
+  IconData _attachmentIcon(_ComposerAttachment attachment) {
+    if (attachment.isImage) return Icons.image_outlined;
+    if (attachment.mimeType == 'application/pdf') {
+      return Icons.picture_as_pdf_outlined;
+    }
+    if (attachment.isDirectory) return Icons.folder_outlined;
+    return Icons.attach_file;
+  }
+
+  Widget _buildPromptAttachmentChip(
+    BuildContext context,
+    _ComposerAttachment attachment,
+  ) {
+    final oc = context.oc;
+    final label = _attachmentSourceLabel(context, attachment);
+    return InputChip(
+      label: Text(
+        '${attachment.name} · $label',
+        overflow: TextOverflow.ellipsis,
+      ),
+      avatar: Icon(
+        _attachmentIcon(attachment),
+        size: 16,
+        color: oc.foregroundMuted,
+      ),
+      onDeleted: () {
+        setState(() {
+          _promptAttachments = _promptAttachments
+              .where((item) => item.id != attachment.id)
+              .toList();
+        });
+      },
+    );
   }
 
   Widget _buildComposerDock(
@@ -818,38 +1110,57 @@ extension _HomePageComposer on _HomePageState {
                   if (_promptAttachments.isNotEmpty)
                     Padding(
                       padding: const EdgeInsets.fromLTRB(6, 5, 6, 6),
-                      child: Align(
-                        alignment: Alignment.centerLeft,
-                        child: Wrap(
-                          spacing: 8,
-                          runSpacing: 8,
-                          children: _promptAttachments
-                              .map(
-                                (entry) => InputChip(
-                                  label: Text(
-                                    entry.name,
-                                    overflow: TextOverflow.ellipsis,
-                                  ),
-                                  avatar: Icon(
-                                    (entry.mimeType ?? '').startsWith('image/')
-                                        ? Icons.image_outlined
-                                        : (entry.mimeType == 'application/pdf')
-                                            ? Icons.picture_as_pdf_outlined
-                                            : Icons.attach_file,
-                                    size: 16,
-                                  ),
-                                  onDeleted: () {
-                                    setState(() {
-                                      _promptAttachments = _promptAttachments
-                                          .where(
-                                              (item) => item.path != entry.path)
-                                          .toList();
-                                    });
-                                  },
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          if (_promptAttachments.any((item) => item.isImage) &&
+                              !_currentModelSupportsImageInput(state)) ...[
+                            Container(
+                              margin: const EdgeInsets.only(bottom: 6),
+                              padding: const EdgeInsets.symmetric(
+                                horizontal: 10,
+                                vertical: 7,
+                              ),
+                              decoration: BoxDecoration(
+                                color: Colors.orange.withOpacity(
+                                    context.isDarkMode ? 0.12 : 0.09),
+                                borderRadius: BorderRadius.circular(12),
+                                border: Border.all(
+                                  color: Colors.orange.withOpacity(0.24),
                                 ),
-                              )
-                              .toList(),
-                        ),
+                              ),
+                              child: Text(
+                                l(
+                                  context,
+                                  '当前模型可能无法读取图片，发送后会自动降级提示。',
+                                  'The current model may not read images; unsupported images will degrade to a prompt warning.',
+                                ),
+                                style: TextStyle(
+                                  color: context.isDarkMode
+                                      ? Colors.orange.shade200
+                                      : Colors.orange.shade800,
+                                  fontSize: 12,
+                                  height: 1.25,
+                                ),
+                              ),
+                            ),
+                          ],
+                          Align(
+                            alignment: Alignment.centerLeft,
+                            child: Wrap(
+                              spacing: 8,
+                              runSpacing: 8,
+                              children: _promptAttachments
+                                  .map(
+                                    (attachment) => _buildPromptAttachmentChip(
+                                      context,
+                                      attachment,
+                                    ),
+                                  )
+                                  .toList(),
+                            ),
+                          ),
+                        ],
                       ),
                     ),
                   Container(
@@ -925,8 +1236,7 @@ extension _HomePageComposer on _HomePageState {
                           bottom: 6,
                           child: _CompactIconButton(
                             tooltip: l(context, '附件', 'Attach'),
-                            onPressed: () =>
-                                _openPromptAttachmentPicker(context),
+                            onPressed: () => _openAttachmentActions(context),
                             icon: Icons.add,
                           ),
                         ),

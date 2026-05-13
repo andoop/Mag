@@ -2591,6 +2591,118 @@ description: Review UI flows before implementation.
     );
   });
 
+  test('old historical image parts are omitted from context', () async {
+    await database.putSetting(
+      'model_config',
+      ModelConfig(
+        currentProviderId: 'openai',
+        currentModelId: 'gpt-4o',
+        connections: [
+          ProviderConnection(
+            id: 'openai',
+            name: 'OpenAI',
+            baseUrl: 'https://api.openai.com/v1',
+            apiKey: 'test-key',
+            models: const ['gpt-4o'],
+          ),
+        ],
+        visibilityRules: const [],
+      ).toJson(),
+    );
+
+    Future<void> saveImageTurn(int index) async {
+      final message = MessageInfo(
+        id: 'image-message-$index',
+        sessionId: session.id,
+        role: SessionRole.user,
+        agent: 'build',
+        createdAt: DateTime.now().millisecondsSinceEpoch + index,
+        text: 'Review image $index',
+      );
+      await database.saveMessage(message);
+      await database.savePart(
+        MessagePart(
+          id: 'image-text-part-$index',
+          sessionId: session.id,
+          messageId: message.id,
+          type: PartType.text,
+          createdAt: message.createdAt,
+          data: {'text': 'Review image $index'},
+        ),
+      );
+      await database.savePart(
+        MessagePart(
+          id: 'image-file-part-$index',
+          sessionId: session.id,
+          messageId: message.id,
+          type: PartType.file,
+          createdAt: message.createdAt,
+          data: {
+            'mime': 'image/png',
+            'filename': 'image-$index.png',
+            'url': 'data:image/png;base64,aW1hZ2Ut$index',
+          },
+        ),
+      );
+    }
+
+    for (var index = 0; index < 4; index++) {
+      await saveImageTurn(index);
+    }
+
+    final engine = SessionEngine(
+      database: database,
+      events: LocalEventBus(),
+      workspaceBridge: bridge,
+      promptAssembler: promptAssembler,
+      permissionCenter: PermissionCenter(database, LocalEventBus()),
+      questionCenter: QuestionCenter(database, LocalEventBus()),
+      toolRegistry: registry,
+      modelGateway: ModelGateway(),
+    );
+
+    final payload = await engine.previewModelRequest(
+      workspace: workspace,
+      session: session,
+    );
+    final messages = (payload['messages'] as List? ?? const []).cast<Map>();
+    final userPayloads =
+        messages.where((item) => item['role'] == 'user').toList();
+    final contents = userPayloads
+        .map((item) => item['content'])
+        .whereType<List>()
+        .expand((item) => item)
+        .whereType<Map>()
+        .toList();
+
+    expect(
+      contents.any((item) =>
+          item['type'] == 'text' &&
+          (item['text'] as String?)
+                  ?.contains('Image omitted from context: image-0.png') ==
+              true),
+      isTrue,
+    );
+    expect(
+      contents.any((item) =>
+          item['type'] == 'image_url' &&
+          ((item['image_url'] as Map?)?['url'] as String?)
+                  ?.contains('aW1hZ2Ut0') ==
+              true),
+      isFalse,
+    );
+    for (final index in [1, 2, 3]) {
+      expect(
+        contents.any((item) =>
+            item['type'] == 'image_url' &&
+            ((item['image_url'] as Map?)?['url'] as String?)
+                    ?.contains('aW1hZ2Ut$index') ==
+                true),
+        isTrue,
+      );
+    }
+  });
+
   test('anthropic preview preserves user pdf parts', () async {
     await database.putSetting(
       'model_config',
