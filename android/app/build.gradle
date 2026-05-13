@@ -90,6 +90,9 @@ android {
     }
 
     buildTypes {
+        debug {
+            signingConfig hasReleaseSigning ? signingConfigs.release : signingConfigs.debug
+        }
         release {
             // Prefer a real release keystore when android/key.properties is present.
             // Fallback to the debug key so local release builds still work on fresh clones.
