@@ -80,6 +80,15 @@ class _AttachmentTile extends StatelessWidget {
         onSendPromptReference: onSendPromptReference,
       );
     }
+    if (_isOfficeAttachmentMime(mime) && workspace != null && path.isNotEmpty) {
+      return _OfficeAttachmentTile(
+        filename: filename,
+        mime: mime,
+        path: path,
+        bytes: (attachment['bytes'] as num?)?.toInt(),
+        workspace: workspace!,
+      );
+    }
     if (mime.startsWith('image/') && workspace != null && path.isNotEmpty) {
       return _ImageAttachmentTile(
         filename: filename,
@@ -124,6 +133,125 @@ class _AttachmentTile extends StatelessWidget {
           Expanded(
             child: Text('$filename\n$mime',
                 style: Theme.of(context).textTheme.bodySmall),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _OfficeAttachmentTile extends StatelessWidget {
+  const _OfficeAttachmentTile({
+    required this.filename,
+    required this.mime,
+    required this.path,
+    required this.workspace,
+    this.bytes,
+  });
+
+  final String filename;
+  final String mime;
+  final String path;
+  final WorkspaceInfo workspace;
+  final int? bytes;
+
+  @override
+  Widget build(BuildContext context) {
+    final oc = context.oc;
+    final size = bytes == null ? null : _formatAttachmentBytes(bytes!);
+    final format = _officeAttachmentFormat(mime);
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.fromLTRB(10, 9, 10, 10),
+      decoration: _panelDecoration(
+        context,
+        background: oc.composerOptionBg,
+        radius: 12,
+        elevated: false,
+      ),
+      child: Row(
+        children: [
+          Container(
+            width: 34,
+            height: 34,
+            decoration: BoxDecoration(
+              color: oc.panelBackground,
+              borderRadius: BorderRadius.circular(10),
+              border: Border.all(color: oc.borderColor.withOpacity(0.65)),
+            ),
+            child: Icon(
+              _officeAttachmentIcon(mime),
+              size: 18,
+              color: oc.foregroundMuted,
+            ),
+          ),
+          const SizedBox(width: 9),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  filename,
+                  style: Theme.of(context).textTheme.labelSmall?.copyWith(
+                        color: oc.foreground,
+                        fontSize: 12,
+                        fontWeight: FontWeight.w700,
+                      ),
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                ),
+                const SizedBox(height: 2),
+                Text(
+                  [
+                    format,
+                    if (size != null) size,
+                    path,
+                  ].join(' · '),
+                  style: Theme.of(context).textTheme.labelSmall?.copyWith(
+                        color: oc.foregroundHint,
+                        fontSize: 10.5,
+                        fontFamily: 'monospace',
+                      ),
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                ),
+              ],
+            ),
+          ),
+          const SizedBox(width: 8),
+          _CompactIconButton(
+            tooltip: l(context, '打开文件', 'Open file'),
+            icon: Icons.open_in_new_rounded,
+            small: true,
+            quiet: true,
+            onPressed: () => _openOrShareWorkspaceFile(
+              context,
+              workspace: workspace,
+              path: path,
+              filename: filename,
+            ),
+          ),
+          _CompactIconButton(
+            tooltip: l(context, '分享', 'Share'),
+            icon: Icons.ios_share_rounded,
+            small: true,
+            quiet: true,
+            onPressed: () => _openOrShareWorkspaceFile(
+              context,
+              workspace: workspace,
+              path: path,
+              filename: filename,
+            ),
+          ),
+          _CompactIconButton(
+            tooltip: l(context, '复制路径', 'Copy path'),
+            icon: Icons.copy_all_outlined,
+            small: true,
+            quiet: true,
+            onPressed: () {
+              Clipboard.setData(ClipboardData(text: path));
+              _showInfo(context, l(context, '路径已复制', 'Path copied'));
+            },
           ),
         ],
       ),
@@ -290,6 +418,63 @@ class _WriteStreamPreviewAttachmentTile extends StatelessWidget {
         ],
       ),
     );
+  }
+}
+
+bool _isOfficeAttachmentMime(String mime) {
+  return mime ==
+          'application/vnd.openxmlformats-officedocument.wordprocessingml.document' ||
+      mime ==
+          'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' ||
+      mime ==
+          'application/vnd.openxmlformats-officedocument.presentationml.presentation';
+}
+
+IconData _officeAttachmentIcon(String mime) {
+  if (mime.contains('spreadsheet')) return Icons.table_chart_outlined;
+  if (mime.contains('presentation')) return Icons.slideshow_outlined;
+  return Icons.description_outlined;
+}
+
+String _officeAttachmentFormat(String mime) {
+  if (mime.contains('spreadsheet')) return 'XLSX';
+  if (mime.contains('presentation')) return 'PPTX';
+  return 'DOCX';
+}
+
+String _formatAttachmentBytes(int bytes) {
+  if (bytes < 1024) return '$bytes B';
+  if (bytes < 1024 * 1024) {
+    return '${(bytes / 1024).toStringAsFixed(1)} KB';
+  }
+  return '${(bytes / (1024 * 1024)).toStringAsFixed(1)} MB';
+}
+
+Future<void> _openOrShareWorkspaceFile(
+  BuildContext context, {
+  required WorkspaceInfo workspace,
+  required String path,
+  required String filename,
+}) async {
+  try {
+    final root = await WorkspaceBridge.instance.resolveFilesystemPath(
+      treeUri: workspace.treeUri,
+    );
+    if (root == null || root.isEmpty) {
+      throw Exception('Workspace file sharing is not available here.');
+    }
+    final absolute = p.normalize(p.join(root, path));
+    final rootPath = p.normalize(root);
+    if (!p.isWithin(rootPath, absolute) && absolute != rootPath) {
+      throw Exception('Invalid workspace path: $path');
+    }
+    if (!await File(absolute).exists()) {
+      throw Exception('File does not exist: $path');
+    }
+    await Share.shareXFiles([XFile(absolute)], subject: filename);
+  } catch (error) {
+    if (!context.mounted) return;
+    _showInfo(context, error.toString());
   }
 }
 

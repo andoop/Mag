@@ -14,6 +14,7 @@ import 'git/git_settings_store.dart';
 import 'json_coerce.dart';
 import 'mcp_service.dart';
 import 'models.dart';
+import 'office_renderer.dart';
 import 'skill_registry.dart';
 import 'tools/builtin_tool_descriptions.dart';
 import 'tools/question_tool_spec.dart';
@@ -25,6 +26,7 @@ part 'tool_hashline.dart';
 part 'tool_file_ops.dart';
 part 'tool_patch.dart';
 part 'tool_misc.dart';
+part 'tool_office.dart';
 part 'tool_utils.dart';
 part 'tool_git.dart';
 
@@ -506,6 +508,33 @@ class ToolRegistry {
           'additionalProperties': false,
         },
         execute: _downloadTool,
+      ),
+    );
+    register(
+      ToolDefinition(
+        id: 'create_document',
+        description:
+            '${_kCreateDocumentDescription.trim()}$kMobileWorkspacePathSuffix',
+        parameters: officeDocumentToolParametersSchema(),
+        execute: _createDocumentTool,
+      ),
+    );
+    register(
+      ToolDefinition(
+        id: 'create_spreadsheet',
+        description:
+            '${_kCreateSpreadsheetDescription.trim()}$kMobileWorkspacePathSuffix',
+        parameters: officeSpreadsheetToolParametersSchema(),
+        execute: _createSpreadsheetTool,
+      ),
+    );
+    register(
+      ToolDefinition(
+        id: 'create_presentation',
+        description:
+            '${_kCreatePresentationDescription.trim()}$kMobileWorkspacePathSuffix',
+        parameters: officePresentationToolParametersSchema(),
+        execute: _createPresentationTool,
       ),
     );
     register(
