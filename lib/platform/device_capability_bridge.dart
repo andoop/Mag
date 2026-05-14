@@ -68,4 +68,20 @@ class DeviceCapabilityBridge {
         DeviceCapabilityFile.fromJson(Map<String, dynamic>.from(result));
     return file.path.isEmpty ? null : file;
   }
+
+  static Future<DeviceCapabilityFile?> recordAudio() async {
+    final result = await invoke('media.recordAudio', const {});
+    if (result is! Map) return null;
+    final file =
+        DeviceCapabilityFile.fromJson(Map<String, dynamic>.from(result));
+    return file.path.isEmpty ? null : file;
+  }
+
+  static Future<DeviceCapabilityFile?> recordVideo() async {
+    final result = await invoke('media.recordVideo', const {});
+    if (result is! Map) return null;
+    final file =
+        DeviceCapabilityFile.fromJson(Map<String, dynamic>.from(result));
+    return file.path.isEmpty ? null : file;
+  }
 }

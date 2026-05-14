@@ -2,9 +2,21 @@ part of '../home_page.dart';
 
 // ignore_for_file: invalid_use_of_protected_member
 
-enum _ComposerAttachmentSource { workspace, deviceFile, camera }
+enum _ComposerAttachmentSource {
+  workspace,
+  deviceFile,
+  camera,
+  microphone,
+  video
+}
 
-enum _ComposerAttachmentAction { chooseImage, capturePhoto, workspaceFile }
+enum _ComposerAttachmentAction {
+  chooseImage,
+  capturePhoto,
+  recordAudio,
+  recordVideo,
+  workspaceFile,
+}
 
 class _ComposerAttachment {
   const _ComposerAttachment({
@@ -44,6 +56,21 @@ class _ComposerAttachment {
     );
   }
 
+  factory _ComposerAttachment.localMedia(
+    DeviceCapabilityFile file, {
+    required _ComposerAttachmentSource source,
+    required String fallbackMimeType,
+  }) {
+    return _ComposerAttachment(
+      id: '${source.name}:${file.path}',
+      source: source,
+      path: file.path,
+      name: file.name,
+      mimeType: file.mimeType.isEmpty ? fallbackMimeType : file.mimeType,
+      size: file.size,
+    );
+  }
+
   final String id;
   final _ComposerAttachmentSource source;
   final String path;
@@ -57,6 +84,8 @@ class _ComposerAttachment {
 
   bool get isWorkspace => source == _ComposerAttachmentSource.workspace;
   bool get isImage => mimeType.startsWith('image/');
+  bool get isAudio => mimeType.startsWith('audio/');
+  bool get isVideo => mimeType.startsWith('video/');
   bool get isDirectory => workspaceEntry?.isDirectory ?? false;
 }
 
@@ -391,6 +420,20 @@ extension _HomePageComposer on _HomePageState {
                   action: _ComposerAttachmentAction.capturePhoto,
                 ),
                 tile(
+                  icon: Icons.mic_none_rounded,
+                  title: l(sheetContext, '录音', 'Record audio'),
+                  subtitle: l(sheetContext, '录制一段音频作为附件',
+                      'Record an audio clip and attach it'),
+                  action: _ComposerAttachmentAction.recordAudio,
+                ),
+                tile(
+                  icon: Icons.videocam_outlined,
+                  title: l(sheetContext, '录制视频', 'Record video'),
+                  subtitle: l(sheetContext, '录制一段视频作为附件',
+                      'Record a video clip and attach it'),
+                  action: _ComposerAttachmentAction.recordVideo,
+                ),
+                tile(
                   icon: Icons.folder_outlined,
                   title: l(sheetContext, '工作区文件', 'Workspace file'),
                   subtitle: l(sheetContext, '选择项目里的文件作为附件',
@@ -411,6 +454,12 @@ extension _HomePageComposer on _HomePageState {
         break;
       case _ComposerAttachmentAction.capturePhoto:
         await _capturePromptPhoto(currentContext);
+        break;
+      case _ComposerAttachmentAction.recordAudio:
+        await _recordPromptAudio(currentContext);
+        break;
+      case _ComposerAttachmentAction.recordVideo:
+        await _recordPromptVideo(currentContext);
         break;
       case _ComposerAttachmentAction.workspaceFile:
         await _openPromptAttachmentPicker(currentContext);
@@ -470,6 +519,66 @@ extension _HomePageComposer on _HomePageState {
       final attachment = _ComposerAttachment.localImage(
         file,
         source: _ComposerAttachmentSource.camera,
+      );
+      if (!mounted) return;
+      setState(() {
+        _promptAttachments = _mergePromptAttachments([
+          ..._promptAttachments,
+          attachment,
+        ]);
+      });
+    } catch (error) {
+      if (!mounted || !context.mounted) return;
+      _showInfo(context, error.toString());
+    }
+  }
+
+  Future<void> _recordPromptAudio(BuildContext context) async {
+    if (!DeviceCapabilityBridge.isSupported) {
+      _showInfo(
+        context,
+        l(context, '当前平台暂不支持录音附件',
+            'Audio recording attachments are not supported on this platform.'),
+      );
+      return;
+    }
+    try {
+      final file = await DeviceCapabilityBridge.recordAudio();
+      if (file == null) return;
+      final attachment = _ComposerAttachment.localMedia(
+        file,
+        source: _ComposerAttachmentSource.microphone,
+        fallbackMimeType: 'audio/m4a',
+      );
+      if (!mounted) return;
+      setState(() {
+        _promptAttachments = _mergePromptAttachments([
+          ..._promptAttachments,
+          attachment,
+        ]);
+      });
+    } catch (error) {
+      if (!mounted || !context.mounted) return;
+      _showInfo(context, error.toString());
+    }
+  }
+
+  Future<void> _recordPromptVideo(BuildContext context) async {
+    if (!DeviceCapabilityBridge.isSupported) {
+      _showInfo(
+        context,
+        l(context, '当前平台暂不支持视频附件',
+            'Video recording attachments are not supported on this platform.'),
+      );
+      return;
+    }
+    try {
+      final file = await DeviceCapabilityBridge.recordVideo();
+      if (file == null) return;
+      final attachment = _ComposerAttachment.localMedia(
+        file,
+        source: _ComposerAttachmentSource.video,
+        fallbackMimeType: 'video/mp4',
       );
       if (!mounted) return;
       setState(() {
@@ -772,11 +881,17 @@ extension _HomePageComposer on _HomePageState {
         return l(context, '相册', 'Device');
       case _ComposerAttachmentSource.camera:
         return l(context, '拍照', 'Camera');
+      case _ComposerAttachmentSource.microphone:
+        return l(context, '录音', 'Recording');
+      case _ComposerAttachmentSource.video:
+        return l(context, '视频', 'Video');
     }
   }
 
   IconData _attachmentIcon(_ComposerAttachment attachment) {
     if (attachment.isImage) return Icons.image_outlined;
+    if (attachment.isAudio) return Icons.audio_file_outlined;
+    if (attachment.isVideo) return Icons.video_file_outlined;
     if (attachment.mimeType == 'application/pdf') {
       return Icons.picture_as_pdf_outlined;
     }

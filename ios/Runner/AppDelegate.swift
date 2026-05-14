@@ -75,10 +75,14 @@ import PhotosUI
   }
 }
 
-private final class IOSDeviceCapabilityBridge: NSObject, UIImagePickerControllerDelegate, UINavigationControllerDelegate {
+private final class IOSDeviceCapabilityBridge: NSObject, UIImagePickerControllerDelegate, UINavigationControllerDelegate, AVAudioRecorderDelegate {
   private weak var controller: FlutterViewController?
   private var pendingResult: FlutterResult?
   private var pendingCapability: String?
+  private var audioRecorder: AVAudioRecorder?
+  private var audioRecordingUrl: URL?
+  private var audioRecordingController: IOSAudioRecordingController?
+  private var videoRecorderController: IOSVideoRecorderController?
 
   init(controller: FlutterViewController) {
     self.controller = controller
@@ -107,6 +111,10 @@ private final class IOSDeviceCapabilityBridge: NSObject, UIImagePickerController
         self.pickFiles(input: input, result: result)
       case "media.capturePhoto":
         self.capturePhoto(result: result)
+      case "media.recordAudio":
+        self.recordAudio(result: result)
+      case "media.recordVideo":
+        self.recordVideo(result: result)
       default:
         result(FlutterError(code: "unsupported_capability", message: "Unsupported capability: \(capabilityId)", details: nil))
       }
@@ -157,6 +165,78 @@ private final class IOSDeviceCapabilityBridge: NSObject, UIImagePickerController
     controller.present(picker, animated: true)
   }
 
+  private func recordAudio(result: @escaping FlutterResult) {
+    guard begin(capability: "media.recordAudio", result: result) else {
+      return
+    }
+    guard let controller else {
+      finish(error: FlutterError(code: "recorder_unavailable", message: "Root view controller unavailable", details: nil))
+      return
+    }
+    AVAudioSession.sharedInstance().requestRecordPermission { [weak self, weak controller] allowed in
+      DispatchQueue.main.async {
+        guard let self, self.pendingCapability == "media.recordAudio" else {
+          return
+        }
+        guard allowed else {
+          self.finish(error: FlutterError(code: "permission_denied", message: "Microphone permission denied.", details: nil))
+          return
+        }
+        do {
+          try self.startAudioRecording(on: controller)
+        } catch {
+          self.finish(error: FlutterError(code: "recording_failed", message: error.localizedDescription, details: nil))
+        }
+      }
+    }
+  }
+
+  private func recordVideo(result: @escaping FlutterResult) {
+    guard begin(capability: "media.recordVideo", result: result) else {
+      return
+    }
+    guard let controller else {
+      finish(error: FlutterError(code: "recorder_unavailable", message: "Root view controller unavailable", details: nil))
+      return
+    }
+    requestCaptureAccess { [weak self] allowed in
+      guard let self, self.pendingCapability == "media.recordVideo" else {
+        return
+      }
+      guard allowed else {
+        self.finish(error: FlutterError(code: "permission_denied", message: "Camera or microphone permission denied.", details: nil))
+        return
+      }
+      do {
+        let outputUrl = try self.temporaryMediaUrl(directoryName: "device-capabilities/video", prefix: "video", extensionName: "mov")
+        let recorder = IOSVideoRecorderController(outputUrl: outputUrl)
+        recorder.onFinish = { [weak self] url, error in
+          guard let self else {
+            return
+          }
+          self.videoRecorderController = nil
+          if let error {
+            self.finish(error: FlutterError(code: "recording_failed", message: error.localizedDescription, details: nil))
+            return
+          }
+          guard let url else {
+            self.finish(result: nil)
+            return
+          }
+          do {
+            self.finish(result: try self.filePayload(url: url, name: url.lastPathComponent, mimeType: "video/quicktime"))
+          } catch {
+            self.finish(error: FlutterError(code: "recording_failed", message: error.localizedDescription, details: nil))
+          }
+        }
+        self.videoRecorderController = recorder
+        controller.present(recorder, animated: true)
+      } catch {
+        self.finish(error: FlutterError(code: "recording_failed", message: error.localizedDescription, details: nil))
+      }
+    }
+  }
+
   private func begin(capability: String, result: @escaping FlutterResult) -> Bool {
     guard pendingResult == nil else {
       result(FlutterError(code: "busy", message: "Another device capability is already active.", details: nil))
@@ -178,6 +258,112 @@ private final class IOSDeviceCapabilityBridge: NSObject, UIImagePickerController
     } else {
       pending(result)
     }
+  }
+
+  private func requestCaptureAccess(completion: @escaping (Bool) -> Void) {
+    AVCaptureDevice.requestAccess(for: .video) { videoAllowed in
+      guard videoAllowed else {
+        DispatchQueue.main.async { completion(false) }
+        return
+      }
+      AVCaptureDevice.requestAccess(for: .audio) { audioAllowed in
+        DispatchQueue.main.async { completion(audioAllowed) }
+      }
+    }
+  }
+
+  private func startAudioRecording(on controller: UIViewController?) throws {
+    guard let controller else {
+      throw NSError(domain: "MagDeviceCapabilities", code: 1, userInfo: [NSLocalizedDescriptionKey: "Root view controller unavailable"])
+    }
+    let session = AVAudioSession.sharedInstance()
+    try session.setCategory(.playAndRecord, mode: .default, options: [.defaultToSpeaker])
+    try session.setActive(true)
+
+    let url = try temporaryMediaUrl(directoryName: "device-capabilities/audio", prefix: "recording", extensionName: "m4a")
+    let settings: [String: Any] = [
+      AVFormatIDKey: Int(kAudioFormatMPEG4AAC),
+      AVSampleRateKey: 44_100,
+      AVNumberOfChannelsKey: 1,
+      AVEncoderAudioQualityKey: AVAudioQuality.high.rawValue,
+    ]
+    let recorder = try AVAudioRecorder(url: url, settings: settings)
+    recorder.delegate = self
+    recorder.prepareToRecord()
+    guard recorder.record() else {
+      throw NSError(domain: "MagDeviceCapabilities", code: 2, userInfo: [NSLocalizedDescriptionKey: "Unable to start audio recorder"])
+    }
+    audioRecorder = recorder
+    audioRecordingUrl = url
+    presentAudioRecordingController(on: controller)
+  }
+
+  private func presentAudioRecordingController(on controller: UIViewController) {
+    let recordingController = IOSAudioRecordingController()
+    recordingController.onCancel = { [weak self] in
+      self?.cancelAudioRecording()
+    }
+    recordingController.onDone = { [weak self] in
+      self?.completeAudioRecording()
+    }
+    recordingController.onPauseChanged = { [weak self] paused in
+      guard let recorder = self?.audioRecorder else {
+        return
+      }
+      if paused {
+        recorder.pause()
+      } else {
+        recorder.record()
+      }
+    }
+    audioRecordingController = recordingController
+    controller.present(recordingController, animated: true)
+  }
+
+  private func completeAudioRecording() {
+    guard pendingCapability == "media.recordAudio" else {
+      return
+    }
+    let url = audioRecordingUrl
+    cleanupAudioRecording(deleteFile: false)
+    guard let url else {
+      finish(error: FlutterError(code: "recording_failed", message: "Recorded audio file missing.", details: nil))
+      return
+    }
+    do {
+      finish(result: try filePayload(url: url, name: url.lastPathComponent, mimeType: "audio/m4a"))
+    } catch {
+      finish(error: FlutterError(code: "recording_failed", message: error.localizedDescription, details: nil))
+    }
+  }
+
+  private func cancelAudioRecording() {
+    guard pendingCapability == "media.recordAudio" else {
+      return
+    }
+    cleanupAudioRecording(deleteFile: true)
+    finish(result: nil)
+  }
+
+  private func cleanupAudioRecording(deleteFile: Bool) {
+    audioRecorder?.stop()
+    audioRecorder?.delegate = nil
+    audioRecorder = nil
+    try? AVAudioSession.sharedInstance().setActive(false)
+    if deleteFile, let url = audioRecordingUrl {
+      try? FileManager.default.removeItem(at: url)
+    }
+    audioRecordingUrl = nil
+    audioRecordingController?.dismiss(animated: true)
+    audioRecordingController = nil
+  }
+
+  func audioRecorderEncodeErrorDidOccur(_ recorder: AVAudioRecorder, error: Error?) {
+    guard pendingCapability == "media.recordAudio" else {
+      return
+    }
+    cleanupAudioRecording(deleteFile: true)
+    finish(error: FlutterError(code: "recording_failed", message: error?.localizedDescription ?? "Audio recording failed.", details: nil))
   }
 
   func imagePickerControllerDidCancel(_ picker: UIImagePickerController) {
@@ -251,6 +437,29 @@ private final class IOSDeviceCapabilityBridge: NSObject, UIImagePickerController
     ]
   }
 
+  private func temporaryMediaUrl(
+    directoryName: String,
+    prefix: String,
+    extensionName: String
+  ) throws -> URL {
+    let dir = try cacheDirectory(name: directoryName)
+    let fileName = "\(prefix)-\(Int(Date().timeIntervalSince1970 * 1000))-\(UUID().uuidString).\(extensionName)"
+    return dir.appendingPathComponent(fileName)
+  }
+
+  private func filePayload(url: URL, name: String, mimeType: String) throws -> [String: Any] {
+    let size = (try FileManager.default.attributesOfItem(atPath: url.path)[.size] as? NSNumber)?.intValue ?? 0
+    guard size > 0 else {
+      throw NSError(domain: "MagDeviceCapabilities", code: 3, userInfo: [NSLocalizedDescriptionKey: "Recorded media file is empty"])
+    }
+    return [
+      "path": url.path,
+      "name": name,
+      "mimeType": mimeType,
+      "size": size,
+    ]
+  }
+
   private func cacheDirectory(name: String) throws -> URL {
     let base = FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask).first!
     let dir = base.appendingPathComponent(name, isDirectory: true)
@@ -269,7 +478,7 @@ private final class IOSDeviceCapabilityBridge: NSObject, UIImagePickerController
 }
 
 @available(iOS 14.0, *)
-private extension IOSDeviceCapabilityBridge: PHPickerViewControllerDelegate {
+extension IOSDeviceCapabilityBridge: PHPickerViewControllerDelegate {
   func picker(_ picker: PHPickerViewController, didFinishPicking results: [PHPickerResult]) {
     picker.dismiss(animated: true)
     guard pendingCapability == "files.pick" else {
@@ -303,6 +512,484 @@ private extension IOSDeviceCapabilityBridge: PHPickerViewControllerDelegate {
       self?.finish(result: payloads.compactMap { $0 })
     }
   }
+}
+
+private final class IOSAudioRecordingController: UIViewController {
+  var onCancel: (() -> Void)?
+  var onDone: (() -> Void)?
+  var onPauseChanged: ((Bool) -> Void)?
+
+  private let durationLabel = UILabel()
+  private let statusLabel = UILabel()
+  private lazy var pauseButton = pillButton(title: pauseTitle, filled: false)
+  private let gradientLayer = CAGradientLayer()
+  private var startedAt = Date()
+  private var accumulated: TimeInterval = 0
+  private var isPaused = false
+  private var timer: Timer?
+  private var pauseTitle: String {
+    isChinesePreferred() ? "暂停" : "Pause"
+  }
+  private var resumeTitle: String {
+    isChinesePreferred() ? "继续" : "Resume"
+  }
+
+  override func viewDidLoad() {
+    super.viewDidLoad()
+    modalPresentationStyle = .overFullScreen
+    gradientLayer.colors = [
+      UIColor(red: 248 / 255, green: 250 / 255, blue: 252 / 255, alpha: 1).cgColor,
+      UIColor(red: 239 / 255, green: 246 / 255, blue: 255 / 255, alpha: 1).cgColor,
+    ]
+    view.layer.insertSublayer(gradientLayer, at: 0)
+    configureCard()
+  }
+
+  override func viewDidLayoutSubviews() {
+    super.viewDidLayoutSubviews()
+    gradientLayer.frame = view.bounds
+  }
+
+  override func viewDidAppear(_ animated: Bool) {
+    super.viewDidAppear(animated)
+    startedAt = Date()
+    timer = Timer.scheduledTimer(withTimeInterval: 0.5, repeats: true) { [weak self] _ in
+      self?.updateDuration()
+    }
+  }
+
+  deinit {
+    timer?.invalidate()
+  }
+
+  private func configureCard() {
+    let zh = isChinesePreferred()
+    let header = UIStackView()
+    header.axis = .vertical
+    header.spacing = 8
+    header.alignment = .center
+    header.translatesAutoresizingMaskIntoConstraints = false
+    view.addSubview(header)
+
+    let pageTitle = UILabel()
+    pageTitle.text = zh ? "Mag 录音" : "Mag audio recording"
+    pageTitle.textColor = .label
+    pageTitle.font = .systemFont(ofSize: 25, weight: .bold)
+    pageTitle.textAlignment = .center
+    let pageSubtitle = UILabel()
+    pageSubtitle.text = zh ? "录制完成后会作为 AI 可读取的音频附件" : "Record an audio attachment that AI can read"
+    pageSubtitle.textColor = .secondaryLabel
+    pageSubtitle.font = .systemFont(ofSize: 14)
+    pageSubtitle.textAlignment = .center
+    pageSubtitle.numberOfLines = 2
+    header.addArrangedSubview(pageTitle)
+    header.addArrangedSubview(pageSubtitle)
+
+    let card = UIView()
+    card.backgroundColor = .systemBackground
+    card.layer.cornerRadius = 28
+    card.layer.cornerCurve = .continuous
+    card.layer.shadowColor = UIColor.black.cgColor
+    card.layer.shadowOpacity = 0.12
+    card.layer.shadowRadius = 28
+    card.layer.shadowOffset = CGSize(width: 0, height: 14)
+    card.translatesAutoresizingMaskIntoConstraints = false
+    view.addSubview(card)
+
+    let micDisc = UILabel()
+    micDisc.text = "MIC"
+    micDisc.textColor = .white
+    micDisc.font = .systemFont(ofSize: 18, weight: .bold)
+    micDisc.textAlignment = .center
+    micDisc.backgroundColor = UIColor(red: 37 / 255, green: 99 / 255, blue: 235 / 255, alpha: 1)
+    micDisc.layer.cornerRadius = 48
+    micDisc.layer.cornerCurve = .continuous
+    micDisc.clipsToBounds = true
+
+    statusLabel.text = zh ? "●  正在录音" : "●  Recording"
+    statusLabel.textColor = .systemRed
+    statusLabel.font = .systemFont(ofSize: 13, weight: .semibold)
+    statusLabel.textAlignment = .center
+
+    durationLabel.text = "00:00"
+    durationLabel.textColor = .label
+    durationLabel.font = .monospacedDigitSystemFont(ofSize: 44, weight: .bold)
+    durationLabel.textAlignment = .center
+
+    let hint = UILabel()
+    hint.text = zh ? "点击完成后会作为音频附件返回" : "Tap Done to return this as an audio attachment"
+    hint.textColor = .secondaryLabel
+    hint.font = .systemFont(ofSize: 14)
+    hint.textAlignment = .center
+    hint.numberOfLines = 2
+
+    let cancel = pillButton(title: zh ? "取消" : "Cancel", filled: false)
+    cancel.addTarget(self, action: #selector(cancelTapped), for: .touchUpInside)
+    pauseButton.addTarget(self, action: #selector(pauseTapped), for: .touchUpInside)
+    let done = pillButton(title: zh ? "完成" : "Done", filled: true)
+    done.addTarget(self, action: #selector(doneTapped), for: .touchUpInside)
+
+    let buttons = UIStackView(arrangedSubviews: [cancel, pauseButton, done])
+    buttons.axis = .horizontal
+    buttons.spacing = 8
+    buttons.distribution = .fillEqually
+
+    let stack = UIStackView(arrangedSubviews: [micDisc, statusLabel, durationLabel, hint, buttons])
+    stack.axis = .vertical
+    stack.spacing = 14
+    stack.alignment = .center
+    stack.translatesAutoresizingMaskIntoConstraints = false
+    card.addSubview(stack)
+
+    let footer = UILabel()
+    footer.text = zh ? "录音只会在确认后作为临时附件返回" : "The recording is returned only after you confirm"
+    footer.textColor = .secondaryLabel
+    footer.font = .systemFont(ofSize: 12)
+    footer.textAlignment = .center
+    footer.translatesAutoresizingMaskIntoConstraints = false
+    view.addSubview(footer)
+
+    NSLayoutConstraint.activate([
+      header.topAnchor.constraint(equalTo: view.safeAreaLayoutGuide.topAnchor, constant: 24),
+      header.leadingAnchor.constraint(equalTo: view.leadingAnchor, constant: 28),
+      header.trailingAnchor.constraint(equalTo: view.trailingAnchor, constant: -28),
+      card.leadingAnchor.constraint(equalTo: view.leadingAnchor, constant: 24),
+      card.trailingAnchor.constraint(equalTo: view.trailingAnchor, constant: -24),
+      card.centerYAnchor.constraint(equalTo: view.centerYAnchor),
+      stack.leadingAnchor.constraint(equalTo: card.leadingAnchor, constant: 24),
+      stack.trailingAnchor.constraint(equalTo: card.trailingAnchor, constant: -24),
+      stack.topAnchor.constraint(equalTo: card.topAnchor, constant: 26),
+      stack.bottomAnchor.constraint(equalTo: card.bottomAnchor, constant: -20),
+      micDisc.widthAnchor.constraint(equalToConstant: 96),
+      micDisc.heightAnchor.constraint(equalToConstant: 96),
+      cancel.heightAnchor.constraint(equalToConstant: 50),
+      pauseButton.heightAnchor.constraint(equalToConstant: 50),
+      done.heightAnchor.constraint(equalToConstant: 50),
+      buttons.leadingAnchor.constraint(equalTo: stack.leadingAnchor),
+      buttons.trailingAnchor.constraint(equalTo: stack.trailingAnchor),
+      footer.leadingAnchor.constraint(equalTo: view.leadingAnchor, constant: 24),
+      footer.trailingAnchor.constraint(equalTo: view.trailingAnchor, constant: -24),
+      footer.bottomAnchor.constraint(equalTo: view.safeAreaLayoutGuide.bottomAnchor, constant: -18),
+    ])
+  }
+
+  private func pillButton(title: String, filled: Bool) -> UIButton {
+    let button = UIButton(type: .system)
+    button.setTitle(title, for: .normal)
+    button.titleLabel?.font = .systemFont(ofSize: 16, weight: .semibold)
+    button.setTitleColor(filled ? .white : .label, for: .normal)
+    button.backgroundColor = filled ? .label : .secondarySystemBackground
+    button.layer.cornerRadius = 25
+    button.layer.cornerCurve = .continuous
+    return button
+  }
+
+  private func updateDuration() {
+    let running = isPaused ? 0 : Date().timeIntervalSince(startedAt)
+    durationLabel.text = formatDuration(accumulated + running)
+  }
+
+  @objc private func pauseTapped() {
+    if isPaused {
+      startedAt = Date()
+      isPaused = false
+      statusLabel.text = isChinesePreferred() ? "●  正在录音" : "●  Recording"
+      pauseButton.setTitle(pauseTitle, for: .normal)
+      onPauseChanged?(false)
+    } else {
+      accumulated += Date().timeIntervalSince(startedAt)
+      isPaused = true
+      statusLabel.text = isChinesePreferred() ? "Ⅱ  已暂停" : "Ⅱ  Paused"
+      pauseButton.setTitle(resumeTitle, for: .normal)
+      onPauseChanged?(true)
+    }
+  }
+
+  @objc private func cancelTapped() {
+    timer?.invalidate()
+    onCancel?()
+  }
+
+  @objc private func doneTapped() {
+    timer?.invalidate()
+    onDone?()
+  }
+}
+
+private final class IOSVideoRecorderController: UIViewController, AVCaptureFileOutputRecordingDelegate {
+  var onFinish: ((URL?, Error?) -> Void)?
+
+  private let outputUrl: URL
+  private let session = AVCaptureSession()
+  private let movieOutput = AVCaptureMovieFileOutput()
+  private var previewLayer: AVCaptureVideoPreviewLayer?
+  private var isRecording = false
+  private var cancelAfterStop = false
+  private var recordedUrl: URL?
+  private var startedAt = Date()
+  private var timer: Timer?
+  private let statusLabel = UILabel()
+  private let durationLabel = UILabel()
+  private lazy var secondaryButton = UIButton(type: .system)
+  private lazy var recordButton = UIButton(type: .system)
+
+  init(outputUrl: URL) {
+    self.outputUrl = outputUrl
+    super.init(nibName: nil, bundle: nil)
+    modalPresentationStyle = .fullScreen
+  }
+
+  required init?(coder: NSCoder) {
+    fatalError("init(coder:) has not been implemented")
+  }
+
+  deinit {
+    timer?.invalidate()
+  }
+
+  override func viewDidLoad() {
+    super.viewDidLoad()
+    view.backgroundColor = .black
+    configureControls()
+    do {
+      try configureSession()
+    } catch {
+      finish(url: nil, error: error)
+    }
+  }
+
+  override func viewDidLayoutSubviews() {
+    super.viewDidLayoutSubviews()
+    previewLayer?.frame = view.bounds
+  }
+
+  override func viewDidAppear(_ animated: Bool) {
+    super.viewDidAppear(animated)
+    if !session.isRunning {
+      DispatchQueue.global(qos: .userInitiated).async { [weak self] in
+        self?.session.startRunning()
+      }
+    }
+  }
+
+  private func configureSession() throws {
+    session.beginConfiguration()
+    session.sessionPreset = .high
+    defer { session.commitConfiguration() }
+
+    guard
+      let videoDevice = AVCaptureDevice.default(.builtInWideAngleCamera, for: .video, position: .back),
+      let videoInput = try? AVCaptureDeviceInput(device: videoDevice),
+      session.canAddInput(videoInput)
+    else {
+      throw NSError(domain: "MagDeviceCapabilities", code: 10, userInfo: [NSLocalizedDescriptionKey: "Camera is unavailable"])
+    }
+    session.addInput(videoInput)
+
+    if
+      let audioDevice = AVCaptureDevice.default(for: .audio),
+      let audioInput = try? AVCaptureDeviceInput(device: audioDevice),
+      session.canAddInput(audioInput)
+    {
+      session.addInput(audioInput)
+    }
+
+    guard session.canAddOutput(movieOutput) else {
+      throw NSError(domain: "MagDeviceCapabilities", code: 11, userInfo: [NSLocalizedDescriptionKey: "Video recorder is unavailable"])
+    }
+    session.addOutput(movieOutput)
+
+    let layer = AVCaptureVideoPreviewLayer(session: session)
+    layer.videoGravity = .resizeAspectFill
+    layer.frame = view.bounds
+    view.layer.insertSublayer(layer, at: 0)
+    previewLayer = layer
+  }
+
+  private func configureControls() {
+    let zh = Locale.preferredLanguages.first?.lowercased().hasPrefix("zh") == true
+    let topPanel = UIVisualEffectView(effect: UIBlurEffect(style: .systemUltraThinMaterialDark))
+    topPanel.layer.cornerRadius = 22
+    topPanel.layer.cornerCurve = .continuous
+    topPanel.clipsToBounds = true
+    topPanel.translatesAutoresizingMaskIntoConstraints = false
+    view.addSubview(topPanel)
+
+    statusLabel.text = zh ? "准备录制" : "Ready to record"
+    statusLabel.textColor = .white
+    statusLabel.font = .systemFont(ofSize: 16, weight: .semibold)
+    statusLabel.textAlignment = .center
+
+    durationLabel.text = "00:00"
+    durationLabel.textColor = UIColor.white.withAlphaComponent(0.82)
+    durationLabel.font = .monospacedDigitSystemFont(ofSize: 13, weight: .medium)
+    durationLabel.textAlignment = .center
+
+    let topStack = UIStackView(arrangedSubviews: [statusLabel, durationLabel])
+    topStack.axis = .vertical
+    topStack.spacing = 3
+    topStack.translatesAutoresizingMaskIntoConstraints = false
+    topPanel.contentView.addSubview(topStack)
+
+    let cancelButton = UIButton(type: .system)
+    cancelButton.setTitle(zh ? "取消" : "Cancel", for: .normal)
+    cancelButton.setTitleColor(.white, for: .normal)
+    cancelButton.titleLabel?.font = .systemFont(ofSize: 17, weight: .semibold)
+    cancelButton.backgroundColor = UIColor.white.withAlphaComponent(0.16)
+    cancelButton.layer.cornerRadius = 25
+    cancelButton.layer.cornerCurve = .continuous
+    cancelButton.addTarget(self, action: #selector(cancelTapped), for: .touchUpInside)
+
+    secondaryButton.setTitle(zh ? "重录" : "Retake", for: .normal)
+    secondaryButton.setTitleColor(.white, for: .normal)
+    secondaryButton.titleLabel?.font = .systemFont(ofSize: 16, weight: .semibold)
+    secondaryButton.backgroundColor = UIColor.white.withAlphaComponent(0.16)
+    secondaryButton.layer.cornerRadius = 25
+    secondaryButton.layer.cornerCurve = .continuous
+    secondaryButton.isEnabled = false
+    secondaryButton.alpha = 0.45
+    secondaryButton.addTarget(self, action: #selector(retakeTapped), for: .touchUpInside)
+
+    recordButton.setTitle(zh ? "开始" : "Start", for: .normal)
+    recordButton.setTitleColor(.white, for: .normal)
+    recordButton.titleLabel?.font = .systemFont(ofSize: 17, weight: .bold)
+    recordButton.backgroundColor = UIColor.systemRed.withAlphaComponent(0.88)
+    recordButton.layer.cornerRadius = 28
+    recordButton.layer.cornerCurve = .continuous
+    recordButton.addTarget(self, action: #selector(recordTapped), for: .touchUpInside)
+
+    let stack = UIStackView(arrangedSubviews: [cancelButton, secondaryButton, recordButton])
+    stack.axis = .horizontal
+    stack.alignment = .center
+    stack.spacing = 12
+    stack.distribution = .fillEqually
+    stack.translatesAutoresizingMaskIntoConstraints = false
+    let bottomPanel = UIVisualEffectView(effect: UIBlurEffect(style: .systemUltraThinMaterialDark))
+    bottomPanel.layer.cornerRadius = 34
+    bottomPanel.layer.cornerCurve = .continuous
+    bottomPanel.clipsToBounds = true
+    bottomPanel.translatesAutoresizingMaskIntoConstraints = false
+    view.addSubview(bottomPanel)
+    bottomPanel.contentView.addSubview(stack)
+    NSLayoutConstraint.activate([
+      topPanel.topAnchor.constraint(equalTo: view.safeAreaLayoutGuide.topAnchor, constant: 18),
+      topPanel.centerXAnchor.constraint(equalTo: view.centerXAnchor),
+      topPanel.widthAnchor.constraint(greaterThanOrEqualToConstant: 178),
+      topStack.leadingAnchor.constraint(equalTo: topPanel.contentView.leadingAnchor, constant: 22),
+      topStack.trailingAnchor.constraint(equalTo: topPanel.contentView.trailingAnchor, constant: -22),
+      topStack.topAnchor.constraint(equalTo: topPanel.contentView.topAnchor, constant: 12),
+      topStack.bottomAnchor.constraint(equalTo: topPanel.contentView.bottomAnchor, constant: -12),
+      bottomPanel.leadingAnchor.constraint(equalTo: view.safeAreaLayoutGuide.leadingAnchor, constant: 24),
+      bottomPanel.trailingAnchor.constraint(equalTo: view.safeAreaLayoutGuide.trailingAnchor, constant: -24),
+      bottomPanel.bottomAnchor.constraint(equalTo: view.safeAreaLayoutGuide.bottomAnchor, constant: -22),
+      stack.leadingAnchor.constraint(equalTo: bottomPanel.contentView.leadingAnchor, constant: 14),
+      stack.trailingAnchor.constraint(equalTo: bottomPanel.contentView.trailingAnchor, constant: -14),
+      stack.topAnchor.constraint(equalTo: bottomPanel.contentView.topAnchor, constant: 14),
+      stack.bottomAnchor.constraint(equalTo: bottomPanel.contentView.bottomAnchor, constant: -14),
+      cancelButton.heightAnchor.constraint(equalToConstant: 52),
+      secondaryButton.heightAnchor.constraint(equalToConstant: 52),
+      recordButton.heightAnchor.constraint(equalToConstant: 52),
+    ])
+  }
+
+  @objc private func recordTapped() {
+    if let recordedUrl {
+      finish(url: recordedUrl, error: nil)
+      return
+    }
+    if isRecording {
+      movieOutput.stopRecording()
+      return
+    }
+    if FileManager.default.fileExists(atPath: outputUrl.path) {
+      try? FileManager.default.removeItem(at: outputUrl)
+    }
+    movieOutput.startRecording(to: outputUrl, recordingDelegate: self)
+    isRecording = true
+    startedAt = Date()
+    timer = Timer.scheduledTimer(withTimeInterval: 0.5, repeats: true) { [weak self] _ in
+      self?.durationLabel.text = formatDuration(Date().timeIntervalSince(self?.startedAt ?? Date()))
+    }
+    let zh = Locale.preferredLanguages.first?.lowercased().hasPrefix("zh") == true
+    recordButton.setTitle(zh ? "停止" : "Stop", for: .normal)
+    recordButton.backgroundColor = UIColor.label.withAlphaComponent(0.92)
+    statusLabel.text = zh ? "正在录制" : "Recording"
+    secondaryButton.isEnabled = false
+    secondaryButton.alpha = 0.45
+  }
+
+  @objc private func retakeTapped() {
+    if let recordedUrl {
+      try? FileManager.default.removeItem(at: recordedUrl)
+    }
+    recordedUrl = nil
+    durationLabel.text = "00:00"
+    let zh = Locale.preferredLanguages.first?.lowercased().hasPrefix("zh") == true
+    statusLabel.text = zh ? "准备录制" : "Ready to record"
+    recordButton.setTitle(zh ? "开始" : "Start", for: .normal)
+    recordButton.backgroundColor = UIColor.systemRed.withAlphaComponent(0.88)
+    secondaryButton.isEnabled = false
+    secondaryButton.alpha = 0.45
+  }
+
+  @objc private func cancelTapped() {
+    if isRecording {
+      cancelAfterStop = true
+      movieOutput.stopRecording()
+    } else {
+      if let recordedUrl {
+        try? FileManager.default.removeItem(at: recordedUrl)
+      }
+      finish(url: nil, error: nil)
+    }
+  }
+
+  func fileOutput(
+    _ output: AVCaptureFileOutput,
+    didFinishRecordingTo outputFileURL: URL,
+    from connections: [AVCaptureConnection],
+    error: Error?
+  ) {
+    isRecording = false
+    timer?.invalidate()
+    timer = nil
+    if cancelAfterStop {
+      try? FileManager.default.removeItem(at: outputFileURL)
+      finish(url: nil, error: nil)
+      return
+    }
+    if let error {
+      finish(url: nil, error: error)
+      return
+    }
+    recordedUrl = outputFileURL
+    let zh = Locale.preferredLanguages.first?.lowercased().hasPrefix("zh") == true
+    statusLabel.text = zh ? "已录制，确认后使用" : "Recorded. Confirm to use"
+    recordButton.setTitle(zh ? "使用视频" : "Use video", for: .normal)
+    recordButton.backgroundColor = UIColor.systemGreen.withAlphaComponent(0.92)
+    secondaryButton.isEnabled = true
+    secondaryButton.alpha = 1
+  }
+
+  private func finish(url: URL?, error: Error?) {
+    DispatchQueue.global(qos: .userInitiated).async { [session] in
+      if session.isRunning {
+        session.stopRunning()
+      }
+    }
+    dismiss(animated: true) { [onFinish] in
+      onFinish?(url, error)
+    }
+  }
+}
+
+private func formatDuration(_ interval: TimeInterval) -> String {
+  let totalSeconds = max(0, Int(interval))
+  return String(format: "%02d:%02d", totalSeconds / 60, totalSeconds % 60)
+}
+
+private func isChinesePreferred() -> Bool {
+  Locale.preferredLanguages.first?.lowercased().hasPrefix("zh") == true
 }
 
 private final class IOSShortcutBridge {

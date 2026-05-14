@@ -139,6 +139,14 @@ class _HtmlRuntimeHost {
         final file = await DeviceCapabilityBridge.capturePhoto();
         if (file == null) return null;
         return _registerNativeFile(file);
+      case 'media.recordAudio':
+        final file = await DeviceCapabilityBridge.recordAudio();
+        if (file == null) return null;
+        return _registerNativeFile(file);
+      case 'media.recordVideo':
+        final file = await DeviceCapabilityBridge.recordVideo();
+        if (file == null) return null;
+        return _registerNativeFile(file);
       default:
         throw UnsupportedError('Capability is declared but not implemented.');
     }
@@ -283,7 +291,9 @@ String _magNativeBootstrap(String runtimeId) {
     __runtimeId: ${jsonEncode(runtimeId)},
     invoke: post,
     pickFiles: function(options) { return post('files.pick', options || {}); },
-    capturePhoto: function(options) { return post('media.capturePhoto', options || {}); }
+    capturePhoto: function(options) { return post('media.capturePhoto', options || {}); },
+    recordAudio: function(options) { return post('media.recordAudio', options || {}); },
+    recordVideo: function(options) { return post('media.recordVideo', options || {}); }
   };
   document.addEventListener('click', function(event) {
     const input = event.target && event.target.closest ? event.target.closest('input[type="file"]') : null;
@@ -293,8 +303,14 @@ String _magNativeBootstrap(String runtimeId) {
     const accept = input.getAttribute('accept') || '';
     const capture = input.hasAttribute('capture');
     const multiple = input.hasAttribute('multiple');
+    const lowerAccept = accept.toLowerCase();
+    const captureTask = lowerAccept.indexOf('video/') >= 0
+      ? window.MagNative.recordVideo({ accept: accept, capture: input.getAttribute('capture') || true })
+      : lowerAccept.indexOf('audio/') >= 0
+        ? window.MagNative.recordAudio({ accept: accept, capture: input.getAttribute('capture') || true })
+        : window.MagNative.capturePhoto({ accept: accept, capture: input.getAttribute('capture') || true });
     const task = capture
-      ? window.MagNative.capturePhoto({ accept: accept, capture: input.getAttribute('capture') || true }).then(function(file) { return file ? [file] : []; })
+      ? captureTask.then(function(file) { return file ? [file] : []; })
       : window.MagNative.pickFiles({ accept: accept, multiple: multiple });
     task.then(function(files) { return fillFileInput(input, files); })
       .catch(function(error) { console.error('[MagNative] input file failed', error); });

@@ -37,6 +37,8 @@ class MainActivity : FlutterActivity() {
         private const val PICK_DEVICE_FILES_REQUEST = 4201
         private const val CAPTURE_DEVICE_PHOTO_REQUEST = 4202
         private const val DEVICE_CAMERA_PERMISSION_REQUEST = 4203
+        private const val RECORD_DEVICE_AUDIO_PERMISSION_REQUEST = 4204
+        private const val RECORD_DEVICE_VIDEO_PERMISSION_REQUEST = 4205
         private const val ACTION_WORKSPACE_WEB_SHORTCUT =
             "com.magent.mobile_agent.OPEN_WORKSPACE_WEB_SHORTCUT"
         private const val EXTRA_WORKSPACE_ID = "workspaceId"
@@ -67,6 +69,12 @@ class MainActivity : FlutterActivity() {
             CAPTURE_DEVICE_PHOTO_REQUEST,
             DEVICE_CAMERA_PERMISSION_REQUEST,
         )
+    }
+    private val audioCapabilityProvider: DeviceAudioCapabilityProvider by lazy {
+        DeviceAudioCapabilityProvider(this, RECORD_DEVICE_AUDIO_PERMISSION_REQUEST)
+    }
+    private val videoCapabilityProvider: DeviceVideoCapabilityProvider by lazy {
+        DeviceVideoCapabilityProvider(this, RECORD_DEVICE_VIDEO_PERMISSION_REQUEST)
     }
     private val voiceAudioBridge: VoiceAudioBridge by lazy {
         VoiceAudioBridge(this)
@@ -158,6 +166,8 @@ class MainActivity : FlutterActivity() {
         when (capabilityId) {
             "files.pick" -> filesCapabilityProvider.invoke(input, result)
             "media.capturePhoto" -> mediaCapabilityProvider.invoke(input, result)
+            "media.recordAudio" -> audioCapabilityProvider.invoke(input, result)
+            "media.recordVideo" -> videoCapabilityProvider.invoke(input, result)
             else -> result.error("unsupported_capability", "Unsupported capability: $capabilityId", null)
         }
     }
@@ -818,6 +828,8 @@ class MainActivity : FlutterActivity() {
     ) {
         super.onRequestPermissionsResult(requestCode, permissions, grantResults)
         if (mediaCapabilityProvider.onRequestPermissionsResult(requestCode, grantResults)) return
+        if (audioCapabilityProvider.onRequestPermissionsResult(requestCode, grantResults)) return
+        if (videoCapabilityProvider.onRequestPermissionsResult(requestCode, grantResults)) return
         if (voiceAudioBridge.onRequestPermissionsResult(requestCode, grantResults)) return
     }
 

@@ -62,6 +62,42 @@ class DeviceCapabilityRegistry {
       webAliases: ['MagNative.capturePhoto', 'input[type=file][capture]'],
     ),
     DeviceCapabilityDefinition(
+      id: 'media.recordAudio',
+      version: 1,
+      category: DeviceCapabilityCategory.media,
+      descriptionForAi:
+          'Record audio inside the app after a user gesture. Returns a runtime-scoped temporary audio URL.',
+      inputSchema: {
+        'type': 'object',
+        'properties': {
+          'maxDurationMs': {'type': 'integer'},
+        },
+      },
+      outputSchema: _fileResourceSchema,
+      webAliases: [
+        'MagNative.recordAudio',
+        'input[type=file][accept=audio/*][capture]'
+      ],
+    ),
+    DeviceCapabilityDefinition(
+      id: 'media.recordVideo',
+      version: 1,
+      category: DeviceCapabilityCategory.media,
+      descriptionForAi:
+          'Record video inside the app after a user gesture. Returns a runtime-scoped temporary video URL.',
+      inputSchema: {
+        'type': 'object',
+        'properties': {
+          'maxDurationMs': {'type': 'integer'},
+        },
+      },
+      outputSchema: _fileResourceSchema,
+      webAliases: [
+        'MagNative.recordVideo',
+        'input[type=file][accept=video/*][capture]'
+      ],
+    ),
+    DeviceCapabilityDefinition(
       id: 'files.save',
       version: 1,
       category: DeviceCapabilityCategory.files,
@@ -152,6 +188,14 @@ class DeviceCapabilityRegistry {
         return zh
             ? '调用设备相机拍照并返回临时图片 URL。网页里不要直接调用 `media.capturePhoto()`，要用 `window.MagNative.capturePhoto()`。'
             : 'Open the device camera and return a temporary image URL. In web pages, do not call `media.capturePhoto()` directly; use `window.MagNative.capturePhoto()`.';
+      case 'media.recordAudio':
+        return zh
+            ? '在 App 内录音并返回临时音频 URL。网页里使用 `window.MagNative.recordAudio()`，适合实现语音输入、录音上传等交互。'
+            : 'Record audio inside the app and return a temporary audio URL. In web pages, use `window.MagNative.recordAudio()` for voice input or audio upload flows.';
+      case 'media.recordVideo':
+        return zh
+            ? '在 App 内录制视频并返回临时视频 URL。网页里使用 `window.MagNative.recordVideo()`，适合实现视频采集或上传交互。'
+            : 'Record video inside the app and return a temporary video URL. In web pages, use `window.MagNative.recordVideo()` for video capture or upload flows.';
       case 'files.save':
         return zh
             ? '把生成的内容保存到用户选择的位置；当前 HTML 运行时尚未启用。'
@@ -175,6 +219,14 @@ class DeviceCapabilityRegistry {
         return zh
             ? '示例：`const photo = await window.MagNative.capturePhoto()`，或使用 `<input type="file" accept="image/*" capture>`。'
             : 'Example: `const photo = await window.MagNative.capturePhoto()`, or use `<input type="file" accept="image/*" capture>`.';
+      case 'media.recordAudio':
+        return zh
+            ? '示例：`const audio = await window.MagNative.recordAudio()`，再用 `fetch(audio.url)` 读取 Blob。'
+            : 'Example: `const audio = await window.MagNative.recordAudio()`, then call `fetch(audio.url)` to read the Blob.';
+      case 'media.recordVideo':
+        return zh
+            ? '示例：`const video = await window.MagNative.recordVideo()`，再把 `video.url` 赋给 `<video>` 预览。'
+            : 'Example: `const video = await window.MagNative.recordVideo()`, then assign `video.url` to a `<video>` preview.';
       default:
         return zh ? '示例：按暴露的 Web API 调用。' : 'Example: use the exposed web API.';
     }
