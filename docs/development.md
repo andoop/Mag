@@ -1,86 +1,69 @@
 # Development
 
-How to build, test, and debug **Mag** as a contributor.
-
-## Prerequisites
-
-- **Flutter** SDK matching `pubspec.yaml` (`environment.sdk`).
-- **Android Studio** or Android SDK + emulator/device for the primary target.
-- This repo root contains `pubspec.yaml` — run all commands from this directory (the cloned **Mag** repository root).
+This guide is for contributors working on Mag locally.
 
 ## Setup
 
 ```bash
-git clone https://github.com/andoop/Mag.git
-cd Mag
 flutter pub get
 flutter run
 ```
 
-## Static analysis
+Use Android for the fastest development loop. Use iOS when changing iOS-specific bridges or permissions.
+
+## Common Commands
 
 ```bash
-dart analyze lib/
-```
-
-Fix all issues before opening a pull request.
-
-## Tests
-
-```bash
+dart format lib test
+dart analyze lib test
 flutter test
+flutter build apk --debug
 ```
 
-Add tests alongside features when behavior is easy to pin down (parsers, pure logic). UI and engine integration may rely on manual QA on device.
+## Project Areas
 
-## Native workspace bridge
+| Path | Purpose |
+|------|---------|
+| `lib/ui/` | Flutter screens, composer, timeline, previews, settings. |
+| `lib/core/` | Session engine, tools, model routing, local runtime. |
+| `lib/platform/` | Dart platform bridge interfaces. |
+| `android/` | Android native bridges, permissions, floating window, notifications. |
+| `ios/` | iOS native bridges and app delegate integrations. |
+| `test/` | Tool/runtime tests and behavior coverage. |
+| `docs/` | User, contributor, and maintainer documentation. |
 
-- Android entry: `android/app/src/main/kotlin/.../MainActivity.kt` (MethodChannel `mobile_agent/workspace`).
-- iOS entry: `ios/Runner/AppDelegate.swift` (`IOSWorkspaceBridge` and `IOSGitNetworkBridge`).
-- When adding channel methods, update **`WorkspaceBridge`** in Dart and keep Android/iOS channel behavior and error codes (`not_found`, `not_file`, …) consistent.
+## Adding A Tool
 
-## Android release signing
+1. Define the tool in the registry.
+2. Add parameter schema and clear descriptions.
+3. Enforce workspace-relative paths.
+4. Add permission behavior for sensitive actions.
+5. Add tests.
+6. Update [AI Tools](ai-tools.md) and feature docs.
 
-1. Copy `android/key.properties.example` to `android/key.properties`.
-2. Point `storeFile` at your local keystore path (relative to `android/`).
-3. Fill in `storePassword`, `keyAlias`, and `keyPassword`.
-4. Build a signed APK:
+## Adding A Native Capability
 
-```bash
-flutter build apk --release
-```
+1. Add the Dart bridge method.
+2. Register the capability metadata where applicable.
+3. Implement Android and iOS behavior.
+4. Handle runtime permissions.
+5. Add user-facing UI and cancellation states.
+6. Expose it to `window.MagNative` if generated HTML should use it.
+7. Update [AI Web Runtime](web-runtime.md).
 
-- If `android/key.properties` is absent, Gradle falls back to the debug key so local release builds still work.
-- Keep `android/key.properties` and any `*.jks` / `*.keystore` files local only; they are git-ignored.
-- Prefer uploading the generated APK to GitHub Releases rather than committing APK files into the repository.
+## Documentation Rule
 
-## Local server debugging
-
-- The app starts an **`HttpServer` on loopback** with a random port; `AppState.serverUri` reflects it.
-- Point an external HTTP client at that base URL only for local debugging; routes are not authenticated by design (local-only).
-
-## Logs
-
-- Optional debug flags exist in core files (e.g. `_kDebugServer`, `_kDebugEngine`); keep them **off** in commits unless diagnosing.
-
-## Project layout (reminder)
-
-| Path | Role |
-|------|------|
-| `lib/app/` | `MaterialApp` entry |
-| `lib/ui/` | Screens and `home_page` library parts |
-| `lib/store/` | `AppController`, stores |
-| `lib/core/` | Engine, DB, server, tools, models |
-| `lib/sdk/` | HTTP client |
-| `docs/` | This documentation |
+If a user can see it, approve it, call it, configure it, or rely on it, document it in the same change.
 
 ---
 
-## 中文开发说明
+# 开发说明
 
-- 在克隆的 **Mag** 仓库根目录（含 `pubspec.yaml`）执行 `flutter pub get` / `flutter run`。
-- 提交前运行 **`dart analyze lib/`**，尽量通过全部检查。
-- 原生侧扩展工作区能力时，同步修改 Dart **`WorkspaceBridge`**、Android Kotlin 桥接和 iOS `AppDelegate.swift` 中对应的 channel 实现。
-- Android 正式签名可从 `android/key.properties.example` 复制出本地 `android/key.properties`，填写 keystore 信息后运行 `flutter build apk --release`。
-- 若没有 `android/key.properties`，Gradle 会回退到 debug key，便于本地验证；对外分发请使用正式 release keystore。
-- 本地 HTTP 服务仅监听回环地址，勿在公网暴露。
+贡献代码前建议先运行：
+
+```bash
+dart analyze lib test
+flutter test
+```
+
+新增工具、端上能力、权限行为、文件格式支持或小窗行为时，必须同步更新 `docs/`。

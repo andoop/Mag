@@ -1,64 +1,54 @@
 # Architecture
 
-High-level design of **Mag** (`mobile_agent`). Paths are under `lib/` unless noted.
+Mag is a Flutter app backed by a local agent runtime, native platform bridges, and local persistence.
 
-## Layered overview
+## High-Level Flow
 
+```text
+Flutter UI
+  -> Local SDK client
+  -> Session engine
+  -> Tools / Git / Office generation / MCP / Skills
+  -> Workspace bridge and native Android/iOS capabilities
+  -> SQLite and local preferences
 ```
-┌─────────────────────────────────────────────────────────────┐
-│  lib/ui/          Flutter widgets (home_page, app_root, …)   │
-├─────────────────────────────────────────────────────────────┤
-│  lib/store/       AppController, AppState, recents store     │
-├─────────────────────────────────────────────────────────────┤
-│  lib/sdk/         LocalServerClient (HTTP to loopback)       │
-├─────────────────────────────────────────────────────────────┤
-│  lib/core/        Session engine, tools, DB, local HTTP      │
-│                   WorkspaceBridge → platform MethodChannel   │
-└─────────────────────────────────────────────────────────────┘
-```
+
+## Main Layers
 
 | Layer | Responsibility |
 |-------|----------------|
-| **UI** | `AppRoot` switches project home vs `HomePage`. Timeline, composer, drawers, file browser, settings sheets. |
-| **Store** | Owns `SessionEngine`, `LocalServer`, `WorkspaceBridge`; merges SSE events into `AppState`; workspace/session navigation. |
-| **SDK** | Typed HTTP client: sessions, messages, prompts, model config, permissions, `PATCH`/`DELETE` session, etc. |
-| **Core** | SQLite (`AppDatabase`), `SessionEngine` (prompt loop, tools, compaction, title policy), `LocalServer` (routes + SSE), `ToolRegistry`, `ModelGateway`. |
+| Flutter UI | Project home, chat, composer, timeline, file browser, previews, settings. |
+| Store/state | Project/session navigation, busy state, selected model, UI orchestration. |
+| Session engine | Message lifecycle, model calls, tool routing, permissions, persistence. |
+| Tool runtime | Workspace file operations, Git, web fetch/download, Office generation, MCP, Skills. |
+| Local server/client | Loopback APIs and SSE-style events between engine and UI surfaces. |
+| Native bridges | Android/iOS workspace access, media capabilities, Git integrations, mobile runtime. |
+| Persistence | SQLite for durable agent data; preferences for lightweight local settings. |
 
-## Session engine
+## Native Capabilities
 
-- **Create session** — Default title via `SessionTitlePolicy` (aligned with OpenCode-style ISO timestamps).
-- **Prompt** — Streams assistant parts; persists messages/parts; optional **auto title** from model after first user message when title still matches the default pattern.
-- **Subtasks / child sessions** — Created with child default titles; auto-title generation is skipped for child patterns.
-- **Compaction** — Summarizes context; updates session metadata.
-- **Events** — `session.updated`, `session.deleted`, `message.*`, `permission.*`, `question.*`, `session.status`, etc., tagged with workspace `directory` (tree URI) for filtering.
+Mag uses native code where Flutter alone is not enough:
 
-## Local HTTP server
+- Android/iOS file and workspace bridges.
+- Camera, microphone, audio/video recording.
+- Git bridge implementations.
+- Android floating window and foreground service.
+- iOS Picture-in-Picture style foundation.
 
-- Binds **loopback** only; `AppController` connects via `LocalServerClient`.
-- **SSE** — `/global/event` (and `/event`) stream JSON events for the UI.
-- **REST-style** — Workspaces, sessions, messages, async prompt, cancel, compact, session `PATCH` (rename), `DELETE` (cascade delete), workspace file bytes for previews, etc.
+## Local-First Model
 
-## Persistence
+Projects, sessions, messages, permissions, todos, and tool parts are stored locally. Model providers receive only the context needed for requests configured by the user.
 
-- **SQLite** — Sessions, messages, parts, todos, permission/question requests, workspace index tables, settings key-value.
-- **Shared preferences** — Recent workspace ordering for the project home.
+## Extension Points
 
-## Workspace bridge
-
-- **Android** (Kotlin) implements `listDirectory`, `readText`, `readBytes`, search/grep, and file mutations used by tools.
-- Dart **`WorkspaceBridge`** caches directory listings; UI file browser calls `listDirectory` with `force: true` on refresh.
-
-## Internationalization
-
-- UI strings use `l(context, zh, en)` pattern in `lib/ui/i18n.dart` and call sites.
+- Add a tool in the tool registry.
+- Add a native capability in the platform bridge and expose it through Dart.
+- Add an AI web runtime alias through `window.MagNative`.
+- Add a Skill directory for reusable task instructions.
+- Add docs in the same PR as user-visible behavior changes.
 
 ---
 
-## 中文概要
+# 架构
 
-- **UI**：`AppRoot` 在项目首页与对话页之间切换；时间线、输入区、抽屉、文件浏览器等。
-- **Store**：持有引擎与本地服务，订阅 SSE 更新 `AppState`，负责进入/离开工作区与会话切换。
-- **Core**：SQLite 持久化、`SessionEngine` 对话与工具闭环、`LocalServer` 提供 HTTP 与事件流。
-- **WorkspaceBridge**：通过 **MethodChannel** 调用原生实现目录列举与文件读写；工具与文件浏览器共用。
-
-更多工具细节见 [ai-tools.md](ai-tools.md)。
+Mag 的核心结构是 Flutter UI + 本地 Agent 引擎 + 原生平台桥接 + 本地持久化。UI 不直接承担所有业务逻辑，而是通过本地客户端和事件流消费会话状态；工具运行时负责文件、Git、Office 生成、MCP 和 Skills 等能力。
