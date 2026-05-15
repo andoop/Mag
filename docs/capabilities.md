@@ -101,18 +101,31 @@ Mag discovers skills from:
 
 Loading a skill adds its instructions and bundled references into the conversation context. It does not secretly run scripts. This keeps Skills powerful but inspectable.
 
-## Workspace And Files
+## Workspace, Files, And Attachments
 
 Mag treats the workspace as the center of the product:
 
-- Project home with recent projects.
-- Sandbox project creation.
-- Workspace file browser.
-- Folder navigation and refresh.
+- Project home with recent projects and sandbox project creation.
+- Workspace file browser with folder navigation and refresh.
 - Markdown/HTML rendered preview and source view.
-- PDF, image, text, and code previews.
-- File attachments and `@` references in prompts.
-- Workspace-relative paths for tools.
+- PDF, image, text, and code previews where supported.
+- Workspace file attachments and `@` file references in prompts.
+- Device file attachments, photo capture, audio recording, and video recording from the composer.
+- Workspace-relative paths for all agent tools.
+
+## Device Capabilities And AI Web Runtime
+
+Mag exposes native mobile capabilities to both the Flutter UI and AI-generated HTML pages. These capabilities require a user gesture and return temporary runtime-scoped file URLs where applicable.
+
+| Capability | User Surface | Web Alias |
+|------------|--------------|-----------|
+| Pick files | Composer attachments and generated pages | `window.MagNative.pickFiles(...)`, `input[type=file]` |
+| Capture photo | Composer camera action and generated pages | `window.MagNative.capturePhoto(...)`, captured image file inputs |
+| Record audio | Composer microphone action and generated pages | `window.MagNative.recordAudio(...)`, `input[accept=audio/*][capture]` |
+| Record video | Composer video action and generated pages | `window.MagNative.recordVideo(...)`, `input[accept=video/*][capture]` |
+| Save/share | Native bridge actions where enabled | `window.MagNative.saveFile(...)`, `window.MagNative.share(...)` |
+
+Android and iOS implement recording in-app instead of launching external recorder apps. This keeps the flow predictable for AI-created pages and lets the app return media as prompt attachments.
 
 ## Mobile Runtime
 
@@ -243,18 +256,31 @@ Mag 会从以下位置发现 Skills：
 
 加载 Skill 会把说明和参考文件加入上下文，但不会偷偷执行脚本。这样既能增强 Agent，又保持可检查和可控。
 
-## 工作区与文件
+## 工作区、文件与附件
 
 Mag 把工作区作为产品中心：
 
-- 项目首页与最近项目。
-- 沙盒项目创建。
-- 工作区文件浏览器。
-- 目录导航和刷新。
+- 项目首页、最近项目和沙盒项目创建。
+- 工作区文件浏览器、目录导航和刷新。
 - Markdown/HTML 渲染预览与源码视图。
 - PDF、图片、文本、代码预览。
-- 文件附件和 `@` 引用。
-- 工具使用工作区相对路径。
+- 工作区文件附件和 `@` 文件引用。
+- 输入区可选择设备文件、拍照、录音、录制视频，并作为附件交给 Agent。
+- 所有 Agent 工具使用工作区相对路径。
+
+## 端上能力与 AI 网页运行时
+
+Mag 将原生移动能力同时提供给 Flutter UI 和 AI 生成的 HTML 页面。这些能力需要用户手势触发，涉及文件时返回当前运行时可访问的临时 URL。
+
+| 能力 | 用户入口 | 网页别名 |
+|------|----------|----------|
+| 选择文件 | 输入区附件、AI 生成页面 | `window.MagNative.pickFiles(...)`、`input[type=file]` |
+| 拍照 | 输入区相机、AI 生成页面 | `window.MagNative.capturePhoto(...)`、带 capture 的图片输入 |
+| 录音 | 输入区麦克风、AI 生成页面 | `window.MagNative.recordAudio(...)`、`input[accept=audio/*][capture]` |
+| 录制视频 | 输入区视频、AI 生成页面 | `window.MagNative.recordVideo(...)`、`input[accept=video/*][capture]` |
+| 保存/分享 | 支持时通过原生桥接触发 | `window.MagNative.saveFile(...)`、`window.MagNative.share(...)` |
+
+Android 和 iOS 都在应用内完成录音、录像，而不是跳转外部录制器。这样 AI 生成页面的体验更稳定，也能把媒体文件直接作为 prompt 附件返回。
 
 ## 移动端运行时
 
