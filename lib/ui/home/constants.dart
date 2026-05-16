@@ -274,16 +274,12 @@ class _FloatingPillAction extends StatelessWidget {
     required this.icon,
     required this.label,
     required this.onPressed,
-    this.alignment = Alignment.bottomCenter,
-    this.compact = false,
   });
 
   final bool visible;
   final IconData icon;
   final String label;
   final VoidCallback onPressed;
-  final Alignment alignment;
-  final bool compact;
 
   @override
   Widget build(BuildContext context) {
@@ -292,7 +288,7 @@ class _FloatingPillAction extends StatelessWidget {
       child: IgnorePointer(
         ignoring: !visible,
         child: Align(
-          alignment: alignment,
+          alignment: Alignment.bottomCenter,
           child: AnimatedScale(
             scale: visible ? 1 : 0.92,
             duration: const Duration(milliseconds: 140),
@@ -312,29 +308,25 @@ class _FloatingPillAction extends StatelessWidget {
                       onTap: onPressed,
                       borderRadius: BorderRadius.circular(999),
                       child: Padding(
-                        padding: compact
-                            ? const EdgeInsets.all(6)
-                            : const EdgeInsets.symmetric(
-                                horizontal: 10,
-                                vertical: 6,
-                              ),
+                        padding: const EdgeInsets.symmetric(
+                          horizontal: 10,
+                          vertical: 6,
+                        ),
                         child: Row(
                           mainAxisSize: MainAxisSize.min,
                           children: [
                             Icon(icon, size: 16, color: oc.foregroundMuted),
-                            if (!compact) ...[
-                              const SizedBox(width: 2),
-                              Text(
-                                label,
-                                style: Theme.of(context)
-                                    .textTheme
-                                    .labelSmall
-                                    ?.copyWith(
-                                      color: oc.foregroundMuted,
-                                      fontWeight: FontWeight.w700,
-                                    ),
-                              ),
-                            ],
+                            const SizedBox(width: 2),
+                            Text(
+                              label,
+                              style: Theme.of(context)
+                                  .textTheme
+                                  .labelSmall
+                                  ?.copyWith(
+                                    color: oc.foregroundMuted,
+                                    fontWeight: FontWeight.w700,
+                                  ),
+                            ),
                           ],
                         ),
                       ),
@@ -357,13 +349,41 @@ class _QuickCollapseButton extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return _FloatingPillAction(
-      visible: true,
-      icon: Icons.keyboard_arrow_up_rounded,
-      label: l(context, '收起', 'Collapse'),
-      onPressed: onPressed,
-      alignment: Alignment.bottomRight,
-      compact: true,
+    final oc = context.oc;
+    return Positioned(
+      left: 6,
+      right: 6,
+      bottom: 6,
+      child: Material(
+        color: oc.panelBackground.withOpacity(context.isDarkMode ? 0.9 : 0.96),
+        borderRadius: BorderRadius.circular(10),
+        child: InkWell(
+          onTap: onPressed,
+          borderRadius: BorderRadius.circular(10),
+          child: Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+            child: Row(
+              mainAxisAlignment: MainAxisAlignment.center,
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Icon(
+                  Icons.keyboard_arrow_up_rounded,
+                  size: 16,
+                  color: oc.foregroundMuted,
+                ),
+                const SizedBox(width: 4),
+                Text(
+                  l(context, '收起', 'Collapse'),
+                  style: Theme.of(context).textTheme.labelSmall?.copyWith(
+                        color: oc.foregroundMuted,
+                        fontWeight: FontWeight.w700,
+                      ),
+                ),
+              ],
+            ),
+          ),
+        ),
+      ),
     );
   }
 }

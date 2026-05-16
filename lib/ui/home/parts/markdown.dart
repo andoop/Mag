@@ -334,10 +334,19 @@ class _StreamingMarkdownTextState extends State<_StreamingMarkdownText> {
       data: data,
       selectable: false,
       softLineBreak: true,
-      shrinkWrap: true,
+      shrinkWrap: false,
       builders: {'pre': _MarkdownCodeBlockBuilder()},
       styleSheet: _cachedMarkdownStyle ?? _kMarkdownStyle(context),
       onTapLink: (_, href, __) => _handleMarkdownLinkTap(context, href),
+    );
+  }
+
+  Widget _fillAvailableWidth(BuildContext context, Widget child) {
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        if (!constraints.maxWidth.isFinite) return child;
+        return SizedBox(width: constraints.maxWidth, child: child);
+      },
     );
   }
 
@@ -367,17 +376,20 @@ class _StreamingMarkdownTextState extends State<_StreamingMarkdownText> {
           stableText.isEmpty ? null : _md(context, _normalize(stableText));
     }
 
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      mainAxisSize: MainAxisSize.min,
-      children: [
-        _stableWidget ?? const SizedBox.shrink(),
-        if (activeText.isNotEmpty)
-          _StreamingFadeText(
-            text: _normalize(activeText),
-            color: context.oc.foreground,
-          ),
-      ],
+    return _fillAvailableWidth(
+      context,
+      Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          _stableWidget ?? const SizedBox.shrink(),
+          if (activeText.isNotEmpty)
+            _StreamingFadeText(
+              text: _normalize(activeText),
+              color: context.oc.foreground,
+            ),
+        ],
+      ),
     );
   }
 
@@ -389,17 +401,20 @@ class _StreamingMarkdownTextState extends State<_StreamingMarkdownText> {
       _stableWidget = null;
       _completeWidget = _md(context, _normalize(text));
     }
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      mainAxisSize: MainAxisSize.min,
-      children: [
-        _completeWidget!,
-        if (widget.showResponseCopy)
-          _AssistantTextFooter(
-            plainText: widget.text,
-            metaLine: widget.footerMeta,
-          ),
-      ],
+    return _fillAvailableWidth(
+      context,
+      Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          _completeWidget!,
+          if (widget.showResponseCopy)
+            _AssistantTextFooter(
+              plainText: widget.text,
+              metaLine: widget.footerMeta,
+            ),
+        ],
+      ),
     );
   }
 }

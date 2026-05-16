@@ -623,39 +623,44 @@ class _WriteStreamSourcePreview extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final language = _languageForPath(path);
-    return SingleChildScrollView(
-      scrollDirection: Axis.horizontal,
-      child: ConstrainedBox(
-        constraints: BoxConstraints(
-          minWidth: MediaQuery.of(context).size.width - 72,
-        ),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            if (window.isTruncated) _PreviewWindowNotice(window: window),
-            language == null
-                ? SelectableText(
-                    content,
-                    style: const TextStyle(
-                      fontFamily: 'monospace',
-                      fontSize: 12,
-                      height: 1.4,
-                    ),
-                  )
-                : HighlightView(
-                    content,
-                    language: language,
-                    theme: _codeHighlightTheme(context),
-                    padding: EdgeInsets.zero,
-                    textStyle: const TextStyle(
-                      fontFamily: 'monospace',
-                      fontSize: 12,
-                      height: 1.4,
-                    ),
-                  ),
-          ],
-        ),
-      ),
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        final viewportWidth = constraints.maxWidth.isFinite
+            ? constraints.maxWidth
+            : MediaQuery.of(context).size.width - 72;
+        return SingleChildScrollView(
+          scrollDirection: Axis.horizontal,
+          child: ConstrainedBox(
+            constraints: BoxConstraints(minWidth: viewportWidth),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                if (window.isTruncated) _PreviewWindowNotice(window: window),
+                language == null
+                    ? SelectableText(
+                        content,
+                        style: const TextStyle(
+                          fontFamily: 'monospace',
+                          fontSize: 12,
+                          height: 1.4,
+                        ),
+                      )
+                    : HighlightView(
+                        content,
+                        language: language,
+                        theme: _codeHighlightTheme(context),
+                        padding: EdgeInsets.zero,
+                        textStyle: const TextStyle(
+                          fontFamily: 'monospace',
+                          fontSize: 12,
+                          height: 1.4,
+                        ),
+                      ),
+              ],
+            ),
+          ),
+        );
+      },
     );
   }
 }

@@ -506,27 +506,31 @@ class _FloatingMessageCard extends StatelessWidget {
           borderRadius: BorderRadius.circular(14),
         ),
         child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
+          crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
-            Row(
-              children: [
-                Icon(
-                  isUser
-                      ? Icons.person_outline_rounded
-                      : Icons.smart_toy_outlined,
-                  size: 14,
-                  color: oc.foregroundMuted,
-                ),
-                const SizedBox(width: 5),
-                Text(
-                  isUser ? l(context, '你', 'You') : message.agent,
-                  style: TextStyle(
-                    fontSize: 11,
+            Align(
+              alignment: Alignment.centerLeft,
+              child: Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Icon(
+                    isUser
+                        ? Icons.person_outline_rounded
+                        : Icons.smart_toy_outlined,
+                    size: 14,
                     color: oc.foregroundMuted,
-                    fontWeight: FontWeight.w600,
                   ),
-                ),
-              ],
+                  const SizedBox(width: 5),
+                  Text(
+                    isUser ? l(context, '你', 'You') : message.agent,
+                    style: TextStyle(
+                      fontSize: 11,
+                      color: oc.foregroundMuted,
+                      fontWeight: FontWeight.w600,
+                    ),
+                  ),
+                ],
+              ),
             ),
             if (message.text.trim().isNotEmpty) ...[
               const SizedBox(height: 7),
@@ -700,25 +704,29 @@ class _CompactPanel extends StatelessWidget {
         border: Border.all(color: oc.borderColor),
       ),
       child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
+        crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
-          Row(
-            children: [
-              Icon(icon, size: 13, color: oc.foregroundMuted),
-              const SizedBox(width: 5),
-              Expanded(
-                child: Text(
-                  title,
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
-                  style: TextStyle(
-                    color: oc.foregroundMuted,
-                    fontSize: 11,
-                    fontWeight: FontWeight.w700,
+          Align(
+            alignment: Alignment.centerLeft,
+            child: Row(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Icon(icon, size: 13, color: oc.foregroundMuted),
+                const SizedBox(width: 5),
+                Flexible(
+                  child: Text(
+                    title,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: TextStyle(
+                      color: oc.foregroundMuted,
+                      fontSize: 11,
+                      fontWeight: FontWeight.w700,
+                    ),
                   ),
                 ),
-              ),
-            ],
+              ],
+            ),
           ),
           const SizedBox(height: 6),
           child,
@@ -737,20 +745,24 @@ class _MarkdownBlock extends StatelessWidget {
   Widget build(BuildContext context) {
     if (text.trim().isEmpty) return const SizedBox.shrink();
     final oc = context.oc;
-    return MarkdownBody(
-      data: text,
-      selectable: false,
-      styleSheet: MarkdownStyleSheet.fromTheme(Theme.of(context)).copyWith(
-        p: TextStyle(fontSize: 12.5, height: 1.35, color: oc.foreground),
-        code: TextStyle(
-          fontSize: 11.5,
-          fontFamily: 'monospace',
-          backgroundColor: oc.mutedPanel,
-        ),
-        codeblockDecoration: BoxDecoration(
-          color: oc.mutedPanel,
-          borderRadius: BorderRadius.circular(8),
-          border: Border.all(color: oc.borderColor),
+    return SizedBox(
+      width: double.infinity,
+      child: MarkdownBody(
+        data: text,
+        selectable: false,
+        shrinkWrap: false,
+        styleSheet: MarkdownStyleSheet.fromTheme(Theme.of(context)).copyWith(
+          p: TextStyle(fontSize: 12.5, height: 1.35, color: oc.foreground),
+          code: TextStyle(
+            fontSize: 11.5,
+            fontFamily: 'monospace',
+            backgroundColor: oc.mutedPanel,
+          ),
+          codeblockDecoration: BoxDecoration(
+            color: oc.mutedPanel,
+            borderRadius: BorderRadius.circular(8),
+            border: Border.all(color: oc.borderColor),
+          ),
         ),
       ),
     );
@@ -765,15 +777,18 @@ class _MonoText extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return Text(
-      text,
-      maxLines: maxLines,
-      overflow: TextOverflow.ellipsis,
-      style: TextStyle(
-        fontFamily: 'monospace',
-        fontSize: 11,
-        height: 1.35,
-        color: context.oc.foreground,
+    return SizedBox(
+      width: double.infinity,
+      child: Text(
+        text,
+        maxLines: maxLines,
+        overflow: TextOverflow.ellipsis,
+        style: TextStyle(
+          fontFamily: 'monospace',
+          fontSize: 11,
+          height: 1.35,
+          color: context.oc.foreground,
+        ),
       ),
     );
   }

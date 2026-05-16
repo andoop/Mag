@@ -227,6 +227,11 @@ class _TodoWriteToolPart extends StatelessWidget {
         : '';
 
     final oc = context.oc;
+    final borderColor = isError
+        ? Colors.red.withOpacity(context.isDarkMode ? 0.2 : 0.16)
+        : isRunning
+            ? oc.accent.withOpacity(context.isDarkMode ? 0.14 : 0.12)
+            : oc.borderColor.withOpacity(context.isDarkMode ? 0.12 : 0.08);
     return Container(
       width: double.infinity,
       padding: const EdgeInsets.fromLTRB(9, 8, 9, 8),
@@ -241,7 +246,7 @@ class _TodoWriteToolPart extends StatelessWidget {
                     : const Color(0xFFFFFCF2))
                 : oc.mutedPanel,
         borderRadius: BorderRadius.circular(10),
-        border: Border.all(color: oc.softBorderColor),
+        border: Border.all(color: borderColor),
       ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
@@ -420,6 +425,9 @@ class _QuestionToolPartState extends State<_QuestionToolPart> {
     final noneLabel = l(context, '（无答案）', '(no answer)');
 
     final oc = context.oc;
+    final borderColor = isRunning
+        ? oc.accent.withOpacity(context.isDarkMode ? 0.14 : 0.12)
+        : oc.borderColor.withOpacity(context.isDarkMode ? 0.12 : 0.08);
     return Container(
       width: double.infinity,
       padding: const EdgeInsets.fromLTRB(9, 8, 9, 8),
@@ -430,7 +438,7 @@ class _QuestionToolPartState extends State<_QuestionToolPart> {
                 : const Color(0xFFFFFCF2))
             : oc.mutedPanel,
         borderRadius: BorderRadius.circular(10),
-        border: Border.all(color: oc.softBorderColor),
+        border: Border.all(color: borderColor),
       ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
@@ -508,7 +516,7 @@ class _QuestionToolPartState extends State<_QuestionToolPart> {
             child: Stack(
               children: [
                 Padding(
-                  padding: const EdgeInsets.only(bottom: 30),
+                  padding: const EdgeInsets.only(bottom: 38),
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [

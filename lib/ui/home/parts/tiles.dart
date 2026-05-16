@@ -1384,23 +1384,23 @@ class _ToolPartTileState extends State<_ToolPartTile> {
     final model = _buildModel(context);
     final expanded = _expanded;
     final oc = context.oc;
+    final borderColor = model.isError
+        ? Colors.red.withOpacity(context.isDarkMode ? 0.2 : 0.16)
+        : model.isRunning
+            ? oc.accent.withOpacity(context.isDarkMode ? 0.14 : 0.12)
+            : oc.borderColor.withOpacity(context.isDarkMode ? 0.12 : 0.08);
     return Container(
       width: double.infinity,
       padding: const EdgeInsets.fromLTRB(10, 8, 10, 8),
       decoration: BoxDecoration(
         color: oc.mutedPanel.withOpacity(context.isDarkMode ? 0.54 : 0.76),
         borderRadius: BorderRadius.circular(13),
-        border: Border.all(
-          color: model.isError
-              ? Colors.red.withOpacity(context.isDarkMode ? 0.38 : 0.26)
-              : model.isRunning
-                  ? oc.accent.withOpacity(context.isDarkMode ? 0.26 : 0.18)
-                  : oc.softBorderColor.withOpacity(0.82),
-        ),
+        border: Border.all(color: borderColor),
         boxShadow: [
           BoxShadow(
-            color: Colors.black.withOpacity(context.isDarkMode ? 0.08 : 0.035),
-            blurRadius: 12,
+            color: Colors.black.withOpacity(context.isDarkMode ? 0.05 : 0.025),
+            blurRadius: 10,
+            spreadRadius: -3,
             offset: const Offset(0, 4),
           ),
         ],
@@ -1694,7 +1694,7 @@ class _ToolDetailsPanel extends StatelessWidget {
       child: Stack(
         children: [
           Padding(
-            padding: const EdgeInsets.only(bottom: 30),
+            padding: const EdgeInsets.only(bottom: 38),
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.stretch,
               children: [

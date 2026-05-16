@@ -154,6 +154,81 @@ BoxDecoration _chatSurfaceDecoration(
   );
 }
 
+double _assistantBubbleWidth(
+  BuildContext context,
+  BoxConstraints constraints,
+) {
+  if (!constraints.maxWidth.isFinite) {
+    return MediaQuery.of(context).size.width;
+  }
+  return constraints.maxWidth;
+}
+
+class _AssistantBubbleFrame extends StatelessWidget {
+  const _AssistantBubbleFrame({required this.child});
+
+  final Widget child;
+
+  @override
+  Widget build(BuildContext context) {
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        final width = _assistantBubbleWidth(context, constraints);
+        return Align(
+          alignment: Alignment.centerLeft,
+          child: SizedBox(
+            width: width,
+            child: child,
+          ),
+        );
+      },
+    );
+  }
+}
+
+class _MessageBubbleFrame extends StatelessWidget {
+  const _MessageBubbleFrame({
+    required this.isUser,
+    required this.child,
+  });
+
+  final bool isUser;
+  final Widget child;
+
+  @override
+  Widget build(BuildContext context) {
+    if (isUser) {
+      return Align(
+        alignment: Alignment.centerRight,
+        child: ConstrainedBox(
+          constraints: const BoxConstraints(maxWidth: 720),
+          child: child,
+        ),
+      );
+    }
+    return _AssistantBubbleFrame(child: child);
+  }
+}
+
+class _AssistantFillWidth extends StatelessWidget {
+  const _AssistantFillWidth({
+    required this.enabled,
+    required this.child,
+  });
+
+  final bool enabled;
+  final Widget child;
+
+  @override
+  Widget build(BuildContext context) {
+    if (!enabled) return child;
+    return SizedBox(
+      width: double.infinity,
+      child: child,
+    );
+  }
+}
+
 class _StreamingBubbleSize extends StatelessWidget {
   const _StreamingBubbleSize({
     required this.enabled,
@@ -170,7 +245,10 @@ class _StreamingBubbleSize extends StatelessWidget {
       duration: _kStreamingBubbleResizeDuration,
       curve: Curves.easeOutCubic,
       alignment: Alignment.topLeft,
-      child: child,
+      child: _AssistantFillWidth(
+        enabled: enabled,
+        child: child,
+      ),
     );
   }
 }
@@ -405,22 +483,33 @@ class _TimelineTurnGroupState extends State<_TimelineTurnGroup> {
   int? _lastThemeKey;
   int? _lastEntrySignature;
   String? _lastStreamingAssistantMessageId;
+  int? _lastLayoutWidth;
+
+  @override
+  void reassemble() {
+    _cached = null;
+    _lastLayoutWidth = null;
+    super.reassemble();
+  }
 
   @override
   Widget build(BuildContext context) {
     final themeKey = context.themeCacheKey;
     final entrySignature =
         _timelineTurnVisualSignature(widget.entry, widget.renderedMessages);
+    final layoutWidth = MediaQuery.of(context).size.width.round();
     if (_cached != null &&
         _lastThemeKey == themeKey &&
         _lastEntrySignature == entrySignature &&
         _lastStreamingAssistantMessageId ==
-            widget.streamingAssistantMessageId) {
+            widget.streamingAssistantMessageId &&
+        _lastLayoutWidth == layoutWidth) {
       return _cached!;
     }
     _lastThemeKey = themeKey;
     _lastEntrySignature = entrySignature;
     _lastStreamingAssistantMessageId = widget.streamingAssistantMessageId;
+    _lastLayoutWidth = layoutWidth;
     _cached = _buildContent(context);
     return _cached!;
   }
@@ -582,23 +671,22 @@ class _AssistantTurnBubble extends StatelessWidget {
     }
 
     return RepaintBoundary(
-      child: Align(
-        alignment: Alignment.centerLeft,
-        child: ConstrainedBox(
-          constraints: const BoxConstraints(maxWidth: 720),
-          child: _StreamingBubbleSize(
-            enabled: isStreamingTurn,
-            child: Container(
-              padding: const EdgeInsets.fromLTRB(14, 12, 14, 13),
-              decoration: _chatSurfaceDecoration(
-                context,
-                color: oc.agentBubble,
-                radius: 24,
-              ),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Row(
+      child: _AssistantBubbleFrame(
+        child: _StreamingBubbleSize(
+          enabled: isStreamingTurn,
+          child: Container(
+            padding: const EdgeInsets.fromLTRB(14, 12, 14, 13),
+            decoration: _chatSurfaceDecoration(
+              context,
+              color: oc.agentBubble,
+              radius: 24,
+            ),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                Align(
+                  alignment: Alignment.centerLeft,
+                  child: Row(
                     mainAxisSize: MainAxisSize.min,
                     children: [
                       Text(
@@ -619,40 +707,40 @@ class _AssistantTurnBubble extends StatelessWidget {
                       ),
                     ],
                   ),
-                  for (final item in displayItems) ...[
-                    const SizedBox(height: 10),
-                    if (item.isContextGroup)
-                      _ContextToolGroupTile(
-                        key: ValueKey<String>(
-                          'context-${item.entries.first.part.id}-${item.entries.last.part.id}',
-                        ),
-                        entries: item.entries,
-                        controller: controller,
-                        workspace: controller.state.workspace,
-                        serverUri: controller.state.serverUri,
-                        onInsertPromptReference: onInsertPromptReference,
-                        onSendPromptReference: onSendPromptReference,
-                      )
-                    else
-                      _CachedPartTile(
-                        key: ValueKey<String>(
-                            'assistant-part-${item.entry!.part.id}'),
-                        part: item.entry!.part,
-                        message: item.entry!.bundle.message,
-                        controller: controller,
-                        workspace: controller.state.workspace,
-                        serverUri: controller.state.serverUri,
-                        streamAssistantContent:
-                            item.entry!.streamAssistantContent,
-                        turnDurationMs: turnDurationMs,
-                        showAssistantTextMeta:
-                            identical(item.entry, lastPlainTextEntry),
-                        onInsertPromptReference: onInsertPromptReference,
-                        onSendPromptReference: onSendPromptReference,
+                ),
+                for (final item in displayItems) ...[
+                  const SizedBox(height: 10),
+                  if (item.isContextGroup)
+                    _ContextToolGroupTile(
+                      key: ValueKey<String>(
+                        'context-${item.entries.first.part.id}-${item.entries.last.part.id}',
                       ),
-                  ],
+                      entries: item.entries,
+                      controller: controller,
+                      workspace: controller.state.workspace,
+                      serverUri: controller.state.serverUri,
+                      onInsertPromptReference: onInsertPromptReference,
+                      onSendPromptReference: onSendPromptReference,
+                    )
+                  else
+                    _CachedPartTile(
+                      key: ValueKey<String>(
+                          'assistant-part-${item.entry!.part.id}'),
+                      part: item.entry!.part,
+                      message: item.entry!.bundle.message,
+                      controller: controller,
+                      workspace: controller.state.workspace,
+                      serverUri: controller.state.serverUri,
+                      streamAssistantContent:
+                          item.entry!.streamAssistantContent,
+                      turnDurationMs: turnDurationMs,
+                      showAssistantTextMeta:
+                          identical(item.entry, lastPlainTextEntry),
+                      onInsertPromptReference: onInsertPromptReference,
+                      onSendPromptReference: onSendPromptReference,
+                    ),
                 ],
-              ),
+              ],
             ),
           ),
         ),
@@ -894,6 +982,7 @@ class _MessageBubbleState extends State<_MessageBubble> {
   bool? _lastStreaming;
   int? _lastThemeKey;
   double? _lastBottomPadding;
+  int? _lastLayoutWidth;
 
   List<MessagePart>? _cachedPrimaryParts;
   List<MessagePart>? _cachedFooterParts;
@@ -902,13 +991,22 @@ class _MessageBubbleState extends State<_MessageBubble> {
   bool _turnDurationComputed = false;
 
   @override
+  void reassemble() {
+    _cached = null;
+    _lastLayoutWidth = null;
+    super.reassemble();
+  }
+
+  @override
   Widget build(BuildContext context) {
     final themeKey = context.themeCacheKey;
     final bundleSignature = _messageBundleVisualSignature(widget.bundle);
+    final layoutWidth = MediaQuery.of(context).size.width.round();
     if (_lastBundleSignature == bundleSignature &&
         widget.isStreamingAssistantMessage == _lastStreaming &&
         themeKey == _lastThemeKey &&
         widget.bottomPadding == _lastBottomPadding &&
+        _lastLayoutWidth == layoutWidth &&
         _cached != null) {
       return _cached!;
     }
@@ -919,6 +1017,7 @@ class _MessageBubbleState extends State<_MessageBubble> {
     _lastStreaming = widget.isStreamingAssistantMessage;
     _lastThemeKey = themeKey;
     _lastBottomPadding = widget.bottomPadding;
+    _lastLayoutWidth = layoutWidth;
     _cached = _buildContent(context);
     return _cached!;
   }
@@ -1032,12 +1131,12 @@ class _MessageBubbleState extends State<_MessageBubble> {
     return RepaintBoundary(
       child: Padding(
         padding: EdgeInsets.only(bottom: widget.bottomPadding),
-        child: Align(
-          alignment: isUser ? Alignment.centerRight : Alignment.centerLeft,
-          child: ConstrainedBox(
-            constraints: const BoxConstraints(maxWidth: 720),
-            child: _StreamingBubbleSize(
-              enabled: widget.isStreamingAssistantMessage && !isUser,
+        child: _MessageBubbleFrame(
+          isUser: isUser,
+          child: _StreamingBubbleSize(
+            enabled: widget.isStreamingAssistantMessage && !isUser,
+            child: SizedBox(
+              width: isUser ? null : double.infinity,
               child: Container(
                 padding: EdgeInsets.fromLTRB(
                   isUser ? 15 : 14,
@@ -1053,29 +1152,34 @@ class _MessageBubbleState extends State<_MessageBubble> {
                   accent: isUser,
                 ),
                 child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
                   children: [
-                    Row(
-                      mainAxisSize: MainAxisSize.min,
-                      children: [
-                        Text(
-                          label,
-                          style:
-                              Theme.of(context).textTheme.labelSmall?.copyWith(
-                                    fontWeight: FontWeight.w700,
-                                    color: oc.foregroundMuted,
-                                    letterSpacing: 0.2,
-                                  ),
-                        ),
-                        const SizedBox(width: 6),
-                        Text(
-                          _formatTimelineTimestamp(bundle.message.createdAt),
-                          style: Theme.of(context)
-                              .textTheme
-                              .labelSmall
-                              ?.copyWith(color: oc.foregroundFaint),
-                        ),
-                      ],
+                    Align(
+                      alignment: Alignment.centerLeft,
+                      child: Row(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          Text(
+                            label,
+                            style: Theme.of(context)
+                                .textTheme
+                                .labelSmall
+                                ?.copyWith(
+                                  fontWeight: FontWeight.w700,
+                                  color: oc.foregroundMuted,
+                                  letterSpacing: 0.2,
+                                ),
+                          ),
+                          const SizedBox(width: 6),
+                          Text(
+                            _formatTimelineTimestamp(bundle.message.createdAt),
+                            style: Theme.of(context)
+                                .textTheme
+                                .labelSmall
+                                ?.copyWith(color: oc.foregroundFaint),
+                          ),
+                        ],
+                      ),
                     ),
                     if (!hasCompaction && userText.isNotEmpty) ...[
                       const SizedBox(height: 8),
@@ -1110,7 +1214,10 @@ class _MessageBubbleState extends State<_MessageBubble> {
                     if (footerParts.isNotEmpty) ...[
                       const SizedBox(height: 10),
                       Divider(
-                          height: 1, thickness: 1, color: oc.softBorderColor),
+                        height: 1,
+                        thickness: 1,
+                        color: oc.softBorderColor,
+                      ),
                       const SizedBox(height: 8),
                       Text(
                         l(context, '文件引用', 'File references'),
