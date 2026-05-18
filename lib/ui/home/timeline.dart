@@ -117,8 +117,6 @@ String _formatTimelineTimestamp(int ms) {
 }
 
 const Duration _kStreamingBubbleResizeDuration = Duration(milliseconds: 160);
-final Map<String, double> _assistantTurnMeasuredHeights = <String, double>{};
-final Map<String, double> _contextGroupMeasuredHeights = <String, double>{};
 
 BoxDecoration _chatSurfaceDecoration(
   BuildContext context, {
@@ -250,7 +248,6 @@ class _StreamingBubbleSize extends StatelessWidget {
       child: _AssistantFillWidth(
         enabled: enabled,
         child: child,
-      ),
     );
   }
 }
@@ -679,7 +676,6 @@ class _AssistantTurnBubble extends StatelessWidget {
 
     final displayItems = _buildDisplayItems(visibleEntries);
     final firstBundle = bundles.first;
-    final turnId = bundles.map((bundle) => bundle.message.id).join('|');
     final turnDurationMs = _assistantTurnDurationMs(state, bundles.last);
     final compactionOnly = visibleEntries.length == 1 &&
         visibleEntries.first.part.type == PartType.compaction &&
@@ -710,30 +706,7 @@ class _AssistantTurnBubble extends StatelessWidget {
     }
 
     return RepaintBoundary(
-      child: _MeasuredSize(
-        onChanged: (size) {
-          final previous = _assistantTurnMeasuredHeights[turnId];
-          _assistantTurnMeasuredHeights[turnId] = size.height;
-          if (previous == null || (previous - size.height).abs() > 120) {
-            // #region agent log
-            _agentDebugLog(
-              'H37',
-              'lib/ui/home/timeline.dart:_AssistantTurnBubble',
-              'assistant turn height changed',
-              {
-                'turnId': turnId,
-                'height': size.height,
-                'previousHeight': previous,
-                'bundleCount': bundles.length,
-                'visibleEntryCount': visibleEntries.length,
-                'displayItemCount': displayItems.length,
-                'isStreamingTurn': isStreamingTurn,
-              },
-            );
-            // #endregion
-          }
-        },
-        child: _AssistantBubbleFrame(
+      child: _AssistantBubbleFrame(
           child: _StreamingBubbleSize(
             enabled: isStreamingTurn &&
                 !_hasLongStreamingTextParts(
@@ -810,7 +783,6 @@ class _AssistantTurnBubble extends StatelessWidget {
             ),
           ),
         ),
-      ),
     );
   }
 }
@@ -869,35 +841,12 @@ class _ContextToolGroupTileState extends State<_ContextToolGroupTile> {
   @override
   Widget build(BuildContext context) {
     final oc = context.oc;
-    final groupId = widget.entries.map((entry) => entry.part.id).join('|');
     final toolNames = widget.entries
         .map((entry) => _toolNameFromPart(entry.part))
         .where((name) => name.isNotEmpty)
         .toSet()
         .join(' · ');
-    return _MeasuredSize(
-      onChanged: (size) {
-        final previous = _contextGroupMeasuredHeights[groupId];
-        _contextGroupMeasuredHeights[groupId] = size.height;
-        if (previous == null || (previous - size.height).abs() > 120) {
-          // #region agent log
-          _agentDebugLog(
-            'H38',
-            'lib/ui/home/timeline.dart:_ContextToolGroupTile',
-            'context group height changed',
-            {
-              'groupId': groupId,
-              'height': size.height,
-              'previousHeight': previous,
-              'entryCount': widget.entries.length,
-              'expanded': _expanded,
-              'userToggled': _userToggled,
-            },
-          );
-          // #endregion
-        }
-      },
-      child: Container(
+    return Container(
         width: double.infinity,
         decoration: _panelDecoration(context,
             background: oc.composerOptionBg, radius: 14, elevated: false),
@@ -992,7 +941,9 @@ class _ContextToolGroupTileState extends State<_ContextToolGroupTile> {
                       Padding(
                         padding: const EdgeInsets.fromLTRB(12, 10, 12, 38),
                         child: _DeferredHeavyContent(
-                          cacheKey: groupId,
+                          cacheKey: widget.entries
+                              .map((entry) => entry.part.id)
+                              .join('|'),
                           builder: (context) => Column(
                             crossAxisAlignment: CrossAxisAlignment.stretch,
                             children: [
