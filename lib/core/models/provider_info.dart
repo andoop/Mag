@@ -403,6 +403,90 @@ class ProviderListResponse {
       );
 }
 
+String catalogProviderIdForConnection(String providerId) {
+  if (providerId == 'mag') return 'opencode';
+  if (providerId == 'alibaba-cn') return 'qwen';
+  return providerId;
+}
+
+ProviderInfo? findCatalogProviderForConnection({
+  required List<ProviderInfo> catalog,
+  required String providerId,
+}) {
+  final preferredId = catalogProviderIdForConnection(providerId);
+  for (final provider in catalog) {
+    if (provider.id == preferredId) return provider;
+  }
+  if (preferredId != providerId) {
+    for (final provider in catalog) {
+      if (provider.id == providerId) return provider;
+    }
+  }
+  return null;
+}
+
+ProviderModelInfo? findCatalogModelForConnection({
+  required List<ProviderInfo> catalog,
+  required String providerId,
+  required String modelId,
+}) {
+  final provider = findCatalogProviderForConnection(
+    catalog: catalog,
+    providerId: providerId,
+  );
+  if (provider == null) return null;
+  return provider.models[modelId] ??
+      provider.models.values.cast<ProviderModelInfo?>().firstWhere(
+            (model) => model?.id.startsWith(modelId) ?? false,
+            orElse: () => null,
+          );
+}
+
+bool isProviderModelFree(ProviderModelInfo model) {
+  return model.cost.input == 0;
+}
+
+List<String> freeCatalogModelIdsForProvider(ProviderInfo provider) {
+  final ids = provider.models.values
+      .where(isProviderModelFree)
+      .map((model) => model.id)
+      .where((id) => id.trim().isNotEmpty)
+      .toSet()
+      .toList();
+  ids.sort();
+  return ids;
+}
+
+bool isProviderListModelFree({
+  required ProviderListResponse? providerList,
+  required String providerId,
+  required String modelId,
+}) {
+  final provider = providerList?.all.cast<ProviderInfo?>().firstWhere(
+        (item) => item?.id == providerId,
+        orElse: () => null,
+      );
+  final model = provider?.models[modelId];
+  if (model != null) return isProviderModelFree(model);
+  if (providerId == 'mag') return isMagZenFreeModelId(modelId);
+  return false;
+}
+
+bool isCatalogModelFree({
+  required List<ProviderInfo> catalog,
+  required String providerId,
+  required String modelId,
+}) {
+  final model = findCatalogModelForConnection(
+    catalog: catalog,
+    providerId: providerId,
+    modelId: modelId,
+  );
+  if (model != null) return isProviderModelFree(model);
+  if (providerId == 'mag') return isMagZenFreeModelId(modelId);
+  return false;
+}
+
 ProviderListResponse buildProviderListResponse({
   required List<ProviderInfo> catalog,
   required ModelConfig config,
@@ -412,13 +496,41 @@ ProviderListResponse buildProviderListResponse({
   };
   final connected = <String, ProviderInfo>{};
   for (final connection in config.connections) {
-    final existing = catalogMap[connection.id];
-    final models = <String, ProviderModelInfo>{
+    final existing = findCatalogProviderForConnection(
+      catalog: catalog,
+      providerId: connection.id,
+    );
+    final hasKey = connection.apiKey.trim().isNotEmpty;
+    var models = <String, ProviderModelInfo>{
       ...?existing?.models,
     };
-    final modelIds = connection.id == 'mag'
-        ? filterMagZenFreeModels(connection.models)
-        : connection.models;
+    var modelIds = normalizeProviderModelIds(connection.models);
+    if (connection.id == 'mag') {
+      if (!hasKey) {
+        models = {
+          for (final entry in models.entries)
+            if (isProviderModelFree(entry.value)) entry.key: entry.value,
+        };
+        final freeIds = freeCatalogModelIdsForProvider(
+          existing ??
+              ProviderInfo(
+                id: connection.id,
+                name: connection.name,
+                models: models,
+              ),
+        );
+        modelIds = freeIds.isNotEmpty
+            ? freeIds
+            : existing == null
+                ? filterMagZenFreeModels(connection.models)
+                : const <String>[];
+      } else if (models.isNotEmpty) {
+        modelIds = normalizeProviderModelIds({
+          ...models.keys,
+          ...modelIds,
+        });
+      }
+    }
     for (final modelId in modelIds) {
       models.putIfAbsent(
         modelId,
@@ -442,6 +554,7 @@ ProviderListResponse buildProviderListResponse({
               custom: connection.custom,
             ))
         .copyWith(
+      id: connection.id,
       name: connection.name.isNotEmpty
           ? connection.name
           : (existing?.name ?? connection.id),
@@ -853,26 +966,36 @@ class ProviderCatalogModelMatch {
     required this.source,
     this.matchedProviderId,
     this.matchedModelId,
+    this.catalogModel,
   });
 
   final String source;
   final String? matchedProviderId;
   final String? matchedModelId;
+  final ProviderModelInfo? catalogModel;
+
+  bool get fromCatalog => source == 'catalog';
 }
 
 ProviderCatalogModelMatch resolveCatalogModelMatch({
   required List<ProviderInfo> catalog,
-  required String providerId,
+  String? providerId,
+  ProviderConnection? connection,
   required String modelId,
 }) {
-  final catalogProvider = catalog.cast<ProviderInfo?>().firstWhere(
-        (provider) => provider?.id == providerId,
-        orElse: () => null,
-      );
+  final resolvedProviderId = providerId ?? connection?.id ?? '';
+  final catalogProvider = findCatalogProviderForConnection(
+    catalog: catalog,
+    providerId: resolvedProviderId,
+  );
   if (catalogProvider == null) {
     return const ProviderCatalogModelMatch(source: 'fallback');
   }
-  final catalogModel = catalogProvider.models[modelId];
+  final catalogModel = findCatalogModelForConnection(
+    catalog: catalog,
+    providerId: resolvedProviderId,
+    modelId: modelId,
+  );
   if (catalogModel == null) {
     return ProviderCatalogModelMatch(
       source: 'fallback',
@@ -883,6 +1006,7 @@ ProviderCatalogModelMatch resolveCatalogModelMatch({
     source: 'catalog',
     matchedProviderId: catalogProvider.id,
     matchedModelId: catalogModel.id,
+    catalogModel: catalogModel,
   );
 }
 
@@ -902,11 +1026,11 @@ ProviderModelLimit resolveProviderModelLimit({
   required String modelId,
 }) {
   if (catalog.isNotEmpty) {
-    final provider = catalog.cast<ProviderInfo?>().firstWhere(
-          (item) => item?.id == providerId,
-          orElse: () => null,
-        );
-    final model = provider?.models[modelId];
+    final model = findCatalogModelForConnection(
+      catalog: catalog,
+      providerId: providerId,
+      modelId: modelId,
+    );
     if (model != null) return model.limit;
   }
   return inferProviderModelLimitFallback(modelId);
@@ -918,11 +1042,12 @@ ProviderModelModalities? lookupProviderModelModalitiesInCatalog({
   required String modelId,
 }) {
   if (catalog.isEmpty) return null;
-  final provider = catalog.cast<ProviderInfo?>().firstWhere(
-        (item) => item?.id == providerId,
-        orElse: () => null,
-      );
-  return provider?.models[modelId]?.modalities;
+  final model = findCatalogModelForConnection(
+    catalog: catalog,
+    providerId: providerId,
+    modelId: modelId,
+  );
+  return model?.modalities;
 }
 
 ProviderModelCapabilities? lookupProviderModelCapabilitiesInCatalog({
@@ -931,11 +1056,12 @@ ProviderModelCapabilities? lookupProviderModelCapabilitiesInCatalog({
   required String modelId,
 }) {
   if (catalog.isEmpty) return null;
-  final provider = catalog.cast<ProviderInfo?>().firstWhere(
-        (item) => item?.id == providerId,
-        orElse: () => null,
-      );
-  return provider?.models[modelId]?.capabilities;
+  final model = findCatalogModelForConnection(
+    catalog: catalog,
+    providerId: providerId,
+    modelId: modelId,
+  );
+  return model?.capabilities;
 }
 
 JsonMap? lookupProviderModelOptionsInCatalog({
@@ -944,11 +1070,12 @@ JsonMap? lookupProviderModelOptionsInCatalog({
   required String modelId,
 }) {
   if (catalog.isEmpty) return null;
-  final provider = catalog.cast<ProviderInfo?>().firstWhere(
-        (item) => item?.id == providerId,
-        orElse: () => null,
-      );
-  final options = provider?.models[modelId]?.options;
+  final model = findCatalogModelForConnection(
+    catalog: catalog,
+    providerId: providerId,
+    modelId: modelId,
+  );
+  final options = model?.options;
   return options == null ? null : Map<String, dynamic>.from(options);
 }
 
@@ -958,11 +1085,12 @@ Map<String, JsonMap>? lookupProviderModelVariantsInCatalog({
   required String modelId,
 }) {
   if (catalog.isEmpty) return null;
-  final provider = catalog.cast<ProviderInfo?>().firstWhere(
-        (item) => item?.id == providerId,
-        orElse: () => null,
-      );
-  final variants = provider?.models[modelId]?.variants;
+  final model = findCatalogModelForConnection(
+    catalog: catalog,
+    providerId: providerId,
+    modelId: modelId,
+  );
+  final variants = model?.variants;
   return variants?.map(
     (key, value) => MapEntry(key, Map<String, dynamic>.from(value)),
   );

@@ -20,6 +20,11 @@ bool _browserPathLooksPdf(String path) {
   return lower.endsWith('.pdf');
 }
 
+bool _pathLooksSvgFile(String path) {
+  final lower = path.toLowerCase();
+  return lower.endsWith('.svg');
+}
+
 bool _browserPathLooksImage(String path) {
   final lower = path.toLowerCase();
   return lower.endsWith('.png') ||
@@ -31,8 +36,14 @@ bool _browserPathLooksImage(String path) {
       lower.endsWith('.avif');
 }
 
+bool _browserEntryLooksSvg(WorkspaceEntry e) {
+  final m = e.mimeType?.toLowerCase() ?? '';
+  return m == 'image/svg+xml' || _pathLooksSvgFile(e.path);
+}
+
 bool _browserEntryLooksImage(WorkspaceEntry e) {
   final m = e.mimeType?.toLowerCase() ?? '';
+  if (_browserEntryLooksSvg(e)) return false;
   if (m.startsWith('image/')) return true;
   return _browserPathLooksImage(e.path);
 }
@@ -187,6 +198,19 @@ void _openBrowserFile(
             treeUri: workspace.treeUri,
             relativePath: path,
           ),
+        ),
+      ),
+    );
+    return;
+  }
+  if (_browserEntryLooksSvg(entry)) {
+    Navigator.of(context).push<void>(
+      MaterialPageRoute<void>(
+        builder: (ctx) => _WorkspaceSvgPreviewPage(
+          filename: entry.name,
+          controller: controller,
+          treeUri: workspace.treeUri,
+          relativePath: path,
         ),
       ),
     );
@@ -686,6 +710,92 @@ void _showWorkspaceEntryMoreMenu(
       );
     },
   );
+}
+
+class _WorkspaceSvgPreviewPage extends StatelessWidget {
+  const _WorkspaceSvgPreviewPage({
+    required this.filename,
+    required this.controller,
+    required this.treeUri,
+    required this.relativePath,
+  });
+
+  final String filename;
+  final AppController controller;
+  final String treeUri;
+  final String relativePath;
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      appBar: AppBar(
+        title: Text(
+          filename,
+          maxLines: 1,
+          overflow: TextOverflow.ellipsis,
+        ),
+      ),
+      body: FutureBuilder<String>(
+        future: controller.loadWorkspaceText(
+          treeUri: treeUri,
+          relativePath: relativePath,
+        ),
+        builder: (context, snapshot) {
+          if (snapshot.connectionState != ConnectionState.done) {
+            return const Center(
+              child: SizedBox(
+                width: 160,
+                child: LinearProgressIndicator(minHeight: 3),
+              ),
+            );
+          }
+          if (snapshot.hasError ||
+              !snapshot.hasData ||
+              snapshot.data!.trim().isEmpty) {
+            return Center(
+              child: Padding(
+                padding: const EdgeInsets.all(24),
+                child: Text(
+                  l(context, 'SVG 预览加载失败', 'Failed to load SVG preview'),
+                  textAlign: TextAlign.center,
+                ),
+              ),
+            );
+          }
+          return LayoutBuilder(
+            builder: (context, constraints) {
+              final canvasWidth =
+                  constraints.maxWidth < 320 ? 320.0 : constraints.maxWidth;
+              final canvasHeight =
+                  constraints.maxHeight < 320 ? 320.0 : constraints.maxHeight;
+              return InteractiveViewer(
+                minScale: 0.25,
+                maxScale: 8,
+                child: SizedBox(
+                  width: canvasWidth,
+                  height: canvasHeight,
+                  child: Center(
+                    child: Padding(
+                      padding: const EdgeInsets.all(20),
+                      child: SvgPicture.string(
+                        snapshot.data!,
+                        fit: BoxFit.contain,
+                        placeholderBuilder: (context) => const SizedBox(
+                          width: 24,
+                          height: 24,
+                          child: CircularProgressIndicator(strokeWidth: 2),
+                        ),
+                      ),
+                    ),
+                  ),
+                ),
+              );
+            },
+          );
+        },
+      ),
+    );
+  }
 }
 
 class _WorkspaceImagePreviewPage extends StatelessWidget {

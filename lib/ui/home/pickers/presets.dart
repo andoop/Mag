@@ -52,7 +52,6 @@ class _ProviderModelGroup {
   final List<_ModelChoice> models;
 }
 
-
 const Map<String, String> _schemaTemplateLabels = {
   'answer': 'Answer',
   'summary': 'Summary',
@@ -482,9 +481,7 @@ _ProviderPreset _presetFromProviderInfo(ProviderInfo provider) {
     id: provider.id,
     name: provider.name,
     baseUrl: provider.api ?? (_builtinProviderById(provider.id)?.baseUrl ?? ''),
-    note: provider.custom
-        ? 'Custom OpenAI-compatible endpoint.'
-        : envSummary,
+    note: provider.custom ? 'Custom OpenAI-compatible endpoint.' : envSummary,
     custom: provider.custom,
     recommended: _providerSortRank(provider.id) < 4,
     popular: _providerSortRank(provider.id) < 999,
@@ -499,7 +496,8 @@ List<_ProviderPreset> _allProviderPresets({
   final source = providerList ?? _providerListForState(state);
   return source.all.map(_presetFromProviderInfo).toList()
     ..sort((a, b) {
-      final rankCompare = _providerSortRank(a.id).compareTo(_providerSortRank(b.id));
+      final rankCompare =
+          _providerSortRank(a.id).compareTo(_providerSortRank(b.id));
       if (rankCompare != 0) return rankCompare;
       return a.name.toLowerCase().compareTo(b.name.toLowerCase());
     });
@@ -517,7 +515,8 @@ List<_ProviderPreset> _connectedProviderPresets(
       .map(_presetFromProviderInfo)
       .toList()
     ..sort((a, b) {
-      final rankCompare = _providerSortRank(a.id).compareTo(_providerSortRank(b.id));
+      final rankCompare =
+          _providerSortRank(a.id).compareTo(_providerSortRank(b.id));
       if (rankCompare != 0) return rankCompare;
       return a.name.toLowerCase().compareTo(b.name.toLowerCase());
     });
@@ -575,9 +574,8 @@ String _modelDisplayName(String id) {
   if (normalized.isEmpty) return id;
   return normalized
       .split(RegExp(r'\s+'))
-      .map((part) => part.isEmpty
-          ? part
-          : '${part[0].toUpperCase()}${part.substring(1)}')
+      .map((part) =>
+          part.isEmpty ? part : '${part[0].toUpperCase()}${part.substring(1)}')
       .join(' ');
 }
 
@@ -611,10 +609,22 @@ List<_ModelChoice> _modelsForProvider(
   final source = providerList ?? _providerListForState(state);
   final provider = _providerInfoById(providerId, providerList: source);
   final connection = config?.connectionFor(providerId);
+  if (providerId == 'mag' && provider != null && provider.models.isNotEmpty) {
+    final latestIds = _latestModelIdsForProvider(provider);
+    return sortProviderModels(provider.models.values)
+        .map(
+          (model) => _modelChoiceFromProviderModel(
+            providerId: providerId,
+            id: model.id,
+            info: model,
+            latestIds: latestIds,
+          ),
+        )
+        .whereType<_ModelChoice>()
+        .toList();
+  }
   if (connection != null && connection.models.isNotEmpty) {
-    final ids = providerId == 'mag'
-        ? filterMagZenFreeModels(connection.models)
-        : connection.models;
+    final ids = connection.models;
     final latestIds =
         provider != null ? _latestModelIdsForProvider(provider) : <String>{};
     return ids
@@ -651,9 +661,11 @@ _ModelChoice? _modelChoiceFromProviderModel({
     name: info.name.replaceAll('(latest)', '').trim(),
     latest: latestIds.contains(id) || info.name.contains('(latest)'),
     free: providerId == 'mag'
-        ? isMagZenFreeModelId(id)
+        ? isProviderModelFree(info)
         : (info.cost.input == 0 &&
-            (id.contains(':free') || id.endsWith('-free') || id.contains('/free'))),
+            (id.contains(':free') ||
+                id.endsWith('-free') ||
+                id.contains('/free'))),
   );
 }
 
@@ -689,9 +701,7 @@ List<_ProviderModelGroup> _connectedModelGroups(
       config: config,
       state: state,
       providerList: providerList,
-    )
-        .where((item) => !onlyVisible || _isModelVisible(config, item))
-        .toList()
+    ).where((item) => !onlyVisible || _isModelVisible(config, item)).toList()
       ..sort((a, b) => _compareModelChoicesForState(a, b, state));
     if (models.isEmpty) continue;
     groups.add(_ProviderModelGroup(provider: provider, models: models));
@@ -699,7 +709,8 @@ List<_ProviderModelGroup> _connectedModelGroups(
   return groups;
 }
 
-int _compareModelChoicesForState(_ModelChoice a, _ModelChoice b, AppState state) {
+int _compareModelChoicesForState(
+    _ModelChoice a, _ModelChoice b, AppState state) {
   final current = state.modelConfig ?? ModelConfig.defaults();
   final recentOrder = <String, int>{};
   for (var i = 0; i < state.recentModelKeys.length; i++) {
@@ -755,9 +766,7 @@ bool _modelChoiceIsFree(_ModelChoice item) {
   if (item.free || item.unpaid) return true;
   if (item.providerId == 'mag') return isMagZenFreeModelId(item.id);
   final id = item.id.toLowerCase();
-  if (id.endsWith('-free') ||
-      id.contains(':free') ||
-      id.contains('/free')) {
+  if (id.endsWith('-free') || id.contains(':free') || id.contains('/free')) {
     return true;
   }
   return false;

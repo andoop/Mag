@@ -3,6 +3,7 @@ library home_page;
 import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
+import 'dart:math' as math;
 
 import 'package:flutter/material.dart';
 import 'package:flutter_highlight/flutter_highlight.dart';
@@ -10,6 +11,7 @@ import 'package:flutter_highlight/themes/github.dart';
 import 'package:flutter_highlight/themes/atom-one-dark.dart';
 import 'package:flutter_markdown/flutter_markdown.dart';
 import 'package:flutter/rendering.dart';
+import 'package:flutter_svg/flutter_svg.dart';
 import 'package:markdown/markdown.dart' as md;
 import 'package:pdfx/pdfx.dart';
 import 'package:flutter/services.dart';
@@ -863,7 +865,9 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
       providerId: preset.id,
       baseUrl: baseUrl,
       apiKey: apiKey,
-      usePublicToken: !preset.requiresApiKey && preset.id.startsWith('mag'),
+      usePublicToken: !preset.requiresApiKey &&
+          preset.id.startsWith('mag') &&
+          apiKey.trim().isEmpty,
     );
     final selectedModel = models.isNotEmpty
         ? models.first

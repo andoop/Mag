@@ -337,7 +337,6 @@ extension _HomePageTimeline on _HomePageState {
     AppState state,
     List<_TimelineTurnEntry> renderedEntries,
   ) {
-    final showGlobalRunningIndicator = state.isBusy && renderedEntries.isEmpty;
     var count = 2;
     if (state.todos.isNotEmpty) {
       count += 2;
@@ -353,8 +352,8 @@ extension _HomePageTimeline on _HomePageState {
     if (state.error != null && !state.isBusy) {
       count += 1;
     }
-    if (showGlobalRunningIndicator) {
-      count += 2;
+    if (state.isBusy) {
+      count += 1;
     }
     count += 1;
     return count;
@@ -449,10 +448,7 @@ extension _HomePageTimeline on _HomePageState {
         );
       }
     }
-    if (state.isBusy && renderedEntries.isEmpty) {
-      if (index == cursor++) {
-        return const SizedBox(height: 8);
-      }
+    if (state.isBusy) {
       if (index == cursor++) {
         return const _RunningIndicator();
       }
@@ -713,71 +709,84 @@ class _AssistantTurnBubble extends StatelessWidget {
                 visibleEntries.map((entry) => entry.part),
               ),
           child: Container(
-            padding: const EdgeInsets.fromLTRB(14, 12, 14, 13),
             decoration: _chatSurfaceDecoration(
               context,
               color: oc.agentBubble,
               radius: 24,
             ),
+            clipBehavior: Clip.antiAlias,
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.stretch,
               children: [
-                Align(
-                  alignment: Alignment.centerLeft,
-                  child: Row(
-                    mainAxisSize: MainAxisSize.min,
+                Padding(
+                  padding: EdgeInsets.fromLTRB(
+                      14, 12, 14, isStreamingTurn ? 10 : 13),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.stretch,
                     children: [
-                      Text(
-                        firstBundle.message.agent,
-                        style: Theme.of(context).textTheme.labelSmall?.copyWith(
-                              fontWeight: FontWeight.w700,
-                              color: oc.foregroundMuted,
-                              letterSpacing: 0.2,
+                      Align(
+                        alignment: Alignment.centerLeft,
+                        child: Row(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            Text(
+                              firstBundle.message.agent,
+                              style: Theme.of(context)
+                                  .textTheme
+                                  .labelSmall
+                                  ?.copyWith(
+                                    fontWeight: FontWeight.w700,
+                                    color: oc.foregroundMuted,
+                                    letterSpacing: 0.2,
+                                  ),
                             ),
+                            const SizedBox(width: 6),
+                            Text(
+                              _formatTimelineTimestamp(
+                                  firstBundle.message.createdAt),
+                              style: Theme.of(context)
+                                  .textTheme
+                                  .labelSmall
+                                  ?.copyWith(color: oc.foregroundFaint),
+                            ),
+                          ],
+                        ),
                       ),
-                      const SizedBox(width: 6),
-                      Text(
-                        _formatTimelineTimestamp(firstBundle.message.createdAt),
-                        style: Theme.of(context)
-                            .textTheme
-                            .labelSmall
-                            ?.copyWith(color: oc.foregroundFaint),
-                      ),
+                      for (final item in displayItems) ...[
+                        const SizedBox(height: 10),
+                        if (item.isContextGroup)
+                          _ContextToolGroupTile(
+                            key: ValueKey<String>(
+                              'context-${item.entries.first.part.id}-${item.entries.last.part.id}',
+                            ),
+                            entries: item.entries,
+                            controller: controller,
+                            workspace: controller.state.workspace,
+                            serverUri: controller.state.serverUri,
+                            onInsertPromptReference: onInsertPromptReference,
+                            onSendPromptReference: onSendPromptReference,
+                          )
+                        else
+                          _CachedPartTile(
+                            key: ValueKey<String>(
+                                'assistant-part-${item.entry!.part.id}'),
+                            part: item.entry!.part,
+                            message: item.entry!.bundle.message,
+                            controller: controller,
+                            workspace: controller.state.workspace,
+                            serverUri: controller.state.serverUri,
+                            streamAssistantContent:
+                                item.entry!.streamAssistantContent,
+                            turnDurationMs: turnDurationMs,
+                            showAssistantTextMeta:
+                                identical(item.entry, lastPlainTextEntry),
+                            onInsertPromptReference: onInsertPromptReference,
+                            onSendPromptReference: onSendPromptReference,
+                          ),
+                      ],
                     ],
                   ),
                 ),
-                for (final item in displayItems) ...[
-                  const SizedBox(height: 10),
-                  if (item.isContextGroup)
-                    _ContextToolGroupTile(
-                      key: ValueKey<String>(
-                        'context-${item.entries.first.part.id}-${item.entries.last.part.id}',
-                      ),
-                      entries: item.entries,
-                      controller: controller,
-                      workspace: controller.state.workspace,
-                      serverUri: controller.state.serverUri,
-                      onInsertPromptReference: onInsertPromptReference,
-                      onSendPromptReference: onSendPromptReference,
-                    )
-                  else
-                    _CachedPartTile(
-                      key: ValueKey<String>(
-                          'assistant-part-${item.entry!.part.id}'),
-                      part: item.entry!.part,
-                      message: item.entry!.bundle.message,
-                      controller: controller,
-                      workspace: controller.state.workspace,
-                      serverUri: controller.state.serverUri,
-                      streamAssistantContent:
-                          item.entry!.streamAssistantContent,
-                      turnDurationMs: turnDurationMs,
-                      showAssistantTextMeta:
-                          identical(item.entry, lastPlainTextEntry),
-                      onInsertPromptReference: onInsertPromptReference,
-                      onSendPromptReference: onSendPromptReference,
-                    ),
-                ],
               ],
             ),
           ),
@@ -1760,32 +1769,88 @@ class _EmptyTimelineCard extends StatelessWidget {
   }
 }
 
-class _RunningIndicator extends StatelessWidget {
+class _RunningIndicator extends StatefulWidget {
   const _RunningIndicator();
+
+  @override
+  State<_RunningIndicator> createState() => _RunningIndicatorState();
+}
+
+class _RunningIndicatorState extends State<_RunningIndicator>
+    with SingleTickerProviderStateMixin {
+  late final AnimationController _controller = AnimationController(
+    vsync: this,
+    duration: const Duration(milliseconds: 1200),
+  )..repeat();
+
+  @override
+  void dispose() {
+    _controller.dispose();
+    super.dispose();
+  }
 
   @override
   Widget build(BuildContext context) {
     final oc = context.oc;
-    return Align(
-      alignment: Alignment.centerLeft,
-      child: Container(
-        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 9),
-        decoration: BoxDecoration(
-          color: oc.mutedPanel,
-          borderRadius: BorderRadius.circular(999),
-          border: Border.fromBorderSide(BorderSide(color: oc.borderColor)),
-        ),
-        child: Row(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            const SizedBox(
-              width: 14,
-              height: 14,
-              child: CircularProgressIndicator(strokeWidth: 2),
+    final dark = context.isDarkMode;
+    return Padding(
+      padding: const EdgeInsets.only(top: 8, bottom: 2),
+      child: _AssistantBubbleFrame(
+        child: Align(
+          alignment: Alignment.centerLeft,
+          child: Container(
+            width: 44,
+            height: 22,
+            padding: const EdgeInsets.symmetric(horizontal: 9, vertical: 6),
+            decoration: BoxDecoration(
+              color: oc.mutedPanel.withOpacity(dark ? 0.9 : 0.92),
+              borderRadius: BorderRadius.circular(13),
+              border: Border.all(color: oc.softBorderColor),
+              boxShadow: [
+                BoxShadow(
+                  color: oc.shadow.withOpacity(dark ? 0.55 : 0.8),
+                  blurRadius: 8,
+                  spreadRadius: -6,
+                  offset: const Offset(0, 3),
+                ),
+              ],
             ),
-            const SizedBox(width: 8),
-            Text(l(context, '运行中', 'Running')),
-          ],
+            child: AnimatedBuilder(
+              animation: _controller,
+              builder: (context, _) {
+                final t = _controller.value * math.pi * 2;
+                return Row(
+                  mainAxisAlignment: MainAxisAlignment.center,
+                  crossAxisAlignment: CrossAxisAlignment.center,
+                  children: List<Widget>.generate(3, (index) {
+                    final phase = t + index * 0.55;
+                    final value = 0.5 + 0.5 * math.sin(phase);
+                    final scale = 0.76 + value * 0.28;
+                    final opacity = 0.20 + value * 0.55;
+                    return Container(
+                      width: 4,
+                      height: 4,
+                      margin: EdgeInsets.only(right: index == 2 ? 0 : 4),
+                      decoration: BoxDecoration(
+                        borderRadius: BorderRadius.circular(999),
+                        color: oc.foregroundMuted.withOpacity(opacity),
+                        boxShadow: [
+                          BoxShadow(
+                            color: oc.foregroundFaint.withOpacity(
+                              (dark ? 0.18 : 0.10) * value,
+                            ),
+                            blurRadius: 5,
+                            spreadRadius: -4,
+                          ),
+                        ],
+                      ),
+                      transform: Matrix4.identity()..scale(scale, scale),
+                    );
+                  }),
+                );
+              },
+            ),
+          ),
         ),
       ),
     );

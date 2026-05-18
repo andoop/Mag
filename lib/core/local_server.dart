@@ -118,12 +118,12 @@ class LocalServer {
           config: config,
         );
         for (final connection in config.connections) {
-          final modelIds = connection.id == 'mag'
-              ? filterMagZenFreeModels(connection.models)
-              : connection.models;
           final provider = response.all.cast<ProviderInfo?>().firstWhere(
-              (item) => item?.id == connection.id,
-              orElse: () => null);
+                (item) => item?.id == connection.id,
+                orElse: () => null,
+              );
+          final modelIds = provider?.models.keys.toList() ??
+              normalizeProviderModelIds(connection.models);
           for (final modelId in modelIds) {
             final match = resolveCatalogModelMatch(
               catalog: catalog,

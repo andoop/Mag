@@ -152,6 +152,18 @@ Future<void> _openFilePreview(
       url: previewUrl.toString(),
     );
   }
+  if (_pathLooksSvgFile(path)) {
+    return Navigator.of(context).push<void>(
+      MaterialPageRoute<void>(
+        builder: (ctx) => _WorkspaceSvgPreviewPage(
+          filename: p.basename(path),
+          controller: controller,
+          treeUri: workspace.treeUri,
+          relativePath: path,
+        ),
+      ),
+    );
+  }
   return Navigator.of(context).push<void>(
     MaterialPageRoute<void>(
       builder: (ctx) => _FilePreviewSheet(

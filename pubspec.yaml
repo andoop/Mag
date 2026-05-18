@@ -53,6 +53,7 @@ dependencies:
   share_plus: ^6.2.1
   archive: ^3.4.10
   qr: ^3.0.1
+  flutter_svg: ^2.0.5
 
 dev_dependencies:
   flutter_test:

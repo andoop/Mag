@@ -12,7 +12,7 @@ class ProviderDiscoveryException implements Exception {
 
 extension AppControllerProvider on AppController {
   Future<void> saveModelConfig(ModelConfig config) async {
-    final normalized = normalizeMagFreeModelsOnly(config);
+    final normalized = normalizeProviderConnectionModels(config);
     await _client!.saveModelConfig(normalized);
     final providerList = await _client!.listProviders();
     final providerAuth = await _client!.listProviderAuth();
@@ -117,18 +117,7 @@ extension AppControllerProvider on AppController {
     final config = state.modelConfig ?? ModelConfig.defaults();
     final connection = config.connectionFor(providerId);
     if (connection == null) return;
-    var nextModels = models;
-    if (providerId == 'mag') {
-      nextModels = filterMagZenFreeModels(models);
-      if (nextModels.isEmpty) {
-        nextModels = List<String>.from(
-          ModelConfig.defaults()
-              .connections
-              .firstWhere((c) => c.id == 'mag')
-              .models,
-        );
-      }
-    }
+    final nextModels = normalizeProviderModelIds(models);
     final nextConnections = [
       for (final item in config.connections)
         if (item.id == providerId) item.copyWith(models: nextModels) else item,
@@ -356,7 +345,25 @@ extension AppControllerProvider on AppController {
         headers: headers,
       );
       if (providerId == 'mag') {
-        final filtered = filterMagZenFreeModels(ids);
+        if (!usePublicToken) {
+          if (ids.isEmpty) {
+            throw ProviderDiscoveryException(
+              'Connected successfully, but the provider returned no models.',
+            );
+          }
+          return ids;
+        }
+        final provider =
+            state.providerList?.all.cast<ProviderInfo?>().firstWhere(
+                  (item) => item?.id == providerId,
+                  orElse: () => null,
+                );
+        final freeIds = provider == null
+            ? const <String>[]
+            : freeCatalogModelIdsForProvider(provider).toSet();
+        final filtered = usePublicToken && freeIds.isNotEmpty
+            ? (ids.where(freeIds.contains).toList()..sort())
+            : filterMagZenFreeModels(ids);
         if (filtered.isEmpty) {
           throw ProviderDiscoveryException(
             'Connected successfully, but no supported models were returned.',

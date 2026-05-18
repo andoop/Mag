@@ -39,9 +39,8 @@ List<String> _defaultConnectedModelsForProvider(String providerId) {
   switch (providerId) {
     case 'mag':
       return const [
+        'deepseek-v4-flash-free',
         'minimax-m2.5-free',
-        'mimo-v2-pro-free',
-        'mimo-v2-omni-free',
         'nemotron-3-super-free',
         'big-pickle',
       ];
@@ -50,7 +49,7 @@ List<String> _defaultConnectedModelsForProvider(String providerId) {
   }
 }
 
-/// Mag Zen 免费模型：`-free` 后缀或 `big-pickle`（与 [ModelConfig.isMagZenFreeModel] 一致）。
+/// Mag Zen 免费模型的本地兜底判定。优先使用 models.dev 的 cost 元数据。
 bool isMagZenFreeModelId(String modelId) {
   final m = modelId.trim().toLowerCase();
   if (m.endsWith('-free')) return true;
@@ -65,24 +64,26 @@ List<String> filterMagZenFreeModels(Iterable<String> models) {
   return filtered;
 }
 
-/// Mag 连接里只保留免费模型；当前选中非免费时回退到默认免费模型。
-ModelConfig normalizeMagFreeModelsOnly(ModelConfig config) {
+List<String> normalizeProviderModelIds(Iterable<String> models) {
+  final normalized = models
+      .map((e) => e.trim())
+      .where((item) => item.isNotEmpty)
+      .toSet()
+      .toList();
+  normalized.sort();
+  return normalized;
+}
+
+/// 清理连接里的模型列表；Mag 免费/付费可见性由 catalog cost 动态决定。
+ModelConfig normalizeProviderConnectionModels(ModelConfig config) {
   final nextConnections = config.connections.map((c) {
-    if (c.id != 'mag') return c;
-    final m = filterMagZenFreeModels(c.models);
+    final m = normalizeProviderModelIds(c.models);
     return c.copyWith(
-      models: m.isEmpty ? _defaultConnectedModelsForProvider('mag') : m,
+      models: m.isEmpty ? _defaultConnectedModelsForProvider(c.id) : m,
     );
   }).toList();
-  var modelId = config.currentModelId;
-  if (config.currentProviderId == 'mag' && !isMagZenFreeModelId(modelId)) {
-    modelId = _defaultConnectedModelsForProvider('mag').first;
-  }
   return config.copyWith(
     connections: nextConnections,
-    currentModelId: modelId,
-    currentModelLimit:
-        modelId == config.currentModelId ? config.currentModelLimit : null,
   );
 }
 
@@ -136,11 +137,9 @@ class ProviderConnection {
         .map((item) => item.toString())
         .where((item) => item.trim().isNotEmpty)
         .toList();
-    if (id == 'mag') {
-      models = filterMagZenFreeModels(models);
-      if (models.isEmpty) {
-        models = _defaultConnectedModelsForProvider('mag');
-      }
+    models = normalizeProviderModelIds(models);
+    if (models.isEmpty) {
+      models = _defaultConnectedModelsForProvider(id);
     }
     return ProviderConnection(
       id: id,
@@ -351,8 +350,7 @@ class ModelConfig {
     return false;
   }
 
-  bool get usesMagPublicToken =>
-      isMagProvider && (apiKey.trim().isEmpty || isMagZenFreeModel);
+  bool get usesMagPublicToken => isMagProvider && apiKey.trim().isEmpty;
 
   ModelVisibility? visibilityFor({
     required String providerId,
@@ -403,7 +401,7 @@ class ModelConfig {
           .map((item) => ModelVisibilityRule.fromJson(
               Map<String, dynamic>.from(item as Map)))
           .toList();
-      return normalizeMagFreeModelsOnly(ModelConfig(
+      return normalizeProviderConnectionModels(ModelConfig(
         currentProviderId: currentProviderId,
         currentModelId: currentModelId,
         connections: normalizedConnections,
@@ -443,6 +441,6 @@ class ModelConfig {
       ));
     }
 
-    return normalizeMagFreeModelsOnly(ModelConfig.defaults());
+    return normalizeProviderConnectionModels(ModelConfig.defaults());
   }
 }

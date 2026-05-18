@@ -640,7 +640,12 @@ extension SessionEngineTools on SessionEngine {
       final modelConfig = await _loadResolvedModelConfig();
       final mag = modelConfig.isMagProvider;
       final hasKey = modelConfig.apiKey.trim().isNotEmpty;
-      final freeMag = mag && modelConfig.isMagZenFreeModel;
+      final freeMag = mag &&
+          isCatalogModelFree(
+            catalog: await _loadProviderCatalogFromCache(),
+            providerId: modelConfig.provider,
+            modelId: modelConfig.model,
+          );
       final needsKey = mag ? (!freeMag && !hasKey) : !hasKey;
       if (needsKey) return;
 
