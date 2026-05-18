@@ -1089,7 +1089,6 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
                   ? l(context, '新建会话', 'New session')
                   : (state.workspace?.name ??
                       l(context, '移动代理', 'Mobile Agent'))),
-          running: state.isBusy,
         ),
         actions: [
           if (FloatingWindowBridge.isSupported)
