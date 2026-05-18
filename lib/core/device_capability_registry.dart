@@ -98,6 +98,45 @@ class DeviceCapabilityRegistry {
       ],
     ),
     DeviceCapabilityDefinition(
+      id: 'media.generateQrCode',
+      version: 1,
+      category: DeviceCapabilityCategory.media,
+      descriptionForAi:
+          'Generate a QR code SVG and data URL inside the HTML runtime. Use window.MagNative.generateQrCode(options) in generated web pages.',
+      inputSchema: {
+        'type': 'object',
+        'properties': {
+          'text': {'type': 'string'},
+          'size': {'type': 'integer'},
+          'margin': {'type': 'integer'},
+          'foregroundColor': {'type': 'string'},
+          'backgroundColor': {'type': 'string'},
+          'errorCorrectionLevel': {
+            'type': 'string',
+            'enum': ['L', 'M', 'Q', 'H'],
+          },
+        },
+        'required': ['text'],
+        'additionalProperties': false,
+      },
+      outputSchema: {
+        'type': 'object',
+        'properties': {
+          'svg': {'type': 'string'},
+          'dataUrl': {'type': 'string'},
+          'mimeType': {'type': 'string'},
+          'size': {'type': 'integer'},
+          'moduleCount': {'type': 'integer'},
+          'bytes': {'type': 'integer'},
+        },
+        'required': ['svg', 'dataUrl', 'mimeType', 'size'],
+      },
+      platforms: ['android', 'ios', 'macos', 'windows', 'linux'],
+      requiresUserGesture: false,
+      permissionMode: DeviceCapabilityPermissionMode.none,
+      webAliases: ['MagNative.generateQrCode'],
+    ),
+    DeviceCapabilityDefinition(
       id: 'files.save',
       version: 1,
       category: DeviceCapabilityCategory.files,
@@ -196,6 +235,10 @@ class DeviceCapabilityRegistry {
         return zh
             ? '在 App 内录制视频并返回临时视频 URL。网页里使用 `window.MagNative.recordVideo()`，适合实现视频采集或上传交互。'
             : 'Record video inside the app and return a temporary video URL. In web pages, use `window.MagNative.recordVideo()` for video capture or upload flows.';
+      case 'media.generateQrCode':
+        return zh
+            ? '在 HTML 运行时生成二维码 SVG 和 data URL。网页里使用 `window.MagNative.generateQrCode(...)`，适合二维码登录、分享链接和收款码等前端体验。'
+            : 'Generate a QR code SVG and data URL inside the HTML runtime. In web pages, use `window.MagNative.generateQrCode(...)` for QR login, link sharing, or payment-style previews.';
       case 'files.save':
         return zh
             ? '把生成的内容保存到用户选择的位置；当前 HTML 运行时尚未启用。'
@@ -227,6 +270,10 @@ class DeviceCapabilityRegistry {
         return zh
             ? '示例：`const video = await window.MagNative.recordVideo()`，再把 `video.url` 赋给 `<video>` 预览。'
             : 'Example: `const video = await window.MagNative.recordVideo()`, then assign `video.url` to a `<video>` preview.';
+      case 'media.generateQrCode':
+        return zh
+            ? '示例：`const qr = await window.MagNative.generateQrCode({ text: location.href, size: 256 })`，再把 `qr.dataUrl` 赋给 `<img>`。'
+            : 'Example: `const qr = await window.MagNative.generateQrCode({ text: location.href, size: 256 })`, then assign `qr.dataUrl` to an `<img>`.';
       default:
         return zh ? '示例：按暴露的 Web API 调用。' : 'Example: use the exposed web API.';
     }

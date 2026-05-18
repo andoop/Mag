@@ -147,6 +147,10 @@ class _HtmlRuntimeHost {
         final file = await DeviceCapabilityBridge.recordVideo();
         if (file == null) return null;
         return _registerNativeFile(file);
+      case 'media.generateQrCode':
+        return QrCodeGenerator.generate(
+          QrCodeOptions.fromJson(input),
+        ).toJson();
       default:
         throw UnsupportedError('Capability is declared but not implemented.');
     }
@@ -293,7 +297,8 @@ String _magNativeBootstrap(String runtimeId) {
     pickFiles: function(options) { return post('files.pick', options || {}); },
     capturePhoto: function(options) { return post('media.capturePhoto', options || {}); },
     recordAudio: function(options) { return post('media.recordAudio', options || {}); },
-    recordVideo: function(options) { return post('media.recordVideo', options || {}); }
+    recordVideo: function(options) { return post('media.recordVideo', options || {}); },
+    generateQrCode: function(options) { return post('media.generateQrCode', options || {}); }
   };
   document.addEventListener('click', function(event) {
     const input = event.target && event.target.closest ? event.target.closest('input[type="file"]') : null;

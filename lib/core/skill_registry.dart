@@ -71,6 +71,53 @@ Do not use this skill for authenticated browser-only downloads, login-gated URLs
       workspaceRelative: false,
       requiredTools: ['download'],
     ),
+    SkillInfo(
+      name: 'qr-code-generation',
+      description:
+          'Generate QR codes as SVG files or in AI-generated HTML pages.',
+      location: 'builtin://skills/qr-code-generation',
+      directory: 'builtin://skills/qr-code-generation',
+      locationPath: 'builtin://skills/qr-code-generation',
+      directoryPath: 'builtin://skills/qr-code-generation',
+      content: '''
+Use this skill when the user asks for a QR code, scan code, link code, Wi-Fi code, payment-style QR preview, or QR login/share experience.
+
+Core rules:
+1. For a persistent workspace artifact, call `create_qr_code`.
+2. For AI-generated HTML, use `window.MagNative.generateQrCode(options)` and render the returned `dataUrl` in an `<img>`.
+3. Keep parameter names consistent across tool calls and HTML bridge calls: `text`, `size`, `margin`, `foregroundColor`, `backgroundColor`, `errorCorrectionLevel`.
+4. Prefer SVG output. It stays sharp across Android, iOS, WebView, and desktop previews.
+5. Keep the encoded text short and explicit. If the user gives a URL, encode the exact URL rather than a shortened or rewritten version unless they ask.
+
+Parameters:
+- `filePath`: workspace-relative `.svg` path for `create_qr_code`.
+- `text`: required QR payload. Use the exact text, URL, Wi-Fi string, or contact data the user asked to encode.
+- `size`: optional SVG width and height in pixels. Default is 256; valid range is 96-2048.
+- `margin`: optional quiet-zone margin in QR modules. Default is 4; valid range is 0-16.
+- `foregroundColor`: optional dark module color, `#RGB` or `#RRGGBB`. Default is `#111827`.
+- `backgroundColor`: optional background color, `#RGB`, `#RRGGBB`, or `transparent`. Default is `#FFFFFF`.
+- `errorCorrectionLevel`: optional `L`, `M`, `Q`, or `H`. Default is `M`; use `Q` or `H` when the QR code may be printed, resized, or visually decorated.
+- `overwrite`: optional boolean for `create_qr_code` when replacing an existing file.
+
+Tool example:
+`create_qr_code({ "filePath": "assets/share-qr.svg", "text": "https://example.com", "size": 256 })`
+
+HTML bridge example:
+```html
+<img id="qr" alt="QR code">
+<script>
+  const qr = await window.MagNative.generateQrCode({
+    text: 'https://example.com',
+    size: 256,
+    errorCorrectionLevel: 'M'
+  });
+  document.getElementById('qr').src = qr.dataUrl;
+</script>
+```
+''',
+      workspaceRelative: false,
+      requiredTools: ['create_qr_code'],
+    ),
   ];
 
   Future<List<SkillInfo>> all(WorkspaceInfo workspace) {
@@ -88,9 +135,10 @@ Do not use this skill for authenticated browser-only downloads, login-gated URLs
     if (agentDefinition == null) return list;
     return list
         .where((skill) =>
-            skill.requiredTools.every(agentDefinition.availableTools.contains) &&
+            skill.requiredTools
+                .every(agentDefinition.availableTools.contains) &&
             _evaluatePermission('skill', skill.name, agentDefinition) !=
-            PermissionAction.deny)
+                PermissionAction.deny)
         .toList(growable: false);
   }
 
@@ -155,10 +203,7 @@ Do not use this skill for authenticated browser-only downloads, login-gated URLs
   }
 
   String toolNameParameterDescription(List<SkillInfo> list) {
-    final examples = list
-        .map((skill) => "'${skill.name}'")
-        .take(3)
-        .join(', ');
+    final examples = list.map((skill) => "'${skill.name}'").take(3).join(', ');
     final hint = examples.isNotEmpty ? ' (e.g., $examples, ...)' : '';
     return 'The name of the skill from available_skills$hint';
   }

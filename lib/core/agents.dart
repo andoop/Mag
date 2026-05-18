@@ -209,6 +209,7 @@ class AgentRegistry {
     'create_document',
     'create_spreadsheet',
     'create_presentation',
+    'create_qr_code',
     'list_mcp_resources',
     'read_mcp_resource',
     'list_mcp_prompts',

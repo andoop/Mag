@@ -20,6 +20,7 @@ import 'package:webview_flutter/webview_flutter.dart';
 import '../core/models.dart';
 import '../core/debug_trace.dart';
 import '../core/device_capability_registry.dart';
+import '../core/qr_code_generator.dart';
 import '../core/skill_registry.dart';
 import '../core/workspace_bridge.dart';
 import '../platform/device_capability_bridge.dart';

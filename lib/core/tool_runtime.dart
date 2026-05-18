@@ -15,6 +15,7 @@ import 'json_coerce.dart';
 import 'mcp_service.dart';
 import 'models.dart';
 import 'office_renderer.dart';
+import 'qr_code_generator.dart';
 import 'skill_registry.dart';
 import 'tools/builtin_tool_descriptions.dart';
 import 'tools/question_tool_spec.dart';
@@ -27,6 +28,7 @@ part 'tool_file_ops.dart';
 part 'tool_patch.dart';
 part 'tool_misc.dart';
 part 'tool_office.dart';
+part 'tool_qr.dart';
 part 'tool_utils.dart';
 part 'tool_git.dart';
 
@@ -535,6 +537,15 @@ class ToolRegistry {
             '${_kCreatePresentationDescription.trim()}$kMobileWorkspacePathSuffix',
         parameters: officePresentationToolParametersSchema(),
         execute: _createPresentationTool,
+      ),
+    );
+    register(
+      ToolDefinition(
+        id: 'create_qr_code',
+        description:
+            '${_kCreateQrCodeDescription.trim()}$kMobileWorkspacePathSuffix',
+        parameters: qrCodeToolParametersSchema(),
+        execute: _createQrCodeTool,
       ),
     );
     register(
