@@ -248,6 +248,7 @@ class _StreamingBubbleSize extends StatelessWidget {
       child: _AssistantFillWidth(
         enabled: enabled,
         child: child,
+      ),
     );
   }
 }
@@ -987,7 +988,6 @@ class _ContextToolGroupTileState extends State<_ContextToolGroupTile> {
             ),
           ],
         ),
-      ),
     );
   }
 }
