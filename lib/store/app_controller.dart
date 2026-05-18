@@ -433,6 +433,14 @@ class AppController extends ChangeNotifier {
         final part =
             MessagePart.fromJson(Map<String, dynamic>.from(event.properties));
         if (!_isCurrentSession(part.sessionId)) return;
+        if (_pendingPartDeltas.containsKey(part.id)) {
+          _flushPendingPartDeltas();
+        }
+        if (_isRedundantStreamingPartUpdate(state.messages, part)) {
+          _dropPendingPartDelta(part.id);
+          _invalidatePreviewCacheForPart(part);
+          return;
+        }
         _dropPendingPartDelta(part.id);
         _invalidatePreviewCacheForPart(part);
         state = state.copyWith(messages: _upsertPart(state.messages, part));

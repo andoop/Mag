@@ -23,10 +23,13 @@ class AppRoot extends StatefulWidget {
 class _AppRootState extends State<AppRoot> {
   StreamSubscription<WorkspaceWebShortcut>? _shortcutSub;
   bool _handlingShortcut = false;
+  String? _workspaceId;
 
   @override
   void initState() {
     super.initState();
+    _workspaceId = widget.controller.state.workspace?.id;
+    widget.controller.addListener(_handleControllerChanged);
     _shortcutSub = ShortcutBridge.instance.launches.listen(_handleShortcut);
     WidgetsBinding.instance.addPostFrameCallback((_) async {
       final initial = await ShortcutBridge.instance.takeInitialLaunch();
@@ -38,8 +41,15 @@ class _AppRootState extends State<AppRoot> {
 
   @override
   void dispose() {
+    widget.controller.removeListener(_handleControllerChanged);
     _shortcutSub?.cancel();
     super.dispose();
+  }
+
+  void _handleControllerChanged() {
+    final nextWorkspaceId = widget.controller.state.workspace?.id;
+    if (nextWorkspaceId == _workspaceId) return;
+    setState(() => _workspaceId = nextWorkspaceId);
   }
 
   Future<void> _handleShortcut(WorkspaceWebShortcut shortcut) async {
@@ -88,29 +98,24 @@ class _AppRootState extends State<AppRoot> {
 
   @override
   Widget build(BuildContext context) {
-    return AnimatedBuilder(
-      animation: widget.controller,
-      builder: (context, _) {
-        final workspace = widget.controller.state.workspace;
-        return WillPopScope(
-          onWillPop: () async {
-            final s = widget.controller.state;
-            if (s.workspace == null) {
-              return true;
-            }
-            // 与 AppBar 左上角返回一致：直接回到项目首页，而非新建会话落地页。
-            try {
-              await widget.controller.leaveProject();
-            } catch (_) {
-              // 保留在当前界面，避免误退出
-            }
-            return false;
-          },
-          child: workspace == null
-              ? ProjectHomePage(controller: widget.controller)
-              : HomePage(controller: widget.controller),
-        );
+    final workspace = widget.controller.state.workspace;
+    return WillPopScope(
+      onWillPop: () async {
+        final s = widget.controller.state;
+        if (s.workspace == null) {
+          return true;
+        }
+        // 与 AppBar 左上角返回一致：直接回到项目首页，而非新建会话落地页。
+        try {
+          await widget.controller.leaveProject();
+        } catch (_) {
+          // 保留在当前界面，避免误退出
+        }
+        return false;
       },
+      child: workspace == null
+          ? ProjectHomePage(controller: widget.controller)
+          : HomePage(controller: widget.controller),
     );
   }
 }

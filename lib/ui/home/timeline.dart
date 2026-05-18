@@ -117,6 +117,8 @@ String _formatTimelineTimestamp(int ms) {
 }
 
 const Duration _kStreamingBubbleResizeDuration = Duration(milliseconds: 160);
+final Map<String, double> _assistantTurnMeasuredHeights = <String, double>{};
+final Map<String, double> _contextGroupMeasuredHeights = <String, double>{};
 
 BoxDecoration _chatSurfaceDecoration(
   BuildContext context, {
@@ -259,6 +261,16 @@ bool _isContextToolPart(MessagePart part) {
   return names.contains(part.data['tool'] as String? ?? '');
 }
 
+bool _hasLongStreamingTextParts(Iterable<MessagePart> parts) {
+  var total = 0;
+  for (final part in parts) {
+    if (!_isPlainTextLikePart(part)) continue;
+    total += (part.data['text'] as String? ?? '').length;
+    if (total > 3200) return true;
+  }
+  return false;
+}
+
 String _toolNameFromPart(MessagePart part) {
   if (part.type != PartType.tool) return '';
   return part.data['tool'] as String? ?? '';
@@ -281,24 +293,44 @@ int? _assistantTurnDurationMs(
   return _turnDurationMsForAssistantBundle(state, bundleIdx);
 }
 
-int _messageBundleVisualSignature(SessionMessageBundle bundle) {
-  return Object.hash(
-    bundle.message.id,
-    bundle.revision,
+int _messageBundleVisualSignature(
+  SessionMessageBundle bundle, {
+  bool ignoreStreamingText = false,
+}) {
+  var hash = Object.hash(
+    _messageTileVisualSignature(bundle.message),
     bundle.parts.length,
   );
+  for (final part in bundle.parts) {
+    hash = Object.hash(
+      hash,
+      _partTileVisualSignature(
+        part,
+        ignoreStreamingText: ignoreStreamingText,
+      ),
+    );
+  }
+  return hash;
 }
 
 int _timelineTurnVisualSignature(
   _TimelineTurnEntry entry,
   List<SessionMessageBundle> renderedMessages,
+  String? streamingAssistantMessageId,
 ) {
   var hash = entry.userIndex == null
       ? 17
       : _messageBundleVisualSignature(renderedMessages[entry.userIndex!]);
   for (final index in entry.assistantIndices) {
+    final bundle = renderedMessages[index];
     hash = Object.hash(
-        hash, _messageBundleVisualSignature(renderedMessages[index]));
+      hash,
+      _messageBundleVisualSignature(
+        bundle,
+        ignoreStreamingText:
+            bundle.message.id == streamingAssistantMessageId,
+      ),
+    );
   }
   return hash;
 }
@@ -397,15 +429,18 @@ extension _HomePageTimeline on _HomePageState {
       if (index < messageEnd) {
         final entryIndex = index - cursor;
         final entry = renderedEntries[entryIndex];
-        return _TimelineTurnGroup(
-          key: ValueKey<String>(entry.stableId),
-          entry: entry,
-          renderedMessages: renderedMessages,
-          state: state,
-          streamingAssistantMessageId: streamingAssistantMessageId,
-          controller: widget.controller,
-          onInsertPromptReference: _appendPromptReference,
-          onSendPromptReference: _sendPromptReference,
+        return KeyedSubtree(
+          key: _timelineEntryKey(entry.stableId),
+          child: _TimelineTurnGroup(
+            key: ValueKey<String>(entry.stableId),
+            entry: entry,
+            renderedMessages: renderedMessages,
+            state: state,
+            streamingAssistantMessageId: streamingAssistantMessageId,
+            controller: widget.controller,
+            onInsertPromptReference: _appendPromptReference,
+            onSendPromptReference: _sendPromptReference,
+          ),
         );
       }
       cursor = messageEnd;
@@ -495,8 +530,11 @@ class _TimelineTurnGroupState extends State<_TimelineTurnGroup> {
   @override
   Widget build(BuildContext context) {
     final themeKey = context.themeCacheKey;
-    final entrySignature =
-        _timelineTurnVisualSignature(widget.entry, widget.renderedMessages);
+    final entrySignature = _timelineTurnVisualSignature(
+      widget.entry,
+      widget.renderedMessages,
+      widget.streamingAssistantMessageId,
+    );
     final layoutWidth = MediaQuery.of(context).size.width.round();
     if (_cached != null &&
         _lastThemeKey == themeKey &&
@@ -641,6 +679,7 @@ class _AssistantTurnBubble extends StatelessWidget {
 
     final displayItems = _buildDisplayItems(visibleEntries);
     final firstBundle = bundles.first;
+    final turnId = bundles.map((bundle) => bundle.message.id).join('|');
     final turnDurationMs = _assistantTurnDurationMs(state, bundles.last);
     final compactionOnly = visibleEntries.length == 1 &&
         visibleEntries.first.part.type == PartType.compaction &&
@@ -671,76 +710,103 @@ class _AssistantTurnBubble extends StatelessWidget {
     }
 
     return RepaintBoundary(
-      child: _AssistantBubbleFrame(
-        child: _StreamingBubbleSize(
-          enabled: isStreamingTurn,
-          child: Container(
-            padding: const EdgeInsets.fromLTRB(14, 12, 14, 13),
-            decoration: _chatSurfaceDecoration(
-              context,
-              color: oc.agentBubble,
-              radius: 24,
-            ),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.stretch,
-              children: [
-                Align(
-                  alignment: Alignment.centerLeft,
-                  child: Row(
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
-                      Text(
-                        firstBundle.message.agent,
-                        style: Theme.of(context).textTheme.labelSmall?.copyWith(
-                              fontWeight: FontWeight.w700,
-                              color: oc.foregroundMuted,
-                              letterSpacing: 0.2,
-                            ),
-                      ),
-                      const SizedBox(width: 6),
-                      Text(
-                        _formatTimelineTimestamp(firstBundle.message.createdAt),
-                        style: Theme.of(context)
-                            .textTheme
-                            .labelSmall
-                            ?.copyWith(color: oc.foregroundFaint),
-                      ),
-                    ],
-                  ),
+      child: _MeasuredSize(
+        onChanged: (size) {
+          final previous = _assistantTurnMeasuredHeights[turnId];
+          _assistantTurnMeasuredHeights[turnId] = size.height;
+          if (previous == null || (previous - size.height).abs() > 120) {
+            // #region agent log
+            _agentDebugLog(
+              'H37',
+              'lib/ui/home/timeline.dart:_AssistantTurnBubble',
+              'assistant turn height changed',
+              {
+                'turnId': turnId,
+                'height': size.height,
+                'previousHeight': previous,
+                'bundleCount': bundles.length,
+                'visibleEntryCount': visibleEntries.length,
+                'displayItemCount': displayItems.length,
+                'isStreamingTurn': isStreamingTurn,
+              },
+            );
+            // #endregion
+          }
+        },
+        child: _AssistantBubbleFrame(
+          child: _StreamingBubbleSize(
+            enabled: isStreamingTurn &&
+                !_hasLongStreamingTextParts(
+                  visibleEntries.map((entry) => entry.part),
                 ),
-                for (final item in displayItems) ...[
-                  const SizedBox(height: 10),
-                  if (item.isContextGroup)
-                    _ContextToolGroupTile(
-                      key: ValueKey<String>(
-                        'context-${item.entries.first.part.id}-${item.entries.last.part.id}',
-                      ),
-                      entries: item.entries,
-                      controller: controller,
-                      workspace: controller.state.workspace,
-                      serverUri: controller.state.serverUri,
-                      onInsertPromptReference: onInsertPromptReference,
-                      onSendPromptReference: onSendPromptReference,
-                    )
-                  else
-                    _CachedPartTile(
-                      key: ValueKey<String>(
-                          'assistant-part-${item.entry!.part.id}'),
-                      part: item.entry!.part,
-                      message: item.entry!.bundle.message,
-                      controller: controller,
-                      workspace: controller.state.workspace,
-                      serverUri: controller.state.serverUri,
-                      streamAssistantContent:
-                          item.entry!.streamAssistantContent,
-                      turnDurationMs: turnDurationMs,
-                      showAssistantTextMeta:
-                          identical(item.entry, lastPlainTextEntry),
-                      onInsertPromptReference: onInsertPromptReference,
-                      onSendPromptReference: onSendPromptReference,
+            child: Container(
+              padding: const EdgeInsets.fromLTRB(14, 12, 14, 13),
+              decoration: _chatSurfaceDecoration(
+                context,
+                color: oc.agentBubble,
+                radius: 24,
+              ),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: [
+                  Align(
+                    alignment: Alignment.centerLeft,
+                    child: Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        Text(
+                          firstBundle.message.agent,
+                          style: Theme.of(context).textTheme.labelSmall?.copyWith(
+                                fontWeight: FontWeight.w700,
+                                color: oc.foregroundMuted,
+                                letterSpacing: 0.2,
+                              ),
+                        ),
+                        const SizedBox(width: 6),
+                        Text(
+                          _formatTimelineTimestamp(firstBundle.message.createdAt),
+                          style: Theme.of(context)
+                              .textTheme
+                              .labelSmall
+                              ?.copyWith(color: oc.foregroundFaint),
+                        ),
+                      ],
                     ),
+                  ),
+                  for (final item in displayItems) ...[
+                    const SizedBox(height: 10),
+                    if (item.isContextGroup)
+                      _ContextToolGroupTile(
+                        key: ValueKey<String>(
+                          'context-${item.entries.first.part.id}-${item.entries.last.part.id}',
+                        ),
+                        entries: item.entries,
+                        controller: controller,
+                        workspace: controller.state.workspace,
+                        serverUri: controller.state.serverUri,
+                        onInsertPromptReference: onInsertPromptReference,
+                        onSendPromptReference: onSendPromptReference,
+                      )
+                    else
+                      _CachedPartTile(
+                        key: ValueKey<String>(
+                            'assistant-part-${item.entry!.part.id}'),
+                        part: item.entry!.part,
+                        message: item.entry!.bundle.message,
+                        controller: controller,
+                        workspace: controller.state.workspace,
+                        serverUri: controller.state.serverUri,
+                        streamAssistantContent:
+                            item.entry!.streamAssistantContent,
+                        turnDurationMs: turnDurationMs,
+                        showAssistantTextMeta:
+                            identical(item.entry, lastPlainTextEntry),
+                        onInsertPromptReference: onInsertPromptReference,
+                        onSendPromptReference: onSendPromptReference,
+                      ),
+                  ],
                 ],
-              ],
+              ),
             ),
           ),
         ),
@@ -803,150 +869,173 @@ class _ContextToolGroupTileState extends State<_ContextToolGroupTile> {
   @override
   Widget build(BuildContext context) {
     final oc = context.oc;
+    final groupId = widget.entries.map((entry) => entry.part.id).join('|');
     final toolNames = widget.entries
         .map((entry) => _toolNameFromPart(entry.part))
         .where((name) => name.isNotEmpty)
         .toSet()
         .join(' · ');
-    return Container(
-      width: double.infinity,
-      decoration: _panelDecoration(context,
-          background: oc.composerOptionBg, radius: 14, elevated: false),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          InkWell(
-            borderRadius: BorderRadius.circular(14),
-            onTap: () {
-              setState(() {
-                _userToggled = true;
-                _expanded = !_expanded;
-              });
+    return _MeasuredSize(
+      onChanged: (size) {
+        final previous = _contextGroupMeasuredHeights[groupId];
+        _contextGroupMeasuredHeights[groupId] = size.height;
+        if (previous == null || (previous - size.height).abs() > 120) {
+          // #region agent log
+          _agentDebugLog(
+            'H38',
+            'lib/ui/home/timeline.dart:_ContextToolGroupTile',
+            'context group height changed',
+            {
+              'groupId': groupId,
+              'height': size.height,
+              'previousHeight': previous,
+              'entryCount': widget.entries.length,
+              'expanded': _expanded,
+              'userToggled': _userToggled,
             },
-            child: Padding(
-              padding: const EdgeInsets.fromLTRB(12, 10, 12, 10),
-              child: Row(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Icon(
-                    Icons.travel_explore_outlined,
-                    size: 18,
-                    color: oc.foregroundMuted,
-                  ),
-                  const SizedBox(width: 10),
-                  Expanded(
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        Text(
-                          l(context, '上下文', 'Context'),
-                          style:
-                              Theme.of(context).textTheme.labelMedium?.copyWith(
-                                    fontWeight: FontWeight.w700,
-                                    color: oc.foregroundMuted,
-                                  ),
-                        ),
-                        if (toolNames.isNotEmpty) ...[
-                          const SizedBox(height: 2),
-                          Text(
-                            toolNames,
-                            style: Theme.of(context)
-                                .textTheme
-                                .bodySmall
-                                ?.copyWith(color: oc.foregroundHint),
-                          ),
-                        ],
-                      ],
-                    ),
-                  ),
-                  const SizedBox(width: 8),
-                  Container(
-                    padding:
-                        const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
-                    decoration: BoxDecoration(
-                      color: oc.shadow,
-                      borderRadius: BorderRadius.circular(999),
-                      border: Border.all(color: oc.softBorderColor),
-                    ),
-                    child: Text(
-                      '${widget.entries.length}',
-                      style: Theme.of(context).textTheme.labelSmall?.copyWith(
-                            color: oc.foregroundMuted,
-                            fontWeight: FontWeight.w600,
-                          ),
-                    ),
-                  ),
-                  const SizedBox(width: 6),
-                  AnimatedRotation(
-                    turns: _expanded ? 0.5 : 0,
-                    duration: const Duration(milliseconds: 180),
-                    curve: Curves.easeInOutCubic,
-                    child: Icon(
-                      Icons.expand_more,
-                      color: oc.foregroundMuted,
-                      size: 20,
-                    ),
-                  ),
-                ],
-              ),
-            ),
-          ),
-          _SmoothExpansion(
-            open: _expanded,
-            child: Stack(
-              children: [
-                Column(
-                  crossAxisAlignment: CrossAxisAlignment.stretch,
+          );
+          // #endregion
+        }
+      },
+      child: Container(
+        width: double.infinity,
+        decoration: _panelDecoration(context,
+            background: oc.composerOptionBg, radius: 14, elevated: false),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            InkWell(
+              borderRadius: BorderRadius.circular(14),
+              onTap: () {
+                const _TimelineDetachNotification().dispatch(context);
+                setState(() {
+                  _userToggled = true;
+                  _expanded = !_expanded;
+                });
+              },
+              child: Padding(
+                padding: const EdgeInsets.fromLTRB(12, 10, 12, 10),
+                child: Row(
+                  crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    Divider(height: 1, thickness: 1, color: oc.softBorderColor),
-                    Padding(
-                      padding: const EdgeInsets.fromLTRB(12, 10, 12, 38),
-                      child: _DeferredHeavyContent(
-                        cacheKey: widget.entries
-                            .map((entry) => entry.part.id)
-                            .join('|'),
-                        builder: (context) => Column(
-                          crossAxisAlignment: CrossAxisAlignment.stretch,
-                          children: [
-                            for (var i = 0; i < widget.entries.length; i++) ...[
-                              if (i > 0) const SizedBox(height: 8),
-                              _CachedPartTile(
-                                key: ValueKey<String>(
-                                  'context-part-${widget.entries[i].part.id}',
-                                ),
-                                part: widget.entries[i].part,
-                                message: widget.entries[i].bundle.message,
-                                controller: widget.controller,
-                                workspace: widget.workspace,
-                                serverUri: widget.serverUri,
-                                streamAssistantContent:
-                                    widget.entries[i].streamAssistantContent,
-                                turnDurationMs: null,
-                                showAssistantTextMeta: false,
-                                onInsertPromptReference:
-                                    widget.onInsertPromptReference,
-                                onSendPromptReference:
-                                    widget.onSendPromptReference,
-                              ),
-                            ],
+                    Icon(
+                      Icons.travel_explore_outlined,
+                      size: 18,
+                      color: oc.foregroundMuted,
+                    ),
+                    const SizedBox(width: 10),
+                    Expanded(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text(
+                            l(context, '上下文', 'Context'),
+                            style:
+                                Theme.of(context).textTheme.labelMedium?.copyWith(
+                                      fontWeight: FontWeight.w700,
+                                      color: oc.foregroundMuted,
+                                    ),
+                          ),
+                          if (toolNames.isNotEmpty) ...[
+                            const SizedBox(height: 2),
+                            Text(
+                              toolNames,
+                              style: Theme.of(context)
+                                  .textTheme
+                                  .bodySmall
+                                  ?.copyWith(color: oc.foregroundHint),
+                            ),
                           ],
-                        ),
+                        ],
+                      ),
+                    ),
+                    const SizedBox(width: 8),
+                    Container(
+                      padding:
+                          const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+                      decoration: BoxDecoration(
+                        color: oc.shadow,
+                        borderRadius: BorderRadius.circular(999),
+                        border: Border.all(color: oc.softBorderColor),
+                      ),
+                      child: Text(
+                        '${widget.entries.length}',
+                        style: Theme.of(context).textTheme.labelSmall?.copyWith(
+                              color: oc.foregroundMuted,
+                              fontWeight: FontWeight.w600,
+                            ),
+                      ),
+                    ),
+                    const SizedBox(width: 6),
+                    AnimatedRotation(
+                      turns: _expanded ? 0.5 : 0,
+                      duration: const Duration(milliseconds: 180),
+                      curve: Curves.easeInOutCubic,
+                      child: Icon(
+                        Icons.expand_more,
+                        color: oc.foregroundMuted,
+                        size: 20,
                       ),
                     ),
                   ],
                 ),
-                _QuickCollapseButton(
-                  onPressed: () {
-                    setState(() {
-                      _userToggled = true;
-                      _expanded = false;
-                    });
-                  },
-                ),
-              ],
+              ),
             ),
-          ),
-        ],
+            _SmoothExpansion(
+              open: _expanded,
+              child: Stack(
+                children: [
+                  Column(
+                    crossAxisAlignment: CrossAxisAlignment.stretch,
+                    children: [
+                      Divider(height: 1, thickness: 1, color: oc.softBorderColor),
+                      Padding(
+                        padding: const EdgeInsets.fromLTRB(12, 10, 12, 38),
+                        child: _DeferredHeavyContent(
+                          cacheKey: groupId,
+                          builder: (context) => Column(
+                            crossAxisAlignment: CrossAxisAlignment.stretch,
+                            children: [
+                              for (var i = 0; i < widget.entries.length; i++) ...[
+                                if (i > 0) const SizedBox(height: 8),
+                                _CachedPartTile(
+                                  key: ValueKey<String>(
+                                    'context-part-${widget.entries[i].part.id}',
+                                  ),
+                                  part: widget.entries[i].part,
+                                  message: widget.entries[i].bundle.message,
+                                  controller: widget.controller,
+                                  workspace: widget.workspace,
+                                  serverUri: widget.serverUri,
+                                  streamAssistantContent:
+                                      widget.entries[i].streamAssistantContent,
+                                  turnDurationMs: null,
+                                  showAssistantTextMeta: false,
+                                  onInsertPromptReference:
+                                      widget.onInsertPromptReference,
+                                  onSendPromptReference:
+                                      widget.onSendPromptReference,
+                                ),
+                              ],
+                            ],
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
+                  _QuickCollapseButton(
+                    onPressed: () {
+                      setState(() {
+                        _userToggled = true;
+                        _expanded = false;
+                      });
+                    },
+                  ),
+                ],
+              ),
+            ),
+          ],
+        ),
       ),
     );
   }
@@ -1000,7 +1089,10 @@ class _MessageBubbleState extends State<_MessageBubble> {
   @override
   Widget build(BuildContext context) {
     final themeKey = context.themeCacheKey;
-    final bundleSignature = _messageBundleVisualSignature(widget.bundle);
+    final bundleSignature = _messageBundleVisualSignature(
+      widget.bundle,
+      ignoreStreamingText: widget.isStreamingAssistantMessage,
+    );
     final layoutWidth = MediaQuery.of(context).size.width.round();
     if (_lastBundleSignature == bundleSignature &&
         widget.isStreamingAssistantMessage == _lastStreaming &&
@@ -1134,7 +1226,9 @@ class _MessageBubbleState extends State<_MessageBubble> {
         child: _MessageBubbleFrame(
           isUser: isUser,
           child: _StreamingBubbleSize(
-            enabled: widget.isStreamingAssistantMessage && !isUser,
+            enabled: widget.isStreamingAssistantMessage &&
+                !isUser &&
+                !_hasLongStreamingTextParts(primaryParts),
             child: SizedBox(
               width: isUser ? null : double.infinity,
               child: Container(

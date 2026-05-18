@@ -444,7 +444,10 @@ class _QuestionToolPartState extends State<_QuestionToolPart> {
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           InkWell(
-            onTap: () => setState(() => _expanded = !expanded),
+            onTap: () {
+              const _TimelineDetachNotification().dispatch(context);
+              setState(() => _expanded = !expanded);
+            },
             child: Row(
               children: [
                 if (isRunning)

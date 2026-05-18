@@ -1,6 +1,9 @@
 part of '../../home_page.dart';
 
 const int _kStreamingTextRenderPaceMs = 96;
+const int _kStreamingFadeTailChars = 900;
+const int _kStreamingStableMarkdownMinIntervalMs = 320;
+const int _kStreamingStableMarkdownMinGrowth = 700;
 final RegExp _kStreamingTextSnap = RegExp(r'[\s\.,!\?;:\)\]]');
 
 int _streamingTextStep(int remaining) {
@@ -173,13 +176,30 @@ Widget _streamingTextTail(
   String text, {
   required Color color,
 }) {
-  return _StreamingFadeText(text: text, color: color);
+  if (text.length <= _kStreamingFadeTailChars) {
+    return _StreamingFadeText(text: text, color: color);
+  }
+  final staticText = text.substring(0, text.length - _kStreamingFadeTailChars);
+  final fadeText = text.substring(text.length - _kStreamingFadeTailChars);
+  return Column(
+    crossAxisAlignment: CrossAxisAlignment.start,
+    mainAxisSize: MainAxisSize.min,
+    children: [
+      Text(
+        staticText,
+        style: TextStyle(fontSize: 15, height: 1.5, color: color),
+      ),
+      _StreamingFadeText(text: fadeText, color: color),
+    ],
+  );
 }
 
 class _StreamingMarkdownText extends StatefulWidget {
   const _StreamingMarkdownText({
     required this.text,
     this.streaming = false,
+    this.messageId,
+    this.partId,
     this.workspace,
     this.controller,
     this.onInsertPromptReference,
@@ -190,6 +210,8 @@ class _StreamingMarkdownText extends StatefulWidget {
 
   final String text;
   final bool streaming;
+  final String? messageId;
+  final String? partId;
   final WorkspaceInfo? workspace;
   final AppController? controller;
   final ValueChanged<String>? onInsertPromptReference;
@@ -210,26 +232,69 @@ class _StreamingMarkdownTextState extends State<_StreamingMarkdownText> {
   int? _cachedThemeKey;
   MarkdownStyleSheet? _cachedMarkdownStyle;
   String _displayedText = '';
+  String? _liveText;
   Timer? _pending;
   int _lastFlush = 0;
+  int _lastStableMarkdownBuildAtMs = 0;
+
+  String get _targetText => _liveText ?? widget.text;
+
+  bool get _shouldListenForLiveText =>
+      widget.streaming &&
+      widget.controller != null &&
+      widget.messageId != null &&
+      widget.partId != null;
 
   void _invalidateCachedMarkdown() {
     _stableText = '';
     _stableWidget = null;
     _completeText = '';
     _completeWidget = null;
+    _lastStableMarkdownBuildAtMs = 0;
   }
 
   @override
   void initState() {
     super.initState();
-    _displayedText = widget.text;
+    _liveText = _readLiveText();
+    _displayedText = _targetText;
+    if (_shouldListenForLiveText) {
+      widget.controller!.addListener(_handleControllerTextChanged);
+    }
   }
 
   @override
   void dispose() {
+    if (_shouldListenForLiveText) {
+      widget.controller!.removeListener(_handleControllerTextChanged);
+    }
     _pending?.cancel();
     super.dispose();
+  }
+
+  String? _readLiveText() {
+    final controller = widget.controller;
+    final messageId = widget.messageId;
+    final partId = widget.partId;
+    if (controller == null || messageId == null || partId == null) {
+      return null;
+    }
+    return _partTextFromController(
+      controller,
+      messageId: messageId,
+      partId: partId,
+    );
+  }
+
+  void _handleControllerTextChanged() {
+    final next = _readLiveText();
+    if (next == null || next == _liveText) return;
+    _liveText = next;
+    if (widget.streaming) {
+      _flushPaced();
+    } else {
+      _syncDisplayedText(next);
+    }
   }
 
   void _syncDisplayedText(String text) {
@@ -238,7 +303,7 @@ class _StreamingMarkdownTextState extends State<_StreamingMarkdownText> {
   }
 
   void _flushPaced() {
-    final next = widget.text;
+    final next = _targetText;
     final now = DateTime.now().millisecondsSinceEpoch;
     final remaining = _kStreamingTextRenderPaceMs - (now - _lastFlush);
     if (remaining <= 0) {
@@ -279,23 +344,45 @@ class _StreamingMarkdownTextState extends State<_StreamingMarkdownText> {
   @override
   void didUpdateWidget(covariant _StreamingMarkdownText oldWidget) {
     super.didUpdateWidget(oldWidget);
+    final wasListening = oldWidget.streaming &&
+        oldWidget.controller != null &&
+        oldWidget.messageId != null &&
+        oldWidget.partId != null;
+    if (wasListening && !_shouldListenForLiveText) {
+      oldWidget.controller!.removeListener(_handleControllerTextChanged);
+    } else if (!wasListening && _shouldListenForLiveText) {
+      widget.controller!.addListener(_handleControllerTextChanged);
+    } else if (wasListening &&
+        _shouldListenForLiveText &&
+        oldWidget.controller != widget.controller) {
+      oldWidget.controller!.removeListener(_handleControllerTextChanged);
+      widget.controller!.addListener(_handleControllerTextChanged);
+    }
+    if (oldWidget.messageId != widget.messageId ||
+        oldWidget.partId != widget.partId ||
+        oldWidget.text != widget.text) {
+      _liveText = _readLiveText();
+    }
     if (oldWidget.streaming && !widget.streaming) {
       _pending?.cancel();
       _pending = null;
       _lastFlush = DateTime.now().millisecondsSinceEpoch;
-      if (_displayedText != widget.text) {
-        setState(() => _displayedText = widget.text);
+      final next = _targetText;
+      if (_displayedText != next) {
+        setState(() => _displayedText = next);
       }
       return;
     }
-    if (oldWidget.text != widget.text) {
+    final oldTarget = oldWidget.text;
+    final nextTarget = _targetText;
+    if (oldTarget != nextTarget) {
       if (widget.streaming) {
         _flushPaced();
       } else {
         _pending?.cancel();
         _pending = null;
         _lastFlush = DateTime.now().millisecondsSinceEpoch;
-        _displayedText = widget.text;
+        _displayedText = nextTarget;
       }
     }
   }
@@ -368,13 +455,26 @@ class _StreamingMarkdownTextState extends State<_StreamingMarkdownText> {
     final text = _displayedText;
     final splitAt = _safeSplitPoint(text);
     final stableText = splitAt > 0 ? text.substring(0, splitAt) : '';
-    final activeText = text.substring(splitAt);
+    var effectiveSplitAt = splitAt;
 
     if (stableText != _stableText) {
-      _stableText = stableText;
-      _stableWidget =
-          stableText.isEmpty ? null : _md(context, _normalize(stableText));
+      final now = DateTime.now().millisecondsSinceEpoch;
+      final growth = (stableText.length - _stableText.length).abs();
+      final canReuseStableWidget = stableText.startsWith(_stableText) &&
+          _stableWidget != null &&
+          now - _lastStableMarkdownBuildAtMs <
+              _kStreamingStableMarkdownMinIntervalMs &&
+          growth < _kStreamingStableMarkdownMinGrowth;
+      if (canReuseStableWidget) {
+        effectiveSplitAt = _stableText.length;
+      } else {
+        _stableText = stableText;
+        _lastStableMarkdownBuildAtMs = now;
+        _stableWidget =
+            stableText.isEmpty ? null : _md(context, _normalize(stableText));
+      }
     }
+    final activeText = text.substring(effectiveSplitAt);
 
     return _fillAvailableWidth(
       context,
@@ -384,8 +484,9 @@ class _StreamingMarkdownTextState extends State<_StreamingMarkdownText> {
         children: [
           _stableWidget ?? const SizedBox.shrink(),
           if (activeText.isNotEmpty)
-            _StreamingFadeText(
-              text: _normalize(activeText),
+            _streamingTextTail(
+              context,
+              _normalize(activeText),
               color: context.oc.foreground,
             ),
         ],
@@ -394,7 +495,7 @@ class _StreamingMarkdownTextState extends State<_StreamingMarkdownText> {
   }
 
   Widget _buildComplete(BuildContext context) {
-    final text = widget.text;
+    final text = _targetText;
     if (text != _completeText || _completeWidget == null) {
       _completeText = text;
       _stableText = '';
@@ -410,7 +511,7 @@ class _StreamingMarkdownTextState extends State<_StreamingMarkdownText> {
           _completeWidget!,
           if (widget.showResponseCopy)
             _AssistantTextFooter(
-              plainText: widget.text,
+              plainText: text,
               metaLine: widget.footerMeta,
             ),
         ],

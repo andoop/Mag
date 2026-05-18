@@ -12,6 +12,8 @@ class _ReasoningPartTile extends StatefulWidget {
   const _ReasoningPartTile({
     required this.text,
     required this.streaming,
+    this.messageId,
+    this.partId,
     this.workspace,
     this.controller,
     this.onInsertPromptReference,
@@ -20,6 +22,8 @@ class _ReasoningPartTile extends StatefulWidget {
 
   final String text;
   final bool streaming;
+  final String? messageId;
+  final String? partId;
   final WorkspaceInfo? workspace;
   final AppController? controller;
   final ValueChanged<String>? onInsertPromptReference;
@@ -38,17 +42,41 @@ class _ReasoningPartTileState extends State<_ReasoningPartTile> {
   int? _thinkingDurationSeconds;
   int? _cachedThemeKey;
   MarkdownStyleSheet? _cachedReasoningStyle;
+  String? _liveText;
 
   // Stable-split caching for streaming markdown
   String _stableReasonText = '';
   Widget? _stableReasonWidget;
+
+  String get _targetText => _liveText ?? widget.text;
+
+  bool get _shouldListenForLiveText =>
+      widget.streaming &&
+      widget.controller != null &&
+      widget.messageId != null &&
+      widget.partId != null;
+
+  void _setDetailsOpen(bool open) {
+    if (_detailsOpen == open) return;
+    const _TimelineDetachNotification().dispatch(context);
+    setState(() => _detailsOpen = open);
+  }
+
+  void _toggleDetailsOpen() {
+    const _TimelineDetachNotification().dispatch(context);
+    setState(() => _detailsOpen = !_detailsOpen);
+  }
 
   @override
   void initState() {
     super.initState();
     // 与 OpenCode `createThrottledValue` 一致：`last` 初值为 0，首帧可立即显示。
     _lastFlush = 0;
-    _displayed = _sanitizeReasoningText(widget.text);
+    _liveText = _readLiveText();
+    _displayed = _sanitizeReasoningText(_targetText);
+    if (_shouldListenForLiveText) {
+      widget.controller!.addListener(_handleControllerTextChanged);
+    }
     if (widget.streaming) {
       _thinkingStartedAtMs = DateTime.now().millisecondsSinceEpoch;
     }
@@ -56,8 +84,36 @@ class _ReasoningPartTileState extends State<_ReasoningPartTile> {
 
   @override
   void dispose() {
+    if (_shouldListenForLiveText) {
+      widget.controller!.removeListener(_handleControllerTextChanged);
+    }
     _pending?.cancel();
     super.dispose();
+  }
+
+  String? _readLiveText() {
+    final controller = widget.controller;
+    final messageId = widget.messageId;
+    final partId = widget.partId;
+    if (controller == null || messageId == null || partId == null) {
+      return null;
+    }
+    return _partTextFromController(
+      controller,
+      messageId: messageId,
+      partId: partId,
+    );
+  }
+
+  void _handleControllerTextChanged() {
+    final next = _readLiveText();
+    if (next == null || next == _liveText) return;
+    _liveText = next;
+    if (widget.streaming) {
+      _flushPaced();
+    } else {
+      _syncDisplayedReasoning(_sanitizeReasoningText(next));
+    }
   }
 
   void _syncDisplayedReasoning(String text) {
@@ -66,7 +122,7 @@ class _ReasoningPartTileState extends State<_ReasoningPartTile> {
   }
 
   void _flushPaced() {
-    final sanitized = _sanitizeReasoningText(widget.text);
+    final sanitized = _sanitizeReasoningText(_targetText);
     final now = DateTime.now().millisecondsSinceEpoch;
     final remaining = _kStreamingTextRenderPaceMs - (now - _lastFlush);
     if (remaining <= 0) {
@@ -107,6 +163,25 @@ class _ReasoningPartTileState extends State<_ReasoningPartTile> {
   @override
   void didUpdateWidget(covariant _ReasoningPartTile oldWidget) {
     super.didUpdateWidget(oldWidget);
+    final wasListening = oldWidget.streaming &&
+        oldWidget.controller != null &&
+        oldWidget.messageId != null &&
+        oldWidget.partId != null;
+    if (wasListening && !_shouldListenForLiveText) {
+      oldWidget.controller!.removeListener(_handleControllerTextChanged);
+    } else if (!wasListening && _shouldListenForLiveText) {
+      widget.controller!.addListener(_handleControllerTextChanged);
+    } else if (wasListening &&
+        _shouldListenForLiveText &&
+        oldWidget.controller != widget.controller) {
+      oldWidget.controller!.removeListener(_handleControllerTextChanged);
+      widget.controller!.addListener(_handleControllerTextChanged);
+    }
+    if (oldWidget.messageId != widget.messageId ||
+        oldWidget.partId != widget.partId ||
+        oldWidget.text != widget.text) {
+      _liveText = _readLiveText();
+    }
     if (!oldWidget.streaming && widget.streaming) {
       _thinkingStartedAtMs = DateTime.now().millisecondsSinceEpoch;
       _thinkingDurationSeconds = null;
@@ -121,16 +196,16 @@ class _ReasoningPartTileState extends State<_ReasoningPartTile> {
         _thinkingDurationSeconds = (elapsedMs / 1000).ceil().clamp(1, 999);
         _thinkingStartedAtMs = null;
       }
-      final s = _sanitizeReasoningText(widget.text);
+      final s = _sanitizeReasoningText(_targetText);
       if (_displayed != s) setState(() => _displayed = s);
-    } else if (oldWidget.text != widget.text) {
+    } else if (oldWidget.text != _targetText) {
       if (widget.streaming) {
         _flushPaced();
       } else {
         _pending?.cancel();
         _pending = null;
         _lastFlush = DateTime.now().millisecondsSinceEpoch;
-        final s = _sanitizeReasoningText(widget.text);
+        final s = _sanitizeReasoningText(_targetText);
         if (_displayed != s) setState(() => _displayed = s);
       }
     }
@@ -292,9 +367,7 @@ class _ReasoningPartTileState extends State<_ReasoningPartTile> {
           fontWeight: FontWeight.w600,
         );
     return InkWell(
-      onTap: hasReasoning
-          ? () => setState(() => _detailsOpen = !_detailsOpen)
-          : null,
+      onTap: hasReasoning ? _toggleDetailsOpen : null,
       borderRadius: BorderRadius.circular(10),
       child: Padding(
         padding: const EdgeInsets.symmetric(vertical: 4),
@@ -354,8 +427,8 @@ class _ReasoningPartTileState extends State<_ReasoningPartTile> {
             child: Padding(
               padding: const EdgeInsets.only(top: 12),
               child: _ReasoningDetailsPanel(
-                onToggle: () => setState(() => _detailsOpen = !_detailsOpen),
-                onCollapse: () => setState(() => _detailsOpen = false),
+                onToggle: _toggleDetailsOpen,
+                onCollapse: () => _setDetailsOpen(false),
                 child: widget.streaming
                     ? _buildReasoningStreaming(context)
                     : _reasoningMarkdown(context, _displayed),
@@ -650,6 +723,7 @@ class _ReasoningDetailsPanelState extends State<_ReasoningDetailsPanel> {
                   icon: Icons.keyboard_arrow_down_rounded,
                   label: l(context, '到底部', 'Bottom'),
                   onPressed: _jumpToBottom,
+                  bottom: 48,
                 ),
                 _QuickCollapseButton(
                   onPressed: widget.onCollapse,

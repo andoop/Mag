@@ -274,12 +274,14 @@ class _FloatingPillAction extends StatelessWidget {
     required this.icon,
     required this.label,
     required this.onPressed,
+    this.bottom = 6,
   });
 
   final bool visible;
   final IconData icon;
   final String label;
   final VoidCallback onPressed;
+  final double bottom;
 
   @override
   Widget build(BuildContext context) {
@@ -298,7 +300,7 @@ class _FloatingPillAction extends StatelessWidget {
               duration: const Duration(milliseconds: 140),
               curve: Curves.easeOutCubic,
               child: Padding(
-                padding: const EdgeInsets.all(6),
+                padding: EdgeInsets.fromLTRB(6, 6, 6, bottom),
                 child: Tooltip(
                   message: label,
                   child: Material(
@@ -358,7 +360,10 @@ class _QuickCollapseButton extends StatelessWidget {
         color: oc.panelBackground.withOpacity(context.isDarkMode ? 0.9 : 0.96),
         borderRadius: BorderRadius.circular(10),
         child: InkWell(
-          onTap: onPressed,
+          onTap: () {
+            const _TimelineDetachNotification().dispatch(context);
+            onPressed();
+          },
           borderRadius: BorderRadius.circular(10),
           child: Padding(
             padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),

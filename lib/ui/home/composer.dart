@@ -1464,6 +1464,30 @@ extension _HomePageComposer on _HomePageState {
                                           workspace: workspace,
                                           text: text,
                                         );
+                                        // #region agent log
+                                        _agentDebugLog(
+                                          'H5',
+                                          'lib/ui/home/composer.dart:sendPrompt',
+                                          'send prompt triggered from composer',
+                                          {
+                                            'textLength': text.length,
+                                            'attachments': _promptAttachments.length,
+                                            'focusBeforeUnfocus':
+                                                _promptFocusNode.hasFocus,
+                                            'stickToBottom': _stickToBottom.value,
+                                            'hasClients':
+                                                _timelineController.hasClients,
+                                            'offset': _timelineController.hasClients
+                                                ? _timelineController.offset
+                                                : null,
+                                            'maxScrollExtent':
+                                                _timelineController.hasClients
+                                                    ? _timelineController
+                                                        .position.maxScrollExtent
+                                                    : null,
+                                          },
+                                        );
+                                        // #endregion
                                         _promptController.clear();
                                         _promptFocusNode.unfocus();
                                         setState(() {

@@ -1,5 +1,105 @@
 part of '../../home_page.dart';
 
+bool _isPlainTextLikePart(MessagePart part) {
+  if (part.type == PartType.reasoning) return true;
+  if (part.type != PartType.text) return false;
+  return !((part.data['structured'] as bool?) ?? false);
+}
+
+String? _partTextFromController(
+  AppController controller, {
+  required String messageId,
+  required String partId,
+}) {
+  final messages = controller.state.messages;
+  for (var i = messages.length - 1; i >= 0; i--) {
+    final bundle = messages[i];
+    if (bundle.message.id != messageId) continue;
+    for (final part in bundle.parts) {
+      if (part.id == partId) {
+        return part.data['text'] as String? ?? '';
+      }
+    }
+    return null;
+  }
+  return null;
+}
+
+Object _partTileVisualSignature(
+  MessagePart part, {
+  required bool ignoreStreamingText,
+}) {
+  final structured = (part.data['structured'] as bool?) ?? false;
+  if (ignoreStreamingText && _isPlainTextLikePart(part)) {
+    return Object.hash(part.id, part.type, part.createdAt, structured);
+  }
+  switch (part.type) {
+    case PartType.text:
+    case PartType.reasoning:
+      return Object.hash(
+        part.id,
+        part.type,
+        part.createdAt,
+        structured,
+        part.data['text'],
+      );
+    case PartType.tool:
+      final state =
+          Map<String, dynamic>.from(part.data['state'] as Map? ?? const {});
+      final attachments = state['attachments'] as List? ?? const [];
+      return Object.hash(
+        part.id,
+        part.type,
+        part.createdAt,
+        identityHashCode(part),
+        part.data['tool'],
+        part.data['callID'],
+        part.data['writeContentPreview'],
+        part.data['editOldContentPreview'],
+        part.data['editContentPreview'],
+        state['status'],
+        state['title'],
+        state['phase'],
+        state['raw'],
+        (state['output'] as String?)?.length ?? 0,
+        (state['displayOutput'] as String?)?.length ?? 0,
+        attachments.length,
+        Object.hashAll([
+          for (final item in attachments)
+            if (item is Map)
+              Object.hashAll([
+                item['type'],
+                item['kind'],
+                item['path'] ?? item['url'] ?? item['filename'],
+                (item['preview'] as String?)?.length ?? 0,
+                (item['fullPreview'] as String?)?.length ?? 0,
+                (item['afterContent'] as String?)?.length ?? 0,
+                item['additions'],
+                item['deletions'],
+              ]),
+        ]),
+      );
+    default:
+      return Object.hash(
+        part.id,
+        part.type,
+        part.createdAt,
+        part.data.length,
+        identityHashCode(part),
+      );
+  }
+}
+
+Object _messageTileVisualSignature(MessageInfo message) {
+  return Object.hash(
+    message.id,
+    message.role,
+    message.agent,
+    message.createdAt,
+    message.text.length,
+  );
+}
+
 class _PartTile extends StatelessWidget {
   const _PartTile({
     required this.part,
@@ -37,6 +137,8 @@ class _PartTile extends StatelessWidget {
         return _ReasoningPartTile(
           text: text,
           streaming: streamAssistantContent,
+          messageId: message.id,
+          partId: part.id,
           workspace: workspace,
           controller: controller,
           onInsertPromptReference: onInsertPromptReference,
@@ -100,6 +202,8 @@ class _PartTile extends StatelessWidget {
           return _StreamingMarkdownText(
             text: text,
             streaming: streamAssistantContent,
+            messageId: message.id,
+            partId: part.id,
             workspace: workspace,
             controller: controller,
             onInsertPromptReference: onInsertPromptReference,
@@ -287,10 +391,11 @@ class _CachedPartTileState extends State<_CachedPartTile> {
     return Object.hashAll([
       context.themeCacheKey,
       Localizations.localeOf(context).toLanguageTag(),
-      widget.part.id,
-      identityHashCode(widget.part),
-      widget.message.id,
-      identityHashCode(widget.message),
+      _partTileVisualSignature(
+        widget.part,
+        ignoreStreamingText: widget.streamAssistantContent,
+      ),
+      _messageTileVisualSignature(widget.message),
       widget.workspace?.id,
       widget.workspace?.treeUri,
       widget.serverUri?.toString(),
@@ -500,6 +605,7 @@ class _ToolPartTile extends StatefulWidget {
 
 class _ToolPartTileState extends State<_ToolPartTile> {
   late bool _expanded;
+  bool _userToggled = false;
 
   @override
   void initState() {
@@ -511,6 +617,20 @@ class _ToolPartTileState extends State<_ToolPartTile> {
   void didUpdateWidget(covariant _ToolPartTile oldWidget) {
     super.didUpdateWidget(oldWidget);
     // 工具卡只有关闭/展开两种形态，运行和完成状态不再主动改变用户选择。
+  }
+
+  bool _shouldAutoExpand(_ToolCardModel model) {
+    if (_userToggled || !model.hasDetails || !model.isRunning) return false;
+    const fileMutationTools = {
+      'write',
+      'edit',
+      'apply_patch',
+      'delete',
+      'rename',
+      'move',
+      'copy',
+    };
+    return fileMutationTools.contains(widget.toolName);
   }
 
   String? _diffStatSuffix() {
@@ -1382,7 +1502,7 @@ class _ToolPartTileState extends State<_ToolPartTile> {
   @override
   Widget build(BuildContext context) {
     final model = _buildModel(context);
-    final expanded = _expanded;
+    final expanded = _expanded || _shouldAutoExpand(model);
     final oc = context.oc;
     final borderColor = model.isError
         ? Colors.red.withOpacity(context.isDarkMode ? 0.2 : 0.16)
@@ -1414,9 +1534,13 @@ class _ToolPartTileState extends State<_ToolPartTile> {
               model: model,
               expanded: expanded,
               onToggle: model.hasDetails
-                  ? () => setState(() {
+                  ? () {
+                      const _TimelineDetachNotification().dispatch(context);
+                      setState(() {
+                        _userToggled = true;
                         _expanded = !expanded;
-                      })
+                      });
+                    }
                   : null,
               onShowRaw: () => _openRawToolCallSheet(
                 context,
@@ -1434,7 +1558,10 @@ class _ToolPartTileState extends State<_ToolPartTile> {
                 controller: widget.controller,
                 workspace: widget.workspace,
                 serverUri: widget.serverUri,
-                onCollapse: () => setState(() => _expanded = false),
+                onCollapse: () => setState(() {
+                  _userToggled = true;
+                  _expanded = false;
+                }),
                 onInsertPromptReference: widget.onInsertPromptReference,
                 onSendPromptReference: widget.onSendPromptReference,
               ),

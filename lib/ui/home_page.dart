@@ -9,6 +9,7 @@ import 'package:flutter_highlight/flutter_highlight.dart';
 import 'package:flutter_highlight/themes/github.dart';
 import 'package:flutter_highlight/themes/atom-one-dark.dart';
 import 'package:flutter_markdown/flutter_markdown.dart';
+import 'package:flutter/rendering.dart';
 import 'package:markdown/markdown.dart' as md;
 import 'package:pdfx/pdfx.dart';
 import 'package:flutter/services.dart';
@@ -84,6 +85,69 @@ class _PromptMentionMatch {
   final String query;
 }
 
+class _MeasuredSize extends SingleChildRenderObjectWidget {
+  const _MeasuredSize({
+    super.child,
+    required this.onChanged,
+  });
+
+  final ValueChanged<Size> onChanged;
+
+  @override
+  RenderObject createRenderObject(BuildContext context) {
+    return _RenderMeasuredSize(onChanged);
+  }
+
+  @override
+  void updateRenderObject(
+    BuildContext context,
+    covariant _RenderMeasuredSize renderObject,
+  ) {
+    renderObject.onChanged = onChanged;
+  }
+}
+
+class _RenderMeasuredSize extends RenderProxyBox {
+  _RenderMeasuredSize(this.onChanged);
+
+  ValueChanged<Size> onChanged;
+  Size? _lastSize;
+
+  @override
+  void performLayout() {
+    super.performLayout();
+    final newSize = size;
+    if (_lastSize == newSize) return;
+    _lastSize = newSize;
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      onChanged(newSize);
+    });
+  }
+}
+
+class _TimelineDetachNotification extends Notification {
+  const _TimelineDetachNotification();
+}
+
+void _agentDebugLog(
+  String hypothesisId,
+  String location,
+  String message,
+  Map<String, Object?> data,
+) {}
+
+class _VisibleTimelineAnchor {
+  const _VisibleTimelineAnchor({
+    required this.stableId,
+    required this.top,
+    required this.bottom,
+  });
+
+  final String stableId;
+  final double top;
+  final double bottom;
+}
+
 class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
   final GlobalKey<ScaffoldState> _scaffoldKey = GlobalKey<ScaffoldState>();
 
@@ -106,10 +170,15 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
   final ValueNotifier<bool> _showScrollToBottomButton =
       ValueNotifier<bool>(false);
   final ValueNotifier<int> _messageVersion = ValueNotifier<int>(0);
+  final ValueNotifier<double> _composerDockHeight = ValueNotifier<double>(0);
   bool _messageVersionScheduled = false;
   bool _isAutoScrolling = false;
   bool _pendingTimelineSync = false;
   bool _timelineSyncScheduled = false;
+  int _timelineSyncGeneration = 0;
+  double? _timelineSyncLastMaxExtent;
+  int _timelineSyncStableFrames = 0;
+  int _timelineSyncAttemptCount = 0;
   // Mutated from the composer part while voice input is active.
   // ignore: prefer_final_fields
   String _voiceInputPrefix = '';
@@ -125,8 +194,11 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
   List<_TimelineTurnEntry> _cachedTimelineEntries = const [];
   String? _cachedStreamingAssistantMessageId;
   int _lastBackfillAt = 0;
+  bool _pendingRevealEarlierMessages = false;
   String _lastStateRenderKey = '';
   String _lastStructuralKey = '';
+  bool? _lastLoggedKeyboardOpen;
+  int _lastLoggedComposerDockHeight = -1;
   // ignore: prefer_final_fields
   List<WorkspaceEntry> _promptMentionSuggestions = const [];
   _PromptMentionMatch? _activePromptMention;
@@ -136,6 +208,20 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
   bool _promptMentionSearching = false;
   Timer? _promptMentionDebounce;
   Timer? _scrollToBottomButtonDebounce;
+  Timer? _streamingTimelineSyncDebounce;
+  int _lastStreamingTimelineSyncAt = 0;
+  int _timelineViewportLockGeneration = 0;
+  int _timelineViewportLockUntilMs = 0;
+  double? _timelineViewportLockPixels;
+  final GlobalKey _timelineViewportKey = GlobalKey();
+  final Map<String, GlobalKey> _timelineEntryKeys = <String, GlobalKey>{};
+  int _historyRevealGeneration = 0;
+  String? _historyRevealAnchorStableId;
+  double? _historyRevealAnchorTop;
+  double? _historyRevealAnchorBottom;
+  bool _historyRevealRestorePending = false;
+  int _historyRevealRestoreAttempt = 0;
+  int _lastLoggedRenderedMessageCount = -1;
   // ignore: prefer_final_fields
   int _promptMentionRequestId = 0;
   // ignore: prefer_final_fields
@@ -184,6 +270,7 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
       ..dispose();
     _promptMentionDebounce?.cancel();
     _scrollToBottomButtonDebounce?.cancel();
+    _streamingTimelineSyncDebounce?.cancel();
     _promptController.removeListener(_handlePromptComposerChanged);
     _promptFocusNode.removeListener(_handlePromptComposerChanged);
     unawaited(widget.controller.stopVoiceInput());
@@ -193,6 +280,7 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
     _stickToBottom.dispose();
     _showScrollToBottomButton.dispose();
     _messageVersion.dispose();
+    _composerDockHeight.dispose();
     super.dispose();
   }
 
@@ -213,6 +301,26 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
       return _syncPromptVariantSelection(state);
     }();
     if (sessionChanged) {
+      // #region agent log
+      _agentDebugLog(
+        'H8',
+        'lib/ui/home_page.dart:_onStateChanged.sessionChanged',
+        'session changed branch entered',
+        {
+          'sessionId': sid,
+          'messages': state.messages.length,
+          'historyStartIndexBefore': _historyStartIndex,
+          'stagedMessageCountBefore': _stagedMessageCount,
+          'stickToBottom': _stickToBottom.value,
+          'hasClients': _timelineController.hasClients,
+          'offset':
+              _timelineController.hasClients ? _timelineController.offset : null,
+          'maxScrollExtent': _timelineController.hasClients
+              ? _timelineController.position.maxScrollExtent
+              : null,
+        },
+      );
+      // #endregion
       _lastObservedSessionId = sid;
       _lastStateRenderKey = renderKey;
       _lastStructuralKey = _structuralRenderKey(state);
@@ -223,6 +331,21 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
       _scheduleScrollToBottomButtonVisibility(false, immediate: true);
       WidgetsBinding.instance.addPostFrameCallback((_) {
         if (!mounted || !_timelineController.hasClients) return;
+        // #region agent log
+        _agentDebugLog(
+          'H8',
+          'lib/ui/home_page.dart:_onStateChanged.sessionChanged.postFrame',
+          'session changed post-frame scroll requested',
+          {
+            'sessionId': sid,
+            'offset': _timelineController.offset,
+            'maxScrollExtent': _timelineController.position.maxScrollExtent,
+            'historyStartIndex': _historyStartIndex,
+            'stagedMessageCount': _stagedMessageCount,
+            'stickToBottom': _stickToBottom.value,
+          },
+        );
+        // #endregion
         _scrollTimelineToBottom(animate: false);
       });
       return;
@@ -237,12 +360,124 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
     _reconcileTimelineWindow(state);
     _scheduleTimelineSync(state);
     final structuralKey = _structuralRenderKey(state);
+    // #region agent log
+    _agentDebugLog(
+      'H2',
+      'lib/ui/home_page.dart:_onStateChanged',
+      'state changed after reconcile/sync scheduling',
+      {
+        'messages': state.messages.length,
+        'structuralChanged': structuralKey != _lastStructuralKey,
+        'variantChanged': variantChanged,
+        'stickToBottom': _stickToBottom.value,
+        'userInteracting': _timelineUserInteracting,
+        'historyStartIndex': _historyStartIndex,
+        'stagedMessageCount': _stagedMessageCount,
+        'hasClients': _timelineController.hasClients,
+        'offset':
+            _timelineController.hasClients ? _timelineController.offset : null,
+        'maxScrollExtent': _timelineController.hasClients
+            ? _timelineController.position.maxScrollExtent
+            : null,
+      },
+    );
+    // #endregion
     if (structuralKey != _lastStructuralKey || variantChanged) {
       _lastStructuralKey = structuralKey;
       setState(() {});
     } else {
+      _scheduleStreamingTimelineSync();
       _scheduleMessageVersionTick();
     }
+  }
+
+  void _scheduleStreamingTimelineSync() {
+    if (!_stickToBottom.value || _timelineUserInteracting) return;
+    if (_timelineViewportLocked) return;
+    if (_streamingTimelineSyncDebounce != null) return;
+    const minIntervalMs = 120;
+    final now = DateTime.now().millisecondsSinceEpoch;
+    final elapsed = now - _lastStreamingTimelineSyncAt;
+    if (elapsed >= minIntervalMs) {
+      _lastStreamingTimelineSyncAt = now;
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (!mounted || !_stickToBottom.value || _timelineUserInteracting) {
+          return;
+        }
+        _scrollTimelineToBottom(animate: false);
+      });
+      return;
+    }
+    _streamingTimelineSyncDebounce ??= Timer(
+      Duration(milliseconds: minIntervalMs - elapsed),
+      () {
+        _streamingTimelineSyncDebounce = null;
+        _lastStreamingTimelineSyncAt = DateTime.now().millisecondsSinceEpoch;
+        if (!mounted || !_stickToBottom.value || _timelineUserInteracting) {
+          return;
+        }
+        WidgetsBinding.instance.addPostFrameCallback((_) {
+          if (!mounted || !_stickToBottom.value || _timelineUserInteracting) {
+            return;
+          }
+          _scrollTimelineToBottom(animate: false);
+        });
+      },
+    );
+  }
+
+  void _detachTimelineAutoScroll() {
+    _timelineUserInteracting = true;
+    _pendingTimelineSync = false;
+    _streamingTimelineSyncDebounce?.cancel();
+    _streamingTimelineSyncDebounce = null;
+    if (_stickToBottom.value) {
+      _stickToBottom.value = false;
+    }
+    _scheduleScrollToBottomButtonVisibility(true, immediate: true);
+  }
+
+  bool get _timelineViewportLocked =>
+      DateTime.now().millisecondsSinceEpoch < _timelineViewportLockUntilMs;
+
+  void _cancelTimelineViewportLock() {
+    _timelineViewportLockGeneration++;
+    _timelineViewportLockUntilMs = 0;
+    _timelineViewportLockPixels = null;
+  }
+
+  void _lockTimelineViewport({
+    Duration duration = const Duration(milliseconds: 320),
+  }) {
+    final pixels =
+        _timelineController.hasClients ? _timelineController.offset : null;
+    _detachTimelineAutoScroll();
+    if (pixels == null) return;
+    final generation = ++_timelineViewportLockGeneration;
+    _timelineViewportLockPixels = pixels;
+    _timelineViewportLockUntilMs =
+        DateTime.now().millisecondsSinceEpoch + duration.inMilliseconds;
+    _restoreTimelineViewportLock(generation);
+  }
+
+  void _restoreTimelineViewportLock(int generation) {
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted || generation != _timelineViewportLockGeneration) return;
+      final targetPixels = _timelineViewportLockPixels;
+      if (targetPixels == null || !_timelineController.hasClients) return;
+      final now = DateTime.now().millisecondsSinceEpoch;
+      if (now >= _timelineViewportLockUntilMs) return;
+      final position = _timelineController.position;
+      final target = targetPixels.clamp(
+        position.minScrollExtent,
+        position.maxScrollExtent,
+      );
+      if ((position.pixels - target).abs() > 0.5) {
+        _markProgrammaticTimelineScroll(target);
+        _timelineController.jumpTo(target);
+      }
+      _restoreTimelineViewportLock(generation);
+    });
   }
 
   void _scheduleMessageVersionTick() {
@@ -256,15 +491,7 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
   }
 
   int _initialHistoryStart(List<SessionMessageBundle> messages) {
-    const turnInit = 10;
-    final userIndices = <int>[];
-    for (var i = 0; i < messages.length; i++) {
-      if (messages[i].message.role == SessionRole.user) {
-        userIndices.add(i);
-      }
-    }
-    if (userIndices.length <= turnInit) return 0;
-    return userIndices[userIndices.length - turnInit];
+    return 0;
   }
 
   List<SessionMessageBundle> _visibleTimelineMessages(AppState state) {
@@ -277,6 +504,25 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
     if (_stagedMessageCount <= 0 || _stagedMessageCount >= visible.length) {
       return visible;
     }
+    // #region agent log
+    _agentDebugLog(
+      'H13',
+      'lib/ui/home_page.dart:_renderedTimelineMessages',
+      'rendered timeline messages truncated by staging',
+      {
+        'historyStartIndex': _historyStartIndex,
+        'visibleCount': visible.length,
+        'stagedMessageCount': _stagedMessageCount,
+        'renderedStartIndex': visible.length - _stagedMessageCount,
+        'renderedEndIndex': visible.length - 1,
+        'firstVisibleMessageId': visible.isNotEmpty ? visible.first.message.id : null,
+        'firstRenderedMessageId':
+            visible[visible.length - _stagedMessageCount].message.id,
+        'lastRenderedMessageId': visible.last.message.id,
+        'stickToBottom': _stickToBottom.value,
+      },
+    );
+    // #endregion
     return visible.sublist(visible.length - _stagedMessageCount);
   }
 
@@ -331,29 +577,203 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
 
   bool _hasEarlierHistory(AppState state) => _historyStartIndex > 0;
 
+  GlobalKey _timelineEntryKey(String stableId) {
+    return _timelineEntryKeys.putIfAbsent(
+      stableId,
+      () => GlobalKey(debugLabel: 'timeline-entry-$stableId'),
+    );
+  }
+
+  _VisibleTimelineAnchor? _captureVisibleTimelineAnchor(
+    List<_TimelineTurnEntry> entries,
+  ) {
+    final viewportContext = _timelineViewportKey.currentContext;
+    if (viewportContext == null) return null;
+    final viewportBox = viewportContext.findRenderObject() as RenderBox?;
+    if (viewportBox == null || !viewportBox.hasSize) return null;
+    final viewportTop = viewportBox.localToGlobal(Offset.zero).dy;
+    final viewportBottom = viewportTop + viewportBox.size.height;
+    for (final entry in entries) {
+      final context = _timelineEntryKey(entry.stableId).currentContext;
+      if (context == null) continue;
+      final box = context.findRenderObject() as RenderBox?;
+      if (box == null || !box.hasSize) continue;
+      final top = box.localToGlobal(Offset.zero).dy;
+      final bottom = top + box.size.height;
+      if (bottom <= viewportTop + 1) continue;
+      if (top >= viewportBottom) continue;
+      return _VisibleTimelineAnchor(
+        stableId: entry.stableId,
+        top: top,
+        bottom: bottom,
+      );
+    }
+    return null;
+  }
+
+  _VisibleTimelineAnchor? _measureTimelineAnchorById(String? stableId) {
+    if (stableId == null || stableId.isEmpty) return null;
+    final context = _timelineEntryKey(stableId).currentContext;
+    if (context == null) return null;
+    final box = context.findRenderObject() as RenderBox?;
+    if (box == null || !box.hasSize) return null;
+    final top = box.localToGlobal(Offset.zero).dy;
+    return _VisibleTimelineAnchor(
+      stableId: stableId,
+      top: top,
+      bottom: top + box.size.height,
+    );
+  }
+
+  void _logHistoryRevealAnchorProbe(
+    String hypothesisId,
+    String location,
+    String message,
+  ) {
+    final renderedMessages = _renderedTimelineMessages(widget.controller.state);
+    final renderedEntries =
+        _renderedTimelineEntries(widget.controller.state, renderedMessages);
+    final visibleAnchor = _captureVisibleTimelineAnchor(renderedEntries);
+    final trackedStableId = _historyRevealAnchorStableId;
+    final trackedAnchor = _measureTimelineAnchorById(trackedStableId);
+    final trackedEntryIndex = trackedStableId == null
+        ? -1
+        : renderedEntries.indexWhere((entry) => entry.stableId == trackedStableId);
+    // #region agent log
+    _agentDebugLog(
+      hypothesisId,
+      location,
+      message,
+      {
+        'trackedStableId': trackedStableId,
+        'trackedStableIdPresent': trackedEntryIndex >= 0,
+        'trackedStableIdIndex': trackedEntryIndex,
+        'trackedTopBefore': _historyRevealAnchorTop,
+        'trackedBottomBefore': _historyRevealAnchorBottom,
+        'trackedTopAfter': trackedAnchor?.top,
+        'trackedBottomAfter': trackedAnchor?.bottom,
+        'firstVisibleStableId': visibleAnchor?.stableId,
+        'firstVisibleTop': visibleAnchor?.top,
+        'firstVisibleBottom': visibleAnchor?.bottom,
+        'stagedMessageCount': _stagedMessageCount,
+        'historyStartIndex': _historyStartIndex,
+        'hasClients': _timelineController.hasClients,
+        'offset': _timelineController.hasClients ? _timelineController.offset : null,
+        'maxScrollExtent': _timelineController.hasClients
+            ? _timelineController.position.maxScrollExtent
+            : null,
+      },
+    );
+    // #endregion
+  }
+
   void _reconcileTimelineWindow(AppState state) {
     final sessionId = state.session?.id ?? '';
     final initialStart = _initialHistoryStart(state.messages);
+    final beforeHistoryStart = _historyStartIndex;
+    final beforeStagedCount = _stagedMessageCount;
+    var action = 'none';
     if (_historySessionId != sessionId) {
+      _historyRevealGeneration++;
+      _historyRevealAnchorStableId = null;
+      _historyRevealAnchorTop = null;
+      _historyRevealAnchorBottom = null;
+      _historyRevealRestorePending = false;
+      _historyRevealRestoreAttempt = 0;
       _historySessionId = sessionId;
       _historyStartIndex = initialStart;
       _stagedMessageCount = 0;
+      action = 'session-reset';
+      // #region agent log
+      _agentDebugLog(
+        'H1',
+        'lib/ui/home_page.dart:_reconcileTimelineWindow',
+        'timeline window reconciled',
+        {
+          'action': action,
+          'messages': state.messages.length,
+          'initialStart': initialStart,
+          'beforeHistoryStart': beforeHistoryStart,
+          'afterHistoryStart': _historyStartIndex,
+          'beforeStagedCount': beforeStagedCount,
+          'afterStagedCount': _stagedMessageCount,
+          'stickToBottom': _stickToBottom.value,
+        },
+      );
+      // #endregion
       _scheduleStageMount(state);
       return;
     }
     if (_historyStartIndex > state.messages.length) {
       _historyStartIndex = initialStart;
+      action = 'clamp-history-start';
     }
     final visibleCount = _visibleTimelineMessages(state).length;
     if (_stagedMessageCount == 0 && visibleCount > 0) {
+      action = 'initial-stage';
+      // #region agent log
+      _agentDebugLog(
+        'H1',
+        'lib/ui/home_page.dart:_reconcileTimelineWindow',
+        'timeline window reconciled',
+        {
+          'action': action,
+          'messages': state.messages.length,
+          'visibleCount': visibleCount,
+          'beforeHistoryStart': beforeHistoryStart,
+          'afterHistoryStart': _historyStartIndex,
+          'beforeStagedCount': beforeStagedCount,
+          'afterStagedCount': _stagedMessageCount,
+          'stickToBottom': _stickToBottom.value,
+        },
+      );
+      // #endregion
       _scheduleStageMount(state);
       return;
     }
     if (_stagedMessageCount > visibleCount) {
       _stagedMessageCount = visibleCount;
+      action = 'clamp-staged-count';
     }
     if (_stagedMessageCount < visibleCount && _stickToBottom.value) {
+      action = 'continue-stage';
+      // #region agent log
+      _agentDebugLog(
+        'H1',
+        'lib/ui/home_page.dart:_reconcileTimelineWindow',
+        'timeline window reconciled',
+        {
+          'action': action,
+          'messages': state.messages.length,
+          'visibleCount': visibleCount,
+          'beforeHistoryStart': beforeHistoryStart,
+          'afterHistoryStart': _historyStartIndex,
+          'beforeStagedCount': beforeStagedCount,
+          'afterStagedCount': _stagedMessageCount,
+          'stickToBottom': _stickToBottom.value,
+        },
+      );
+      // #endregion
       _scheduleStageMount(state);
+    }
+    if (action != 'none' && action != 'continue-stage') {
+      // #region agent log
+      _agentDebugLog(
+        'H1',
+        'lib/ui/home_page.dart:_reconcileTimelineWindow',
+        'timeline window reconciled',
+        {
+          'action': action,
+          'messages': state.messages.length,
+          'visibleCount': visibleCount,
+          'beforeHistoryStart': beforeHistoryStart,
+          'afterHistoryStart': _historyStartIndex,
+          'beforeStagedCount': beforeStagedCount,
+          'afterStagedCount': _stagedMessageCount,
+          'stickToBottom': _stickToBottom.value,
+        },
+      );
+      // #endregion
     }
   }
 
@@ -366,11 +786,49 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
       _stagingKey = '';
       return;
     }
-    final key = '${state.session?.id ?? ''}|$_historyStartIndex|$visibleCount';
+    final key = '${state.session?.id ?? ''}|$_historyStartIndex';
+    final previousKey = _stagingKey;
     final resetStage = _stagingKey != key || _stagedMessageCount == 0;
+    // #region agent log
+    _agentDebugLog(
+      'H1',
+      'lib/ui/home_page.dart:_scheduleStageMount',
+      'stage mount scheduled',
+      {
+        'key': key,
+          'previousKey': previousKey,
+        'visibleCount': visibleCount,
+        'stagedBefore': _stagedMessageCount,
+        'resetStage': resetStage,
+        'historyStartIndex': _historyStartIndex,
+        'stickToBottom': _stickToBottom.value,
+      },
+    );
+    // #endregion
     _stagingKey = key;
     if (resetStage) {
-      _stagedMessageCount = visibleCount <= init ? visibleCount : init;
+      final expandFullyForPinnedEntry =
+          _stickToBottom.value &&
+          _historyStartIndex == 0 &&
+          (previousKey != key || _stagedMessageCount == 0);
+      _stagedMessageCount = expandFullyForPinnedEntry
+          ? visibleCount
+          : (visibleCount <= init ? visibleCount : init);
+      // #region agent log
+      _agentDebugLog(
+        'H9',
+        'lib/ui/home_page.dart:_scheduleStageMount',
+        'stage mount reset applied',
+        {
+          'key': key,
+          'visibleCount': visibleCount,
+          'stagedAfterReset': _stagedMessageCount,
+          'expandedFullyForPinnedEntry': expandFullyForPinnedEntry,
+          'historyStartIndex': _historyStartIndex,
+          'stickToBottom': _stickToBottom.value,
+        },
+      );
+      // #endregion
     }
     if (_stagedMessageCount >= visibleCount) return;
     WidgetsBinding.instance.addPostFrameCallback((_) {
@@ -378,10 +836,26 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
       final latestVisible =
           _visibleTimelineMessages(widget.controller.state).length;
       if (_stagedMessageCount >= latestVisible) return;
+      final before = _stagedMessageCount;
       setState(() {
         _stagedMessageCount =
             (_stagedMessageCount + batch).clamp(0, latestVisible);
       });
+      // #region agent log
+      _agentDebugLog(
+        'H1',
+        'lib/ui/home_page.dart:_scheduleStageMount.postFrame',
+        'stage mount batch applied',
+        {
+          'key': key,
+          'latestVisible': latestVisible,
+          'stagedBefore': before,
+          'stagedAfter': _stagedMessageCount,
+          'historyStartIndex': _historyStartIndex,
+          'stickToBottom': _stickToBottom.value,
+        },
+      );
+      // #endregion
       if (_stagedMessageCount < latestVisible) {
         _scheduleStageMount(widget.controller.state);
       }
@@ -391,6 +865,7 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
   void _revealEarlierMessages({bool all = false}) {
     final state = widget.controller.state;
     if (!_hasEarlierHistory(state) || !_timelineController.hasClients) return;
+    _pendingRevealEarlierMessages = false;
     const turnBatch = 8;
     final userIndices = <int>[];
     for (var i = 0; i < state.messages.length; i++) {
@@ -404,16 +879,209 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
         all ? 0 : (currentTurnIndex - turnBatch).clamp(0, currentTurnIndex);
     final nextStart = nextTurnIndex <= 0 ? 0 : userIndices[nextTurnIndex];
     if (nextStart == _historyStartIndex) return;
+    final visibleCountBefore = _visibleTimelineMessages(state).length;
+    final nextVisibleCount = state.messages.length - nextStart;
+    final renderedMessagesBefore = _renderedTimelineMessages(state);
+    final renderedEntriesBefore =
+        _renderedTimelineEntries(state, renderedMessagesBefore);
+    final visibleAnchorBefore = _captureVisibleTimelineAnchor(renderedEntriesBefore);
     final beforeOffset = _timelineController.offset;
     final beforeMax = _timelineController.position.maxScrollExtent;
+    // #region agent log
+    _agentDebugLog(
+      'H14',
+      'lib/ui/home_page.dart:_revealEarlierMessages',
+      'revealing earlier messages',
+      {
+        'all': all,
+        'currentHistoryStartIndex': _historyStartIndex,
+        'nextHistoryStartIndex': nextStart,
+        'beforeOffset': beforeOffset,
+        'beforeMaxScrollExtent': beforeMax,
+        'stagedMessageCount': _stagedMessageCount,
+        'visibleCountBefore': visibleCountBefore,
+        'visibleCountAfter': nextVisibleCount,
+        'anchorStableId': visibleAnchorBefore?.stableId,
+        'anchorTop': visibleAnchorBefore?.top,
+        'anchorBottom': visibleAnchorBefore?.bottom,
+        'stickToBottom': _stickToBottom.value,
+        'userInteracting': _timelineUserInteracting,
+      },
+    );
+    // #endregion
+    final generation = ++_historyRevealGeneration;
+    _historyRevealAnchorStableId = visibleAnchorBefore?.stableId;
+    _historyRevealAnchorTop = visibleAnchorBefore?.top;
+    _historyRevealAnchorBottom = visibleAnchorBefore?.bottom;
+    _historyRevealRestorePending = visibleAnchorBefore != null;
+    _historyRevealRestoreAttempt = 0;
     setState(() {
       _historyStartIndex = nextStart;
-      _scheduleStageMount(widget.controller.state);
+      _stagingKey = '${state.session?.id ?? ''}|$nextStart';
+      _stagedMessageCount = nextVisibleCount;
     });
     WidgetsBinding.instance.addPostFrameCallback((_) {
-      if (!mounted || !_timelineController.hasClients) return;
-      final delta = _timelineController.position.maxScrollExtent - beforeMax;
-      _timelineController.jumpTo(beforeOffset + delta);
+      if (!mounted || generation != _historyRevealGeneration) return;
+      _logHistoryRevealAnchorProbe(
+        'H19',
+        'lib/ui/home_page.dart:_revealEarlierMessages.postFrame1',
+        'history reveal visible anchor first frame',
+      );
+      _restoreHistoryRevealAnchor(generation, immediate: true);
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (!mounted || generation != _historyRevealGeneration) return;
+        _logHistoryRevealAnchorProbe(
+          'H20',
+          'lib/ui/home_page.dart:_revealEarlierMessages.postFrame2',
+          'history reveal visible anchor second frame',
+        );
+      });
+    });
+  }
+
+  void _restoreHistoryRevealAnchor(int generation, {bool immediate = false}) {
+    void runRestore() {
+      if (!mounted || generation != _historyRevealGeneration) return;
+      if (!_historyRevealRestorePending || !_timelineController.hasClients) return;
+      _historyRevealRestoreAttempt += 1;
+      final trackedStableId = _historyRevealAnchorStableId;
+      final trackedTopBefore = _historyRevealAnchorTop;
+      final trackedAnchor = _measureTimelineAnchorById(trackedStableId);
+      // #region agent log
+      _agentDebugLog(
+        'H21',
+        'lib/ui/home_page.dart:_restoreHistoryRevealAnchor',
+        'history reveal anchor restore probe',
+        {
+          'trackedStableId': trackedStableId,
+          'attempt': _historyRevealRestoreAttempt,
+          'trackedTopBefore': trackedTopBefore,
+          'trackedTopAfter': trackedAnchor?.top,
+          'trackedBottomAfter': trackedAnchor?.bottom,
+          'hasClients': _timelineController.hasClients,
+          'offset': _timelineController.hasClients ? _timelineController.offset : null,
+          'maxScrollExtent': _timelineController.hasClients
+              ? _timelineController.position.maxScrollExtent
+              : null,
+          'immediate': immediate,
+        },
+      );
+      // #endregion
+      if (trackedAnchor == null || trackedTopBefore == null) {
+        if (_historyRevealRestoreAttempt < 8) {
+          _restoreHistoryRevealAnchor(generation);
+          return;
+        }
+        _historyRevealRestorePending = false;
+        _historyRevealAnchorStableId = null;
+        _historyRevealAnchorTop = null;
+        _historyRevealAnchorBottom = null;
+        return;
+      }
+      final delta = trackedAnchor.top - trackedTopBefore;
+      final targetOffset = (_timelineController.offset + delta).clamp(
+        0.0,
+        _timelineController.position.maxScrollExtent,
+      ).toDouble();
+      // #region agent log
+      _agentDebugLog(
+        'H21',
+        'lib/ui/home_page.dart:_restoreHistoryRevealAnchor',
+        'history reveal anchor restored',
+        {
+          'trackedStableId': trackedStableId,
+          'attempt': _historyRevealRestoreAttempt,
+          'trackedTopBefore': trackedTopBefore,
+          'trackedTopAfter': trackedAnchor.top,
+          'delta': delta,
+          'currentOffset': _timelineController.offset,
+          'targetOffset': targetOffset,
+          'maxScrollExtent': _timelineController.position.maxScrollExtent,
+          'immediate': immediate,
+        },
+      );
+      // #endregion
+      if (delta.abs() > 0.5) {
+        _markProgrammaticTimelineScroll(targetOffset);
+        _timelineController.jumpTo(targetOffset);
+        WidgetsBinding.instance.addPostFrameCallback((_) {
+          if (!mounted || generation != _historyRevealGeneration) return;
+          final settledAnchor = _measureTimelineAnchorById(trackedStableId);
+          final renderedMessages = _renderedTimelineMessages(widget.controller.state);
+          final renderedEntries =
+              _renderedTimelineEntries(widget.controller.state, renderedMessages);
+          final visibleAnchor = _captureVisibleTimelineAnchor(renderedEntries);
+          // #region agent log
+          _agentDebugLog(
+            'H22',
+            'lib/ui/home_page.dart:_restoreHistoryRevealAnchor.postFrame1',
+            'history reveal anchor settled first frame',
+            {
+              'trackedStableId': trackedStableId,
+              'trackedTopBefore': trackedTopBefore,
+              'trackedTopSettled': settledAnchor?.top,
+              'trackedBottomSettled': settledAnchor?.bottom,
+              'firstVisibleStableId': visibleAnchor?.stableId,
+              'firstVisibleTop': visibleAnchor?.top,
+              'firstVisibleBottom': visibleAnchor?.bottom,
+              'currentOffset': _timelineController.hasClients
+                  ? _timelineController.offset
+                  : null,
+              'maxScrollExtent': _timelineController.hasClients
+                  ? _timelineController.position.maxScrollExtent
+                  : null,
+              'recentProgrammatic': _isRecentProgrammaticTimelineScroll(),
+              'userInteracting': _timelineUserInteracting,
+            },
+          );
+          // #endregion
+          WidgetsBinding.instance.addPostFrameCallback((_) {
+            if (!mounted || generation != _historyRevealGeneration) return;
+            final settledAnchor2 = _measureTimelineAnchorById(trackedStableId);
+            final renderedMessages2 =
+                _renderedTimelineMessages(widget.controller.state);
+            final renderedEntries2 =
+                _renderedTimelineEntries(widget.controller.state, renderedMessages2);
+            final visibleAnchor2 = _captureVisibleTimelineAnchor(renderedEntries2);
+            // #region agent log
+            _agentDebugLog(
+              'H23',
+              'lib/ui/home_page.dart:_restoreHistoryRevealAnchor.postFrame2',
+              'history reveal anchor settled second frame',
+              {
+                'trackedStableId': trackedStableId,
+                'trackedTopBefore': trackedTopBefore,
+                'trackedTopSettled': settledAnchor2?.top,
+                'trackedBottomSettled': settledAnchor2?.bottom,
+                'firstVisibleStableId': visibleAnchor2?.stableId,
+                'firstVisibleTop': visibleAnchor2?.top,
+                'firstVisibleBottom': visibleAnchor2?.bottom,
+                'currentOffset': _timelineController.hasClients
+                    ? _timelineController.offset
+                    : null,
+                'maxScrollExtent': _timelineController.hasClients
+                    ? _timelineController.position.maxScrollExtent
+                    : null,
+                'recentProgrammatic': _isRecentProgrammaticTimelineScroll(),
+                'userInteracting': _timelineUserInteracting,
+              },
+            );
+            // #endregion
+          });
+        });
+      }
+      _historyRevealRestorePending = false;
+      _historyRevealAnchorStableId = null;
+      _historyRevealAnchorTop = null;
+      _historyRevealAnchorBottom = null;
+    }
+
+    if (immediate) {
+      runRestore();
+      return;
+    }
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      runRestore();
     });
   }
 
@@ -741,6 +1409,28 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
     final state = widget.controller.state;
     final mediaQuery = MediaQuery.of(context);
     final isKeyboardOpen = mediaQuery.viewInsets.bottom > 0;
+    if (_lastLoggedKeyboardOpen != isKeyboardOpen) {
+      _lastLoggedKeyboardOpen = isKeyboardOpen;
+      // #region agent log
+      _agentDebugLog(
+        'H5',
+        'lib/ui/home_page.dart:build',
+        'keyboard visibility changed',
+        {
+          'isKeyboardOpen': isKeyboardOpen,
+          'viewInsetBottom': mediaQuery.viewInsets.bottom,
+          'composerDockHeight': _composerDockHeight.value,
+          'stickToBottom': _stickToBottom.value,
+          'hasClients': _timelineController.hasClients,
+          'offset':
+              _timelineController.hasClients ? _timelineController.offset : null,
+          'maxScrollExtent': _timelineController.hasClients
+              ? _timelineController.position.maxScrollExtent
+              : null,
+        },
+      );
+      // #endregion
+    }
     final modelConfig = state.modelConfig ?? ModelConfig.defaults();
     final currentModelChoice = _findModelChoice(
       modelConfig.provider,
@@ -831,6 +1521,35 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
                               final liveState = widget.controller.state;
                               final renderedMessages =
                                   _renderedTimelineMessages(liveState);
+                              if (renderedMessages.length !=
+                                  _lastLoggedRenderedMessageCount) {
+                                _lastLoggedRenderedMessageCount =
+                                    renderedMessages.length;
+                                // #region agent log
+                                _agentDebugLog(
+                                  'H4',
+                                  'lib/ui/home_page.dart:timeline builder',
+                                  'rendered timeline message count changed',
+                                  {
+                                    'stateMessages': liveState.messages.length,
+                                    'renderedMessages': renderedMessages.length,
+                                    'historyStartIndex': _historyStartIndex,
+                                    'stagedMessageCount': _stagedMessageCount,
+                                    'stickToBottom': _stickToBottom.value,
+                                    'hasClients':
+                                        _timelineController.hasClients,
+                                    'offset': _timelineController.hasClients
+                                        ? _timelineController.offset
+                                        : null,
+                                    'maxScrollExtent':
+                                        _timelineController.hasClients
+                                            ? _timelineController
+                                                .position.maxScrollExtent
+                                            : null,
+                                  },
+                                );
+                                // #endregion
+                              }
                               final renderedTimelineEntries =
                                   _renderedTimelineEntries(
                                 liveState,
@@ -844,41 +1563,100 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
                                           renderedTimelineEntries,
                                         )
                                       : null;
-                              return NotificationListener<ScrollNotification>(
-                                onNotification: _handleTimelineNotification,
-                                child: ListView.builder(
-                                  key: ValueKey<String>(
-                                      'timeline-${liveState.session?.id ?? 'none'}'),
-                                  controller: _timelineController,
-                                  keyboardDismissBehavior:
-                                      ScrollViewKeyboardDismissBehavior.onDrag,
-                                  physics: const BouncingScrollPhysics(
-                                      parent: AlwaysScrollableScrollPhysics()),
-                                  padding: EdgeInsets.fromLTRB(
-                                      12, isKeyboardOpen ? 8 : 12, 12, 16),
-                                  itemCount: _timelineItemCount(
-                                      liveState, renderedTimelineEntries),
-                                  itemBuilder: (context, index) =>
-                                      _buildTimelineItem(
-                                    context,
-                                    state: liveState,
-                                    modelConfig: modelConfig,
-                                    currentModelChoice: currentModelChoice,
-                                    showModelFreeTag: showModelFreeTag,
-                                    showModelLatestTag: showModelLatestTag,
-                                    isKeyboardOpen: isKeyboardOpen,
-                                    renderedMessages: renderedMessages,
-                                    renderedEntries: renderedTimelineEntries,
-                                    streamingAssistantMessageId:
-                                        streamingAssistantMessageId,
-                                    index: index,
+                              return NotificationListener<
+                                  _TimelineDetachNotification>(
+                                onNotification: (_) {
+                                  _lockTimelineViewport();
+                                  return false;
+                                },
+                                child: NotificationListener<ScrollNotification>(
+                                  onNotification: _handleTimelineNotification,
+                                  child: KeyedSubtree(
+                                    key: ValueKey<String>(
+                                        'timeline-${liveState.session?.id ?? 'none'}'),
+                                    child: Builder(
+                                      builder: (context) {
+                                        final expandTimelineCacheExtent =
+                                            _historyRevealRestorePending ||
+                                            (_pendingTimelineSync &&
+                                                _stickToBottom.value);
+                                        return ListView.builder(
+                                          key: _timelineViewportKey,
+                                          cacheExtent: expandTimelineCacheExtent
+                                              ? 200000
+                                              : null,
+                                          controller: _timelineController,
+                                          keyboardDismissBehavior:
+                                              ScrollViewKeyboardDismissBehavior
+                                                  .onDrag,
+                                          physics: const BouncingScrollPhysics(
+                                              parent:
+                                                  AlwaysScrollableScrollPhysics()),
+                                          padding: EdgeInsets.fromLTRB(
+                                              12, isKeyboardOpen ? 8 : 12, 12, 16),
+                                          itemCount: _timelineItemCount(
+                                              liveState, renderedTimelineEntries),
+                                          itemBuilder: (context, index) =>
+                                              _buildTimelineItem(
+                                            context,
+                                            state: liveState,
+                                            modelConfig: modelConfig,
+                                            currentModelChoice:
+                                                currentModelChoice,
+                                            showModelFreeTag:
+                                                showModelFreeTag,
+                                            showModelLatestTag:
+                                                showModelLatestTag,
+                                            isKeyboardOpen: isKeyboardOpen,
+                                            renderedMessages:
+                                                renderedMessages,
+                                            renderedEntries:
+                                                renderedTimelineEntries,
+                                            streamingAssistantMessageId:
+                                                streamingAssistantMessageId,
+                                            index: index,
+                                          ),
+                                        );
+                                      },
+                                    ),
                                   ),
                                 ),
                               );
                             },
                           ),
                   ),
-                  _buildComposerDock(context, state, isKeyboardOpen),
+                  _MeasuredSize(
+                    onChanged: (size) {
+                      final height = size.height;
+                      if ((_composerDockHeight.value - height).abs() < 0.5) {
+                        return;
+                      }
+                      _composerDockHeight.value = height;
+                      final roundedHeight = height.round();
+                      if (_lastLoggedComposerDockHeight != roundedHeight) {
+                        _lastLoggedComposerDockHeight = roundedHeight;
+                        // #region agent log
+                        _agentDebugLog(
+                          'H5',
+                          'lib/ui/home_page.dart:_MeasuredSize.onChanged',
+                          'composer dock height changed',
+                          {
+                            'height': height,
+                            'stickToBottom': _stickToBottom.value,
+                            'hasClients': _timelineController.hasClients,
+                            'offset': _timelineController.hasClients
+                                ? _timelineController.offset
+                                : null,
+                            'maxScrollExtent': _timelineController.hasClients
+                                ? _timelineController.position.maxScrollExtent
+                                : null,
+                          },
+                        );
+                        // #endregion
+                      }
+                    },
+                    child: _buildComposerDock(context, state, isKeyboardOpen),
+                  ),
                 ],
               ),
               if (state.session != null)
@@ -889,22 +1667,30 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
                         _isTimelineStaging(state)) {
                       return const SizedBox.shrink();
                     }
-                    return Positioned(
-                      right: 16,
-                      bottom: isKeyboardOpen ? 104 : 132,
-                      child: FilledButton.tonalIcon(
-                        style: FilledButton.styleFrom(
-                          backgroundColor: context.oc.panelBackground,
-                          foregroundColor: context.oc.foreground,
-                          elevation: 0,
-                          side: BorderSide(color: context.oc.borderColor),
-                        ),
-                        onPressed: () {
-                          _resumeTimelineAutoScroll();
-                        },
-                        icon: const Icon(Icons.arrow_downward, size: 16),
-                        label: Text(l(context, '回到底部', 'Bottom')),
-                      ),
+                    return ValueListenableBuilder<double>(
+                      valueListenable: _composerDockHeight,
+                      builder: (context, composerDockHeight, _) {
+                        final bottom = composerDockHeight > 0
+                            ? composerDockHeight + 24
+                            : (isKeyboardOpen ? 140.0 : 188.0);
+                        return Positioned(
+                          right: 16,
+                          bottom: bottom,
+                          child: FilledButton.tonalIcon(
+                            style: FilledButton.styleFrom(
+                              backgroundColor: context.oc.panelBackground,
+                              foregroundColor: context.oc.foreground,
+                              elevation: 0,
+                              side: BorderSide(color: context.oc.borderColor),
+                            ),
+                            onPressed: () {
+                              _resumeTimelineAutoScroll();
+                            },
+                            icon: const Icon(Icons.arrow_downward, size: 16),
+                            label: Text(l(context, '回到底部', 'Bottom')),
+                          ),
+                        );
+                      },
                     );
                   },
                 ),
@@ -933,8 +1719,82 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
   }
 
   bool _handleTimelineNotification(ScrollNotification notification) {
-    if (notification is ScrollStartNotification &&
-        notification.dragDetails != null) {
+    if (notification.depth != 0) return false;
+    final recentProgrammatic =
+        _isRecentProgrammaticTimelineScroll(notification.metrics);
+    if (notification is UserScrollNotification ||
+        notification is ScrollStartNotification ||
+        notification is ScrollEndNotification) {
+      // #region agent log
+      _agentDebugLog(
+        'H11',
+        'lib/ui/home_page.dart:_handleTimelineNotification',
+        'timeline notification observed',
+        {
+          'type': notification.runtimeType.toString(),
+          if (notification is UserScrollNotification)
+            'direction': notification.direction.name,
+          'recentProgrammatic': recentProgrammatic,
+          'stickToBottom': _stickToBottom.value,
+          'userInteracting': _timelineUserInteracting,
+          'pendingTimelineSync': _pendingTimelineSync,
+          'offset': notification.metrics.pixels,
+          'maxScrollExtent': notification.metrics.maxScrollExtent,
+          'distanceFromBottom':
+              notification.metrics.maxScrollExtent - notification.metrics.pixels,
+        },
+      );
+      // #endregion
+    }
+    if (notification is UserScrollNotification &&
+        notification.direction == ScrollDirection.idle) {
+      if (_timelineViewportLocked) return false;
+      final distance =
+          notification.metrics.maxScrollExtent - notification.metrics.pixels;
+      final atBottom = distance < 10;
+      _timelineUserInteracting = false;
+      if (_stickToBottom.value != atBottom) {
+        // #region agent log
+        _agentDebugLog(
+          'H32',
+          'lib/ui/home_page.dart:_handleTimelineNotification.userIdle',
+          'stick to bottom updated from user idle notification',
+          {
+            'atBottom': atBottom,
+            'distance': distance,
+            'offset': notification.metrics.pixels,
+            'maxScrollExtent': notification.metrics.maxScrollExtent,
+          },
+        );
+        // #endregion
+        _stickToBottom.value = atBottom;
+      }
+      _maybeRevealEarlierMessages(
+        source: 'user-scroll-idle',
+        pixels: notification.metrics.pixels,
+        deferOnly: false,
+      );
+      return false;
+    }
+    if (notification is UserScrollNotification &&
+        notification.direction != ScrollDirection.idle &&
+        !recentProgrammatic) {
+      // #region agent log
+      _agentDebugLog(
+        'H28',
+        'lib/ui/home_page.dart:_handleTimelineNotification',
+        'user scroll notification detached timeline',
+        {
+          'direction': notification.direction.name,
+          'stickToBottom': _stickToBottom.value,
+          'userInteracting': _timelineUserInteracting,
+          'pendingTimelineSync': _pendingTimelineSync,
+          'offset': notification.metrics.pixels,
+          'maxScrollExtent': notification.metrics.maxScrollExtent,
+        },
+      );
+      // #endregion
+      _cancelTimelineViewportLock();
       _timelineUserInteracting = true;
       _pendingTimelineSync = false;
       if (_stickToBottom.value) {
@@ -943,44 +1803,187 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
       _scheduleScrollToBottomButtonVisibility(true, immediate: true);
       return false;
     }
-    if (_isRecentProgrammaticTimelineScroll(notification.metrics)) return false;
+    if (notification is ScrollStartNotification &&
+        !recentProgrammatic) {
+      // #region agent log
+      _agentDebugLog(
+        'H27',
+        'lib/ui/home_page.dart:_handleTimelineNotification',
+        'scroll start marked timeline interacting',
+        {
+          'stickToBottom': _stickToBottom.value,
+          'userInteracting': _timelineUserInteracting,
+          'pendingTimelineSync': _pendingTimelineSync,
+          'offset': notification.metrics.pixels,
+          'maxScrollExtent': notification.metrics.maxScrollExtent,
+        },
+      );
+      // #endregion
+      _timelineUserInteracting = true;
+      _pendingTimelineSync = false;
+    }
+    if (recentProgrammatic) return false;
     if (notification is ScrollUpdateNotification ||
         notification is ScrollEndNotification) {
       final distance =
           notification.metrics.maxScrollExtent - notification.metrics.pixels;
       final nextStick =
           _computeStickToBottom(distance, current: _stickToBottom.value);
-      if (_timelineUserInteracting ||
-          (notification is ScrollUpdateNotification &&
-              notification.dragDetails != null)) {
+      final userScrollUpdate = notification is ScrollUpdateNotification &&
+          notification.dragDetails != null;
+      if (_timelineUserInteracting || userScrollUpdate) {
         // Deer-flow 的思路是用户一旦脱离底部，就进入 detached 状态；
-        // 拖动过程中不因为仍靠近底部而重新吸底，避免流式输出把用户拉回去。
+        // 拖动/滚轮过程中不因为仍靠近底部而重新吸底，避免流式输出把用户拉回去。
         if (_stickToBottom.value) {
+          // #region agent log
+          _agentDebugLog(
+            'H29',
+            'lib/ui/home_page.dart:_handleTimelineNotification',
+            'stick to bottom detached in update branch',
+            {
+              'notificationType': notification.runtimeType.toString(),
+              'userInteracting': _timelineUserInteracting,
+              'userScrollUpdate': userScrollUpdate,
+              'scrollDelta': notification is ScrollUpdateNotification
+                  ? notification.scrollDelta
+                  : null,
+              'hasDragDetails': notification is ScrollUpdateNotification
+                  ? notification.dragDetails != null
+                  : false,
+              'offset': notification.metrics.pixels,
+              'maxScrollExtent': notification.metrics.maxScrollExtent,
+            },
+          );
+          // #endregion
           _stickToBottom.value = false;
         }
       } else if (!_stickToBottom.value && nextStick) {
+        // #region agent log
+        _agentDebugLog(
+          'H30',
+          'lib/ui/home_page.dart:_handleTimelineNotification',
+          'stick to bottom reattached in notification branch',
+          {
+            'notificationType': notification.runtimeType.toString(),
+            'distance': distance,
+            'nextStick': nextStick,
+            'offset': notification.metrics.pixels,
+            'maxScrollExtent': notification.metrics.maxScrollExtent,
+          },
+        );
+        // #endregion
         _stickToBottom.value = true;
       }
-      if (notification.metrics.pixels < 180 &&
-          _hasEarlierHistory(widget.controller.state)) {
-        final now = DateTime.now().millisecondsSinceEpoch;
-        if (now - _lastBackfillAt > 300) {
-          _lastBackfillAt = now;
-          _revealEarlierMessages();
-        }
-      }
+      _maybeRevealEarlierMessages(
+        source: notification is ScrollEndNotification
+            ? 'scroll-end'
+            : 'scroll-update',
+        pixels: notification.metrics.pixels,
+        deferOnly: _timelineUserInteracting || userScrollUpdate,
+      );
       if (notification is ScrollEndNotification) {
         final atBottom = distance < 10;
+        // #region agent log
+        _agentDebugLog(
+          'H12',
+          'lib/ui/home_page.dart:_handleTimelineNotification.scrollEnd',
+          'scroll end evaluated for stickiness',
+          {
+            'distance': distance,
+            'atBottom': atBottom,
+            'stickBefore': _stickToBottom.value,
+            'userInteracting': _timelineUserInteracting,
+            'offset': notification.metrics.pixels,
+            'maxScrollExtent': notification.metrics.maxScrollExtent,
+          },
+        );
+        // #endregion
         if (_stickToBottom.value != atBottom) {
+          // #region agent log
+          _agentDebugLog(
+            'H33',
+            'lib/ui/home_page.dart:_handleTimelineNotification.scrollEnd',
+            'stick to bottom updated from scroll end notification',
+            {
+              'atBottom': atBottom,
+              'distance': distance,
+              'offset': notification.metrics.pixels,
+              'maxScrollExtent': notification.metrics.maxScrollExtent,
+            },
+          );
+          // #endregion
           _stickToBottom.value = atBottom;
         }
         _timelineUserInteracting = false;
+        _maybeRevealEarlierMessages(
+          source: 'scroll-end-post-idle',
+          pixels: notification.metrics.pixels,
+          deferOnly: false,
+        );
       }
     }
     return false;
   }
 
+  void _maybeRevealEarlierMessages({
+    required String source,
+    required double pixels,
+    required bool deferOnly,
+  }) {
+    final hasEarlier = _hasEarlierHistory(widget.controller.state);
+    final nearTop = pixels < 180;
+    if (!hasEarlier || !nearTop) {
+      if (pixels > 240) {
+        _pendingRevealEarlierMessages = false;
+      }
+      return;
+    }
+    if (deferOnly) {
+      if (!_pendingRevealEarlierMessages) {
+        _pendingRevealEarlierMessages = true;
+        // #region agent log
+        _agentDebugLog(
+          'H24',
+          'lib/ui/home_page.dart:_maybeRevealEarlierMessages',
+          'history reveal deferred until idle',
+          {
+            'source': source,
+            'pixels': pixels,
+            'userInteracting': _timelineUserInteracting,
+            'hasEarlierHistory': hasEarlier,
+          },
+        );
+        // #endregion
+      }
+      return;
+    }
+    if (_timelineUserInteracting) return;
+    final now = DateTime.now().millisecondsSinceEpoch;
+    if (now - _lastBackfillAt <= 300) return;
+    _lastBackfillAt = now;
+    _pendingRevealEarlierMessages = false;
+    _revealEarlierMessages();
+  }
+
   void _handleStickToBottomChanged() {
+    // #region agent log
+    _agentDebugLog(
+      'H12',
+      'lib/ui/home_page.dart:_handleStickToBottomChanged',
+      'stick to bottom changed',
+      {
+        'stickToBottom': _stickToBottom.value,
+        'userInteracting': _timelineUserInteracting,
+        'pendingTimelineSync': _pendingTimelineSync,
+        'hasClients': _timelineController.hasClients,
+        'offset':
+            _timelineController.hasClients ? _timelineController.offset : null,
+        'maxScrollExtent': _timelineController.hasClients
+            ? _timelineController.position.maxScrollExtent
+            : null,
+      },
+    );
+    // #endregion
     _scheduleScrollToBottomButtonVisibility(!_stickToBottom.value);
   }
 
@@ -1014,6 +2017,32 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
     if (anchor == _lastTimelineAnchor) return;
     _lastTimelineAnchor = anchor;
     _pendingTimelineSync = true;
+    final generation = ++_timelineSyncGeneration;
+    _timelineSyncLastMaxExtent = null;
+    _timelineSyncStableFrames = 0;
+    _timelineSyncAttemptCount = 0;
+    // #region agent log
+    _agentDebugLog(
+      'H3',
+      'lib/ui/home_page.dart:_scheduleTimelineSync',
+      'timeline sync scheduled',
+      {
+        'messages': state.messages.length,
+        'anchor': anchor,
+        'stickToBottom': _stickToBottom.value,
+        'userInteracting': _timelineUserInteracting,
+        'viewportLocked': _timelineViewportLocked,
+        'syncScheduled': _timelineSyncScheduled,
+        'isAutoScrolling': _isAutoScrolling,
+        'hasClients': _timelineController.hasClients,
+        'offset':
+            _timelineController.hasClients ? _timelineController.offset : null,
+        'maxScrollExtent': _timelineController.hasClients
+            ? _timelineController.position.maxScrollExtent
+            : null,
+      },
+    );
+    // #endregion
     if (_isAutoScrolling) {
       return;
     }
@@ -1022,17 +2051,69 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
     }
     _timelineSyncScheduled = true;
     WidgetsBinding.instance.addPostFrameCallback((_) {
-      _timelineSyncScheduled = false;
-      if (!mounted || !_pendingTimelineSync || !_stickToBottom.value) return;
-      if (_isAutoScrolling) {
-        return;
-      }
-      _pendingTimelineSync = false;
-      _scrollTimelineToBottom(animate: false);
-      if (_pendingTimelineSync) {
-        _scheduleTimelineSync(widget.controller.state);
-      }
+      _runTimelineSyncWhenStable(generation);
     });
+  }
+
+  void _runTimelineSyncWhenStable(int generation) {
+    _timelineSyncScheduled = false;
+    if (!mounted || generation != _timelineSyncGeneration) return;
+    if (!_pendingTimelineSync || !_stickToBottom.value) return;
+    if (_isAutoScrolling || _timelineViewportLocked) {
+      _timelineSyncScheduled = true;
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        _runTimelineSyncWhenStable(generation);
+      });
+      return;
+    }
+    if (!_timelineController.hasClients) {
+      _timelineSyncScheduled = true;
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        _runTimelineSyncWhenStable(generation);
+      });
+      return;
+    }
+    final maxExtent = _timelineController.position.maxScrollExtent;
+    final lastMaxExtent = _timelineSyncLastMaxExtent;
+    _timelineSyncAttemptCount += 1;
+    if (lastMaxExtent != null && (lastMaxExtent - maxExtent).abs() < 1) {
+      _timelineSyncStableFrames += 1;
+    } else {
+      _timelineSyncStableFrames = 0;
+    }
+    _timelineSyncLastMaxExtent = maxExtent;
+    const requiredStableFrames = 1;
+    // #region agent log
+    _agentDebugLog(
+      'H3',
+      'lib/ui/home_page.dart:_runTimelineSyncWhenStable',
+      'timeline sync stability check',
+      {
+        'generation': generation,
+        'attempt': _timelineSyncAttemptCount,
+        'maxExtent': maxExtent,
+        'lastMaxExtent': lastMaxExtent,
+        'stableFrames': _timelineSyncStableFrames,
+        'requiredStableFrames': requiredStableFrames,
+        'offset': _timelineController.offset,
+        'stickToBottom': _stickToBottom.value,
+        'pendingTimelineSync': _pendingTimelineSync,
+      },
+    );
+    // #endregion
+    if (_timelineSyncStableFrames < requiredStableFrames &&
+        _timelineSyncAttemptCount < 8) {
+      _timelineSyncScheduled = true;
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        _runTimelineSyncWhenStable(generation);
+      });
+      return;
+    }
+    _pendingTimelineSync = false;
+    _scrollTimelineToBottom(animate: false);
+    if (_pendingTimelineSync) {
+      _scheduleTimelineSync(widget.controller.state);
+    }
   }
 
   void _scrollTimelineToBottom({bool animate = true}) {
@@ -1040,6 +2121,26 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
     final offset = _timelineController.position.maxScrollExtent;
     final current = _timelineController.offset;
     final delta = (offset - current).abs();
+    final isInitialEnter =
+        _lastObservedSessionId != null && _stagedMessageCount <= 24;
+    // #region agent log
+    _agentDebugLog(
+      isInitialEnter ? 'H10' : 'H3',
+      'lib/ui/home_page.dart:_scrollTimelineToBottom',
+      'scroll to bottom requested',
+      {
+        'animate': animate,
+        'isInitialEnter': isInitialEnter,
+        'targetOffset': offset,
+        'currentOffset': current,
+        'delta': delta,
+        'stickToBottom': _stickToBottom.value,
+        'userInteracting': _timelineUserInteracting,
+        'viewportLocked': _timelineViewportLocked,
+        'pendingTimelineSync': _pendingTimelineSync,
+      },
+    );
+    // #endregion
     if (delta < 2) {
       _markProgrammaticTimelineScroll(offset);
       if (_stickToBottom.value) return;
@@ -1084,6 +2185,101 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
     _markProgrammaticTimelineScroll(offset);
     _timelineController.jumpTo(offset);
     _stickToBottom.value = true;
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted || !_timelineController.hasClients) return;
+      final currentOffset = _timelineController.offset;
+      final maxExtent = _timelineController.position.maxScrollExtent;
+      final distance = maxExtent - currentOffset;
+      // #region agent log
+      _agentDebugLog(
+        'H34',
+        'lib/ui/home_page.dart:_scrollTimelineToBottom.postFrame1',
+        'bottom scroll settled first frame',
+        {
+          'isInitialEnter': isInitialEnter,
+          'targetOffset': offset,
+          'currentOffset': currentOffset,
+          'maxScrollExtent': maxExtent,
+          'distanceFromBottom': distance,
+          'stickToBottom': _stickToBottom.value,
+          'pendingTimelineSync': _pendingTimelineSync,
+          'recentProgrammatic': _isRecentProgrammaticTimelineScroll(),
+        },
+      );
+      // #endregion
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (!mounted || !_timelineController.hasClients) return;
+        final currentOffset2 = _timelineController.offset;
+        final maxExtent2 = _timelineController.position.maxScrollExtent;
+        final distance2 = maxExtent2 - currentOffset2;
+        // #region agent log
+        _agentDebugLog(
+          'H35',
+          'lib/ui/home_page.dart:_scrollTimelineToBottom.postFrame2',
+          'bottom scroll settled second frame',
+          {
+            'isInitialEnter': isInitialEnter,
+            'targetOffset': offset,
+            'currentOffset': currentOffset2,
+            'maxScrollExtent': maxExtent2,
+            'distanceFromBottom': distance2,
+            'stickToBottom': _stickToBottom.value,
+            'pendingTimelineSync': _pendingTimelineSync,
+            'recentProgrammatic': _isRecentProgrammaticTimelineScroll(),
+          },
+        );
+        // #endregion
+        if (_stickToBottom.value &&
+            !_timelineUserInteracting &&
+            !_timelineViewportLocked &&
+            !_pendingTimelineSync &&
+            distance2 > 1) {
+          // #region agent log
+          _agentDebugLog(
+            'H36',
+            'lib/ui/home_page.dart:_scrollTimelineToBottom.postFrame2',
+            'bottom settle triggered corrective scroll',
+            {
+              'isInitialEnter': isInitialEnter,
+              'targetOffset': offset,
+              'currentOffset': currentOffset2,
+              'maxScrollExtent': maxExtent2,
+              'distanceFromBottom': distance2,
+              'stickToBottom': _stickToBottom.value,
+            },
+          );
+          // #endregion
+          _scrollTimelineToBottom(animate: false);
+        }
+      });
+    });
+    if (isInitialEnter) {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (!mounted || !_timelineController.hasClients) return;
+        final currentOffset = _timelineController.offset;
+        final maxExtent = _timelineController.position.maxScrollExtent;
+        final overshoot = currentOffset - maxExtent;
+        // #region agent log
+        _agentDebugLog(
+          'H25',
+          'lib/ui/home_page.dart:_scrollTimelineToBottom.postFrame',
+          'initial enter bottom scroll settled',
+          {
+            'targetOffset': offset,
+            'currentOffset': currentOffset,
+            'maxScrollExtent': maxExtent,
+            'overshoot': overshoot,
+            'pendingTimelineSync': _pendingTimelineSync,
+            'recentProgrammatic': _isRecentProgrammaticTimelineScroll(),
+          },
+        );
+        // #endregion
+        if (overshoot > 1 && _stickToBottom.value) {
+          _markProgrammaticTimelineScroll(maxExtent);
+          _timelineController.jumpTo(maxExtent);
+        }
+      });
+    }
   }
 
   double _timelineDistanceFromBottom([ScrollMetrics? metrics]) {
@@ -1108,7 +2304,22 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
     final pixels = metrics?.pixels ??
         (_timelineController.hasClients ? _timelineController.offset : null);
     if (pixels == null) return false;
-    return (pixels - target).abs() < 2;
+    final isRecent = (pixels - target).abs() < 2;
+    if (isRecent) {
+      // #region agent log
+      _agentDebugLog(
+        'H11',
+        'lib/ui/home_page.dart:_isRecentProgrammaticTimelineScroll',
+        'recent programmatic scroll matched',
+        {
+          'target': target,
+          'pixels': pixels,
+          'ageMs': now - _lastProgrammaticScrollAt,
+        },
+      );
+      // #endregion
+    }
+    return isRecent;
   }
 
   bool _computeStickToBottom(double distance, {required bool current}) {
@@ -1140,10 +2351,8 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
       state.todos.length,
       state.isBusy,
       lastBundle?.message.id ?? '',
-      lastBundle?.message.text.length ?? 0,
       lastPart?.id ?? '',
       lastPart?.type.name ?? '',
-      _partRenderHint(lastPart),
     ].join('|');
   }
 
@@ -1196,12 +2405,33 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
         final state = Map<String, dynamic>.from(
           part.data['state'] as Map? ?? const <String, dynamic>{},
         );
+        final attachments = state['attachments'] as List? ?? const [];
         return [
           part.type.name,
+          part.data['tool'] ?? '',
+          part.data['callID'] ?? '',
           state['status'] ?? '',
+          state['title'] ?? '',
+          state['phase'] ?? '',
+          (state['raw'] as String?)?.length ?? 0,
           (state['output'] as String?)?.length ?? 0,
           (state['displayOutput'] as String?)?.length ?? 0,
-          (state['attachments'] as List?)?.length ?? 0,
+          attachments.length,
+          for (final item in attachments)
+            if (item is Map)
+              [
+                item['type'] ?? '',
+                item['kind'] ?? '',
+                item['path'] ?? item['url'] ?? item['filename'] ?? '',
+                (item['preview'] as String?)?.length ?? 0,
+                (item['fullPreview'] as String?)?.length ?? 0,
+                (item['afterContent'] as String?)?.length ?? 0,
+                item['additions'] ?? '',
+                item['deletions'] ?? '',
+              ].join('/'),
+          (part.data['writeContentPreview'] as String?)?.length ?? 0,
+          (part.data['editOldContentPreview'] as String?)?.length ?? 0,
+          (part.data['editContentPreview'] as String?)?.length ?? 0,
         ].join(':');
       default:
         return '${part.type.name}:${part.createdAt}';
