@@ -60,6 +60,10 @@ part 'home/pickers/provider_picker.dart';
 part 'home/pickers/model_picker.dart';
 part 'home/pickers/variant_picker.dart';
 part 'home/pickers/agent_picker.dart';
+part 'home/pickers/settings_widgets.dart';
+part 'home/pickers/settings_mcp.dart';
+part 'home/pickers/settings_git.dart';
+part 'home/pickers/settings_variables.dart';
 part 'home/pickers/settings_sheet.dart';
 part 'home/pickers/skills_sheet.dart';
 part 'home/pickers/presets.dart';
@@ -128,7 +132,6 @@ class _RenderMeasuredSize extends RenderProxyBox {
 class _TimelineDetachNotification extends Notification {
   const _TimelineDetachNotification();
 }
-
 
 class _VisibleTimelineAnchor {
   const _VisibleTimelineAnchor({
@@ -578,8 +581,7 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
       action = 'continue-stage';
       _scheduleStageMount(state);
     }
-    if (action != 'none' && action != 'continue-stage') {
-    }
+    if (action != 'none' && action != 'continue-stage') {}
   }
 
   void _scheduleStageMount(AppState state) {
@@ -596,8 +598,7 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
     final resetStage = _stagingKey != key || _stagedMessageCount == 0;
     _stagingKey = key;
     if (resetStage) {
-      final expandFullyForPinnedEntry =
-          _stickToBottom.value &&
+      final expandFullyForPinnedEntry = _stickToBottom.value &&
           _historyStartIndex == 0 &&
           (previousKey != key || _stagedMessageCount == 0);
       _stagedMessageCount = expandFullyForPinnedEntry
@@ -643,7 +644,8 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
     final renderedMessagesBefore = _renderedTimelineMessages(state);
     final renderedEntriesBefore =
         _renderedTimelineEntries(state, renderedMessagesBefore);
-    final visibleAnchorBefore = _captureVisibleTimelineAnchor(renderedEntriesBefore);
+    final visibleAnchorBefore =
+        _captureVisibleTimelineAnchor(renderedEntriesBefore);
     final beforeOffset = _timelineController.offset;
     final beforeMax = _timelineController.position.maxScrollExtent;
     final generation = ++_historyRevealGeneration;
@@ -669,7 +671,8 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
   void _restoreHistoryRevealAnchor(int generation, {bool immediate = false}) {
     void runRestore() {
       if (!mounted || generation != _historyRevealGeneration) return;
-      if (!_historyRevealRestorePending || !_timelineController.hasClients) return;
+      if (!_historyRevealRestorePending || !_timelineController.hasClients)
+        return;
       _historyRevealRestoreAttempt += 1;
       final trackedStableId = _historyRevealAnchorStableId;
       final trackedTopBefore = _historyRevealAnchorTop;
@@ -686,28 +689,32 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
         return;
       }
       final delta = trackedAnchor.top - trackedTopBefore;
-      final targetOffset = (_timelineController.offset + delta).clamp(
-        0.0,
-        _timelineController.position.maxScrollExtent,
-      ).toDouble();
+      final targetOffset = (_timelineController.offset + delta)
+          .clamp(
+            0.0,
+            _timelineController.position.maxScrollExtent,
+          )
+          .toDouble();
       if (delta.abs() > 0.5) {
         _markProgrammaticTimelineScroll(targetOffset);
         _timelineController.jumpTo(targetOffset);
         WidgetsBinding.instance.addPostFrameCallback((_) {
           if (!mounted || generation != _historyRevealGeneration) return;
           final settledAnchor = _measureTimelineAnchorById(trackedStableId);
-          final renderedMessages = _renderedTimelineMessages(widget.controller.state);
-          final renderedEntries =
-              _renderedTimelineEntries(widget.controller.state, renderedMessages);
+          final renderedMessages =
+              _renderedTimelineMessages(widget.controller.state);
+          final renderedEntries = _renderedTimelineEntries(
+              widget.controller.state, renderedMessages);
           final visibleAnchor = _captureVisibleTimelineAnchor(renderedEntries);
           WidgetsBinding.instance.addPostFrameCallback((_) {
             if (!mounted || generation != _historyRevealGeneration) return;
             final settledAnchor2 = _measureTimelineAnchorById(trackedStableId);
             final renderedMessages2 =
                 _renderedTimelineMessages(widget.controller.state);
-            final renderedEntries2 =
-                _renderedTimelineEntries(widget.controller.state, renderedMessages2);
-            final visibleAnchor2 = _captureVisibleTimelineAnchor(renderedEntries2);
+            final renderedEntries2 = _renderedTimelineEntries(
+                widget.controller.state, renderedMessages2);
+            final visibleAnchor2 =
+                _captureVisibleTimelineAnchor(renderedEntries2);
           });
         });
       }
@@ -1168,8 +1175,8 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
                                       builder: (context) {
                                         final expandTimelineCacheExtent =
                                             _historyRevealRestorePending ||
-                                            (_pendingTimelineSync &&
-                                                _stickToBottom.value);
+                                                (_pendingTimelineSync &&
+                                                    _stickToBottom.value);
                                         return ListView.builder(
                                           key: _timelineViewportKey,
                                           cacheExtent: expandTimelineCacheExtent
@@ -1182,10 +1189,11 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
                                           physics: const BouncingScrollPhysics(
                                               parent:
                                                   AlwaysScrollableScrollPhysics()),
-                                          padding: EdgeInsets.fromLTRB(
-                                              12, isKeyboardOpen ? 8 : 12, 12, 16),
+                                          padding: EdgeInsets.fromLTRB(12,
+                                              isKeyboardOpen ? 8 : 12, 12, 16),
                                           itemCount: _timelineItemCount(
-                                              liveState, renderedTimelineEntries),
+                                              liveState,
+                                              renderedTimelineEntries),
                                           itemBuilder: (context, index) =>
                                               _buildTimelineItem(
                                             context,
@@ -1193,13 +1201,11 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
                                             modelConfig: modelConfig,
                                             currentModelChoice:
                                                 currentModelChoice,
-                                            showModelFreeTag:
-                                                showModelFreeTag,
+                                            showModelFreeTag: showModelFreeTag,
                                             showModelLatestTag:
                                                 showModelLatestTag,
                                             isKeyboardOpen: isKeyboardOpen,
-                                            renderedMessages:
-                                                renderedMessages,
+                                            renderedMessages: renderedMessages,
                                             renderedEntries:
                                                 renderedTimelineEntries,
                                             streamingAssistantMessageId:
@@ -1292,8 +1298,7 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
         _isRecentProgrammaticTimelineScroll(notification.metrics);
     if (notification is UserScrollNotification ||
         notification is ScrollStartNotification ||
-        notification is ScrollEndNotification) {
-    }
+        notification is ScrollEndNotification) {}
     if (notification is UserScrollNotification &&
         notification.direction == ScrollDirection.idle) {
       if (_timelineViewportLocked) return false;
@@ -1323,8 +1328,7 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
       _scheduleScrollToBottomButtonVisibility(true, immediate: true);
       return false;
     }
-    if (notification is ScrollStartNotification &&
-        !recentProgrammatic) {
+    if (notification is ScrollStartNotification && !recentProgrammatic) {
       _timelineUserInteracting = true;
       _pendingTimelineSync = false;
     }
@@ -1596,8 +1600,7 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
         (_timelineController.hasClients ? _timelineController.offset : null);
     if (pixels == null) return false;
     final isRecent = (pixels - target).abs() < 2;
-    if (isRecent) {
-    }
+    if (isRecent) {}
     return isRecent;
   }
 
