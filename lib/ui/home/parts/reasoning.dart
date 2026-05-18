@@ -33,7 +33,8 @@ class _ReasoningPartTile extends StatefulWidget {
   State<_ReasoningPartTile> createState() => _ReasoningPartTileState();
 }
 
-class _ReasoningPartTileState extends State<_ReasoningPartTile> {
+class _ReasoningPartTileState extends State<_ReasoningPartTile>
+    with AutomaticKeepAliveClientMixin<_ReasoningPartTile> {
   String _displayed = '';
   Timer? _pending;
   int _lastFlush = 0;
@@ -49,6 +50,9 @@ class _ReasoningPartTileState extends State<_ReasoningPartTile> {
   Widget? _stableReasonWidget;
 
   String get _targetText => _liveText ?? widget.text;
+
+  @override
+  bool get wantKeepAlive => true;
 
   bool get _shouldListenForLiveText =>
       widget.streaming &&
@@ -406,6 +410,7 @@ class _ReasoningPartTileState extends State<_ReasoningPartTile> {
 
   @override
   Widget build(BuildContext context) {
+    super.build(context);
     final themeKey = context.themeCacheKey;
     if (_cachedThemeKey != themeKey || _cachedReasoningStyle == null) {
       _cachedThemeKey = themeKey;
@@ -504,10 +509,7 @@ class _ReasoningDetailsHostState extends State<_ReasoningDetailsHost> {
             heightFactor: value.clamp(0.0, 1.0),
             child: IgnorePointer(
               ignoring: !widget.open,
-              child: Opacity(
-                opacity: value.clamp(0.0, 1.0),
-                child: child,
-              ),
+              child: child,
             ),
           ),
         );

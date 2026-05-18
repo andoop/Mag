@@ -603,9 +603,13 @@ class _ToolPartTile extends StatefulWidget {
   State<_ToolPartTile> createState() => _ToolPartTileState();
 }
 
-class _ToolPartTileState extends State<_ToolPartTile> {
+class _ToolPartTileState extends State<_ToolPartTile>
+    with AutomaticKeepAliveClientMixin<_ToolPartTile> {
   late bool _expanded;
   bool _userToggled = false;
+
+  @override
+  bool get wantKeepAlive => true;
 
   @override
   void initState() {
@@ -1501,8 +1505,13 @@ class _ToolPartTileState extends State<_ToolPartTile> {
 
   @override
   Widget build(BuildContext context) {
+    super.build(context);
     final model = _buildModel(context);
-    final expanded = _expanded || _shouldAutoExpand(model);
+    final autoExpanded = _shouldAutoExpand(model);
+    if (autoExpanded && !_expanded) {
+      _expanded = true;
+    }
+    final expanded = _expanded;
     final oc = context.oc;
     final borderColor = model.isError
         ? Colors.red.withOpacity(context.isDarkMode ? 0.2 : 0.16)

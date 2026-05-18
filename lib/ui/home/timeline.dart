@@ -809,9 +809,13 @@ class _ContextToolGroupTile extends StatefulWidget {
   State<_ContextToolGroupTile> createState() => _ContextToolGroupTileState();
 }
 
-class _ContextToolGroupTileState extends State<_ContextToolGroupTile> {
+class _ContextToolGroupTileState extends State<_ContextToolGroupTile>
+    with AutomaticKeepAliveClientMixin<_ContextToolGroupTile> {
   late bool _expanded;
   bool _userToggled = false;
+
+  @override
+  bool get wantKeepAlive => true;
 
   @override
   void initState() {
@@ -840,6 +844,7 @@ class _ContextToolGroupTileState extends State<_ContextToolGroupTile> {
 
   @override
   Widget build(BuildContext context) {
+    super.build(context);
     final oc = context.oc;
     final toolNames = widget.entries
         .map((entry) => _toolNameFromPart(entry.part))

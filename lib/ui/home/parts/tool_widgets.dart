@@ -387,8 +387,12 @@ class _QuestionToolPart extends StatefulWidget {
   State<_QuestionToolPart> createState() => _QuestionToolPartState();
 }
 
-class _QuestionToolPartState extends State<_QuestionToolPart> {
+class _QuestionToolPartState extends State<_QuestionToolPart>
+    with AutomaticKeepAliveClientMixin<_QuestionToolPart> {
   bool? _expanded;
+
+  @override
+  bool get wantKeepAlive => true;
 
   bool _completed() => widget.answers.isNotEmpty;
 
@@ -418,6 +422,7 @@ class _QuestionToolPartState extends State<_QuestionToolPart> {
 
   @override
   Widget build(BuildContext context) {
+    super.build(context);
     final isRunning =
         widget.toolStatus == 'running' || widget.toolStatus == 'pending';
     final expanded = _expanded ?? _defaultExpanded();
