@@ -90,6 +90,8 @@ class MainActivity : FlutterActivity() {
             .setMethodCallHandler(::handleFloatingWindowCall)
         MethodChannel(flutterEngine.dartExecutor.binaryMessenger, "mobile_agent/device_capabilities")
             .setMethodCallHandler(::handleDeviceCapabilityCall)
+        MethodChannel(flutterEngine.dartExecutor.binaryMessenger, "mobile_agent/analytics_config")
+            .setMethodCallHandler(::handleAnalyticsConfigCall)
         shortcutChannel = MethodChannel(flutterEngine.dartExecutor.binaryMessenger, "mobile_agent/shortcuts")
             .also { it.setMethodCallHandler(::handleShortcutCall) }
         pendingShortcutLaunch = shortcutPayloadFromIntent(intent)
@@ -169,6 +171,29 @@ class MainActivity : FlutterActivity() {
             "media.recordAudio" -> audioCapabilityProvider.invoke(input, result)
             "media.recordVideo" -> videoCapabilityProvider.invoke(input, result)
             else -> result.error("unsupported_capability", "Unsupported capability: $capabilityId", null)
+        }
+    }
+
+    private fun handleAnalyticsConfigCall(call: MethodCall, result: MethodChannel.Result) {
+        when (call.method) {
+            "getConfig" -> {
+                result.success(
+                    mapOf(
+                        "provider" to BuildConfig.MAG_ANALYTICS_PROVIDER,
+                        "sensorsServerUrl" to BuildConfig.MAG_ANALYTICS_SENSORS_SERVER_URL,
+                        "sensorsEnableLog" to BuildConfig.MAG_ANALYTICS_SENSORS_ENABLE_LOG,
+                        "sensorsFlushIntervalMs" to BuildConfig.MAG_ANALYTICS_SENSORS_FLUSH_INTERVAL_MS,
+                        "sensorsFlushBulkSize" to BuildConfig.MAG_ANALYTICS_SENSORS_FLUSH_BULK_SIZE,
+                        "customServerUrl" to BuildConfig.MAG_ANALYTICS_CUSTOM_SERVER_URL,
+                        "customApiKey" to BuildConfig.MAG_ANALYTICS_CUSTOM_API_KEY,
+                        "customApiKeyHeader" to BuildConfig.MAG_ANALYTICS_CUSTOM_API_KEY_HEADER,
+                        "channel" to BuildConfig.MAG_ANALYTICS_CHANNEL,
+                        "grayGroup" to BuildConfig.MAG_ANALYTICS_GRAY_GROUP,
+                        "isInternalUser" to BuildConfig.MAG_ANALYTICS_IS_INTERNAL_USER,
+                    ),
+                )
+            }
+            else -> result.notImplemented()
         }
     }
 

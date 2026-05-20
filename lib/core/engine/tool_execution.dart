@@ -370,7 +370,17 @@ extension SessionEngineTools on SessionEngine {
     final serverId = parts[1].trim();
     final toolName = parts.sublist(2).join('.').trim();
     if (serverId.isEmpty || toolName.isEmpty) return null;
-    final tools = await mcpService.listTools(serverId);
+    final unavailable = mcpService.unavailableReason(serverId);
+    if (unavailable != null) {
+      return _unavailableMcpTool(
+        requestedToolName: requestedToolName,
+        serverId: serverId,
+        toolName: toolName,
+        reason: unavailable,
+      );
+    }
+    final tools = await mcpService.listCachedTools(
+        serverId: serverId, refreshMissing: false);
     final match = tools.cast<McpToolDefinition?>().firstWhere(
           (item) => item?.name == toolName,
           orElse: () => null,
@@ -432,6 +442,23 @@ extension SessionEngineTools on SessionEngine {
         'toolName': toolName,
         'structuredContent': result.structuredContent,
         'isError': result.isError,
+      },
+    );
+  }
+
+  ToolDefinition _unavailableMcpTool({
+    required String requestedToolName,
+    required String serverId,
+    required String toolName,
+    required String reason,
+  }) {
+    return ToolDefinition(
+      id: requestedToolName,
+      description: 'Unavailable MCP tool $toolName from server $serverId.',
+      parameters: const {'type': 'object'},
+      execute: (args, ctx) async {
+        throw StateError(
+            '$reason Continue without `mcp.$serverId.$toolName` or ask the user to reconnect the MCP server.');
       },
     );
   }

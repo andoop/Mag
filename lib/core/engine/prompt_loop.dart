@@ -213,51 +213,6 @@ extension SessionEnginePrompt on SessionEngine {
             .join('\n');
       }
 
-      String? normalizeGuardPath(dynamic raw) {
-        if (raw is! String) return null;
-        var value = raw.trim().replaceAll('\\', '/');
-        if (value.isEmpty || value == '.') return null;
-        while (value.startsWith('./')) {
-          value = value.substring(2);
-        }
-        if (value.startsWith('/')) {
-          value = value.substring(1);
-        }
-        if (value.endsWith('/')) {
-          value = value.substring(0, value.length - 1);
-        }
-        return value.isEmpty ? null : value;
-      }
-
-      Set<String> readTargetsForCall(ToolCall call) {
-        if (call.name != 'read') return const <String>{};
-        final path = normalizeGuardPath(
-          call.arguments['filePath'] ?? call.arguments['path'],
-        );
-        return path == null ? const <String>{} : {path};
-      }
-
-      Set<String> mutationTargetsForCall(ToolCall call) {
-        if (call.name == 'edit') {
-          final path = normalizeGuardPath(call.arguments['filePath']);
-          return path == null ? const <String>{} : {path};
-        }
-        if (call.name != 'apply_patch') return const <String>{};
-        final patchText = call.arguments['patchText'] as String? ?? '';
-        final matches = RegExp(
-          r'^\*\*\* (?:Update|Delete) File:\s+(.+?)\s*$',
-          multiLine: true,
-        ).allMatches(patchText);
-        final paths = <String>{};
-        for (final match in matches) {
-          final path = normalizeGuardPath(match.group(1));
-          if (path != null) {
-            paths.add(path);
-          }
-        }
-        return paths;
-      }
-
       Map<String, JsonMap> blockedToolCallsForResponse(List<ToolCall> calls) =>
           const <String, JsonMap>{};
 
@@ -690,6 +645,17 @@ extension SessionEnginePrompt on SessionEngine {
                     <String, dynamic>{'type': 'object'},
               ),
           ];
+          final mcpStatusMessage = await mcpService.promptStatusMessage();
+          if (mcpStatusMessage != null) {
+            _emitSessionStatus(
+              sessionId: session.id,
+              status: SessionRunStatus(
+                phase: SessionRunPhase.busy,
+                message: mcpStatusMessage,
+              ),
+              directory: workspace.treeUri,
+            );
+          }
           MessagePart? streamingTextPart;
           MessagePart? streamingReasoningPart;
           var streamedText = '';

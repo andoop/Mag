@@ -1,8 +1,13 @@
 import 'package:flutter/material.dart';
 
+import 'core/analytics_bootstrap.dart';
 import 'app/mobile_agent_app.dart';
 
-void main() {
+Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
-  runApp(const MobileAgentApp());
+  final analyticsBootstrap = await createAnalyticsBootstrap();
+  runApp(MobileAgentApp(
+    analytics: analyticsBootstrap.analytics,
+    analyticsConfig: analyticsBootstrap.config,
+  ));
 }

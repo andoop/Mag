@@ -517,6 +517,14 @@ packages:
       url: "https://pub.dev"
     source: hosted
     version: "3.0.1"
+  sensors_analytics_flutter_plugin:
+    dependency: "direct main"
+    description:
+      name: sensors_analytics_flutter_plugin
+      sha256: "56b82c2532546cf2c4445f4f29d342f543637de3aa11e0a8a5b59e746eadc7b2"
+      url: "https://pub.dev"
+    source: hosted
+    version: "4.2.1"
   share_plus:
     dependency: "direct main"
     description:

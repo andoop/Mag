@@ -9,6 +9,9 @@ import 'package:flutter/material.dart';
 import 'package:flutter/scheduler.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
+import '../core/analytics.dart';
+import '../core/app_analytics.dart';
+import '../core/analytics_bootstrap.dart';
 import '../core/app_variable_store.dart';
 import '../core/database.dart';
 import '../core/debug_trace.dart';
@@ -194,12 +197,16 @@ class AppState {
 }
 
 class AppController extends ChangeNotifier {
-  AppController()
-      : _db = AppDatabase.instance,
+  AppController({
+    AnalyticsService? analytics,
+    AnalyticsBuildConfig? analyticsConfig,
+  })  : _db = AppDatabase.instance,
         _workspaceBridge = WorkspaceBridge.instance,
         _events = LocalEventBus(),
         _gitSettingsStore = GitSettingsStore(database: AppDatabase.instance),
-        _appVariableStore = AppVariableStore(database: AppDatabase.instance) {
+        _appVariableStore = AppVariableStore(database: AppDatabase.instance),
+        _analytics = analytics ?? AnalyticsService(),
+        _analyticsConfig = analyticsConfig ?? const AnalyticsBuildConfig() {
     _mcpService = McpService(database: _db, emitEvent: _events.emit);
     _engine = SessionEngine(
       database: _db,
@@ -226,6 +233,8 @@ class AppController extends ChangeNotifier {
   final LocalEventBus _events;
   final GitSettingsStore _gitSettingsStore;
   final AppVariableStore _appVariableStore;
+  final AnalyticsService _analytics;
+  final AnalyticsBuildConfig _analyticsConfig;
   late final McpService _mcpService;
   late final SessionEngine _engine;
   late final LocalServer _server;
@@ -253,6 +262,9 @@ class AppController extends ChangeNotifier {
   AppState state = const AppState();
   ThemeMode _themeMode = ThemeMode.system;
   ThemeMode get themeMode => _themeMode;
+  String? _analyticsDistinctId;
+
+  AnalyticsService get analytics => _analytics;
 
   /// 与首屏 [ProjectHomePage] 等并发时，必须先等本地服务与 [_client] 就绪，否则会请求失败并被当成「无项目」。
   Future<void>? _initializeFuture;
@@ -275,6 +287,10 @@ class AppController extends ChangeNotifier {
     notifyListeners();
     final prefs = await SharedPreferences.getInstance();
     await prefs.setString('theme_mode', mode.name);
+    unawaited(_analytics.setUserProperties({
+      ..._analyticsConfig.userProperties,
+      'theme_mode': mode.name,
+    }));
   }
 
   void toggleThemeMode() {
@@ -284,6 +300,7 @@ class AppController extends ChangeNotifier {
 
   Future<void> _runInitialize() async {
     await loadThemeMode();
+    await _initializeAnalytics();
     notifyListeners();
     final serverUri = await _server.start();
     _client = LocalServerClient(serverUri);
@@ -315,7 +332,77 @@ class AppController extends ChangeNotifier {
       recentModelKeys: recentModelKeys,
     );
     notifyListeners();
+    unawaited(track(AppAnalytics.appInitialized(
+      themeMode: _themeMode.name,
+      agentCount: agents.length,
+      providerConnectionCount: modelConfig.connections.length,
+    )));
     _scheduleMcpCatalogWarmup();
+  }
+
+  Future<void> _initializeAnalytics() async {
+    final prefs = await SharedPreferences.getInstance();
+    var distinctId = prefs.getString('analytics_distinct_id');
+    if (distinctId == null || distinctId.trim().isEmpty) {
+      distinctId = newId('user');
+      await prefs.setString('analytics_distinct_id', distinctId);
+    }
+    _analyticsDistinctId = distinctId;
+    await _analytics.initialize();
+    await _analytics.identify(
+      distinctId,
+      traits: {
+        ..._analyticsConfig.userProperties,
+        'platform': Platform.operatingSystem,
+        'theme_mode': _themeMode.name,
+      },
+    );
+    await _trackFirstInstallIfNeeded(prefs);
+  }
+
+  Future<void> _trackFirstInstallIfNeeded(SharedPreferences prefs) async {
+    if (!_analyticsConfig.enabled) return;
+    const key = 'analytics_first_install_tracked';
+    final tracked = prefs.getBool(key) ?? false;
+    if (tracked) return;
+    await track(AppAnalytics.firstInstall());
+    await prefs.setBool(key, true);
+  }
+
+  Future<void> trackEvent(
+    String eventName, {
+    AnalyticsProperties properties = const {},
+  }) {
+    return _analytics.trackEvent(
+      eventName,
+      properties: {
+        ..._analyticsConfig.eventProperties,
+        if (_analyticsDistinctId != null) 'distinct_id': _analyticsDistinctId,
+        ...properties,
+      },
+    );
+  }
+
+  Future<void> track(AnalyticsEvent event) {
+    return trackEvent(event.name, properties: event.properties);
+  }
+
+  Future<void> trackScreenView(
+    String screenName, {
+    AnalyticsProperties properties = const {},
+  }) {
+    return _analytics.trackScreen(
+      screenName,
+      properties: {
+        ..._analyticsConfig.eventProperties,
+        if (_analyticsDistinctId != null) 'distinct_id': _analyticsDistinctId,
+        ...properties,
+      },
+    );
+  }
+
+  Future<void> trackScreen(AnalyticsScreen screen) {
+    return trackScreenView(screen.name, properties: screen.properties);
   }
 
   /// After first frame: load MCP tools in background (OpenCode-style), without blocking splash.
@@ -556,6 +643,7 @@ class AppController extends ChangeNotifier {
     await stopVoiceInput();
     await _subscription?.cancel();
     await _events.close();
+    await _analytics.dispose();
     await _server.stop();
   }
 }

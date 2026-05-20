@@ -38,7 +38,7 @@ class SessionEngine {
     AgentDefinition agent, {
     String? modelId,
   }) async {
-    final mcpTools = (await mcpService.listTools())
+    final mcpTools = (await mcpService.listCachedTools())
         .map((item) => item.toToolModel())
         .toList()
       ..sort((a, b) => a.id.compareTo(b.id));

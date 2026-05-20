@@ -114,6 +114,72 @@ class _MeasuredSize extends SingleChildRenderObjectWidget {
   }
 }
 
+class _McpDegradationNotice extends StatelessWidget {
+  const _McpDegradationNotice({
+    super.key,
+    required this.message,
+    required this.onOpenSettings,
+  });
+
+  final String message;
+  final VoidCallback onOpenSettings;
+
+  @override
+  Widget build(BuildContext context) {
+    final oc = context.oc;
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(12, 0, 12, 8),
+      child: Align(
+        alignment: Alignment.center,
+        child: ConstrainedBox(
+          constraints: const BoxConstraints(maxWidth: 720),
+          child: Container(
+            padding: const EdgeInsets.fromLTRB(12, 9, 8, 9),
+            decoration: BoxDecoration(
+              color: oc.mutedPanel.withOpacity(context.isDarkMode ? 0.72 : 0.9),
+              borderRadius: BorderRadius.circular(14),
+              border: Border.all(color: oc.softBorderColor),
+            ),
+            child: Row(
+              children: [
+                Icon(
+                  Icons.extension_off_outlined,
+                  size: 17,
+                  color: oc.foregroundMuted,
+                ),
+                const SizedBox(width: 8),
+                Expanded(
+                  child: Text(
+                    message,
+                    maxLines: 2,
+                    overflow: TextOverflow.ellipsis,
+                    style: Theme.of(context).textTheme.labelSmall?.copyWith(
+                          color: oc.foregroundMuted,
+                          height: 1.25,
+                        ),
+                  ),
+                ),
+                const SizedBox(width: 8),
+                TextButton(
+                  style: TextButton.styleFrom(
+                    visualDensity: VisualDensity.compact,
+                    padding:
+                        const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+                    minimumSize: const Size(0, 0),
+                    tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                  ),
+                  onPressed: onOpenSettings,
+                  child: Text(l(context, '管理', 'Manage')),
+                ),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
 class _RenderMeasuredSize extends RenderProxyBox {
   _RenderMeasuredSize(this.onChanged);
 
@@ -674,8 +740,9 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
   void _restoreHistoryRevealAnchor(int generation, {bool immediate = false}) {
     void runRestore() {
       if (!mounted || generation != _historyRevealGeneration) return;
-      if (!_historyRevealRestorePending || !_timelineController.hasClients)
+      if (!_historyRevealRestorePending || !_timelineController.hasClients) {
         return;
+      }
       _historyRevealRestoreAttempt += 1;
       final trackedStableId = _historyRevealAnchorStableId;
       final trackedTopBefore = _historyRevealAnchorTop;
@@ -1063,6 +1130,7 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
     final mediaQuery = MediaQuery.of(context);
     final isKeyboardOpen = mediaQuery.viewInsets.bottom > 0;
     final modelConfig = state.modelConfig ?? ModelConfig.defaults();
+    final mcpDegradationMessage = _mcpDegradationMessage(state);
     final currentModelChoice = _findModelChoice(
       modelConfig.provider,
       modelConfig.model,
@@ -1225,6 +1293,19 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
                             },
                           ),
                   ),
+                  AnimatedSwitcher(
+                    duration: const Duration(milliseconds: 180),
+                    switchInCurve: Curves.easeOutCubic,
+                    switchOutCurve: Curves.easeInCubic,
+                    child: mcpDegradationMessage == null
+                        ? const SizedBox.shrink()
+                        : _McpDegradationNotice(
+                            key: ValueKey<String>(mcpDegradationMessage),
+                            message: mcpDegradationMessage,
+                            onOpenSettings: () =>
+                                _openSettings(context, state.modelConfig),
+                          ),
+                  ),
                   _MeasuredSize(
                     onChanged: (size) {
                       final height = size.height;
@@ -1277,6 +1358,13 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
         ),
       ),
     );
+  }
+
+  String? _mcpDegradationMessage(AppState state) {
+    if (!state.isBusy) return null;
+    final message = state.currentSessionStatus.message?.trim();
+    if (message == null || message.isEmpty) return null;
+    return message.contains('MCP') ? message : null;
   }
 
   void _handleTimelineScroll() {

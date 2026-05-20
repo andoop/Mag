@@ -1,6 +1,8 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_localizations/flutter_localizations.dart';
 
+import '../core/analytics.dart';
+import '../core/analytics_bootstrap.dart';
 import '../store/app_controller.dart';
 import '../ui/app_root.dart';
 import '../ui/i18n.dart';
@@ -8,7 +10,14 @@ import '../ui/mag_splash.dart';
 import '../ui/oc_theme.dart';
 
 class MobileAgentApp extends StatefulWidget {
-  const MobileAgentApp({super.key});
+  const MobileAgentApp({
+    super.key,
+    this.analytics,
+    this.analyticsConfig,
+  });
+
+  final AnalyticsService? analytics;
+  final AnalyticsBuildConfig? analyticsConfig;
 
   @override
   State<MobileAgentApp> createState() => _MobileAgentAppState();
@@ -22,7 +31,10 @@ class _MobileAgentAppState extends State<MobileAgentApp> {
   @override
   void initState() {
     super.initState();
-    _controller = AppController();
+    _controller = AppController(
+      analytics: widget.analytics,
+      analyticsConfig: widget.analyticsConfig,
+    );
     _themeMode = _controller.themeMode;
     _controller.addListener(_handleControllerChanged);
     _bootstrap = _controller.initialize();

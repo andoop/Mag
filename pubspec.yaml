@@ -54,6 +54,7 @@ dependencies:
   archive: ^3.4.10
   qr: ^3.0.1
   flutter_svg: ^2.0.5
+  sensors_analytics_flutter_plugin: ^4.2.1
 
 dev_dependencies:
   flutter_test:

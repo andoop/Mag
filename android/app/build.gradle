@@ -6,6 +6,39 @@ if (localPropertiesFile.exists()) {
     }
 }
 
+def readLocalString = { Properties props, String key, String defaultValue = '' ->
+    def value = props.getProperty(key)
+    return value == null ? defaultValue : value.trim()
+}
+
+def readLocalInt = { Properties props, String key, int defaultValue ->
+    def value = props.getProperty(key)
+    if (value == null || value.trim().isEmpty()) {
+        return defaultValue
+    }
+    try {
+        return Integer.parseInt(value.trim())
+    } catch (ignored) {
+        return defaultValue
+    }
+}
+
+def readLocalBoolean = { Properties props, String key, boolean defaultValue = false ->
+    def value = props.getProperty(key)
+    if (value == null) {
+        return defaultValue
+    }
+    def normalized = value.trim().toLowerCase(Locale.ROOT)
+    return normalized == 'true' || normalized == '1' || normalized == 'yes'
+}
+
+def quoteForBuildConfig = { String value ->
+    def escaped = value
+        .replace("\\", "\\\\")
+        .replace("\"", "\\\"")
+    return "\"${escaped}\""
+}
+
 def keyProperties = new Properties()
 def keyPropertiesFile = rootProject.file('key.properties')
 if (keyPropertiesFile.exists()) {
@@ -39,13 +72,29 @@ if (flutterVersionName == null) {
     flutterVersionName = '1.0'
 }
 
+def analyticsProvider = readLocalString(localProperties, 'mag.analytics.provider', '')
+def analyticsSensorsServerUrl = readLocalString(localProperties, 'mag.analytics.sensors.serverUrl', '')
+def analyticsSensorsEnableLog = readLocalBoolean(localProperties, 'mag.analytics.sensors.enableLog', false)
+def analyticsSensorsFlushIntervalMs = readLocalInt(localProperties, 'mag.analytics.sensors.flushIntervalMs', 15000)
+def analyticsSensorsFlushBulkSize = readLocalInt(localProperties, 'mag.analytics.sensors.flushBulkSize', 100)
+def analyticsCustomServerUrl = readLocalString(localProperties, 'mag.analytics.custom.serverUrl', '')
+def analyticsCustomApiKey = readLocalString(localProperties, 'mag.analytics.custom.apiKey', '')
+def analyticsCustomApiKeyHeader = readLocalString(localProperties, 'mag.analytics.custom.apiKeyHeader', 'x-api-key')
+def analyticsChannel = readLocalString(localProperties, 'mag.analytics.channel', '')
+def analyticsGrayGroup = readLocalString(localProperties, 'mag.analytics.grayGroup', '')
+def analyticsIsInternalUser = readLocalBoolean(localProperties, 'mag.analytics.isInternalUser', false)
+
 apply plugin: 'com.android.application'
 apply plugin: 'kotlin-android'
 apply from: "$flutterRoot/packages/flutter_tools/gradle/flutter.gradle"
 
 android {
-    compileSdkVersion flutter.compileSdkVersion
+    compileSdkVersion 34
     ndkVersion flutter.ndkVersion
+
+    buildFeatures {
+        buildConfig true
+    }
 
     compileOptions {
         sourceCompatibility JavaVersion.VERSION_1_8
@@ -81,6 +130,17 @@ android {
         versionCode flutterVersionCode.toInteger()
         versionName flutterVersionName
         multiDexEnabled true
+        buildConfigField "String", "MAG_ANALYTICS_PROVIDER", quoteForBuildConfig(analyticsProvider)
+        buildConfigField "String", "MAG_ANALYTICS_SENSORS_SERVER_URL", quoteForBuildConfig(analyticsSensorsServerUrl)
+        buildConfigField "boolean", "MAG_ANALYTICS_SENSORS_ENABLE_LOG", analyticsSensorsEnableLog.toString()
+        buildConfigField "int", "MAG_ANALYTICS_SENSORS_FLUSH_INTERVAL_MS", analyticsSensorsFlushIntervalMs.toString()
+        buildConfigField "int", "MAG_ANALYTICS_SENSORS_FLUSH_BULK_SIZE", analyticsSensorsFlushBulkSize.toString()
+        buildConfigField "String", "MAG_ANALYTICS_CUSTOM_SERVER_URL", quoteForBuildConfig(analyticsCustomServerUrl)
+        buildConfigField "String", "MAG_ANALYTICS_CUSTOM_API_KEY", quoteForBuildConfig(analyticsCustomApiKey)
+        buildConfigField "String", "MAG_ANALYTICS_CUSTOM_API_KEY_HEADER", quoteForBuildConfig(analyticsCustomApiKeyHeader)
+        buildConfigField "String", "MAG_ANALYTICS_CHANNEL", quoteForBuildConfig(analyticsChannel)
+        buildConfigField "String", "MAG_ANALYTICS_GRAY_GROUP", quoteForBuildConfig(analyticsGrayGroup)
+        buildConfigField "boolean", "MAG_ANALYTICS_IS_INTERNAL_USER", analyticsIsInternalUser.toString()
     }
 
     packagingOptions {

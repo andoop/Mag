@@ -77,6 +77,11 @@ extension AppControllerProvider on AppController {
       connections: nextConnections,
     );
     await saveModelConfig(next);
+    unawaited(track(AppAnalytics.providerConnected(
+      provider: connection.id,
+      modelCount: connection.models.length,
+      selected: select,
+    )));
   }
 
   Future<void> setCurrentModel({
@@ -90,6 +95,10 @@ extension AppControllerProvider on AppController {
         currentModelId: modelId,
       ),
     );
+    unawaited(track(AppAnalytics.modelSelected(
+      provider: providerId,
+      model: modelId,
+    )));
   }
 
   Future<void> setModelVisibility({
@@ -162,6 +171,10 @@ extension AppControllerProvider on AppController {
         visibilityRules: nextRules,
       ),
     );
+    unawaited(track(AppAnalytics.providerDisconnected(
+      provider: providerId,
+      remainingProviderCount: nextConnections.length,
+    )));
   }
 
   List<String> _extractIdsFromDataList(dynamic decoded) {

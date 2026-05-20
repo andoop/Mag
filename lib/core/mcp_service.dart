@@ -15,6 +15,7 @@ const _kMcpProtocolVersions = [
   '2024-11-05',
   '2024-10-07',
 ];
+const _kMcpUnavailableCooldownMs = 60 * 1000;
 
 HttpClient Function() _mcpHttpClientFactory = HttpClient.new;
 
@@ -47,11 +48,14 @@ class McpService {
   final Map<String, List<McpToolDefinition>> _toolCache = {};
   final Map<String, List<McpResourceDefinition>> _resourceCache = {};
   final Map<String, List<McpPromptDefinition>> _promptCache = {};
+  final Map<String, Future<McpServerStatus>> _toolRefreshes = {};
+  final Map<String, int> _unavailableUntilMs = {};
 
   Future<List<McpServerConfig>> listServers() async {
     final json = await _database.getSetting(_kMcpSettingsKey);
     final list = (json?['servers'] as List? ?? const [])
-        .map((item) => McpServerConfig.fromJson(Map<String, dynamic>.from(item as Map)))
+        .map((item) =>
+            McpServerConfig.fromJson(Map<String, dynamic>.from(item as Map)))
         .toList();
     list.sort((a, b) => a.name.toLowerCase().compareTo(b.name.toLowerCase()));
     return list;
@@ -93,7 +97,10 @@ class McpService {
   Future<List<McpServerConfig>> deleteServer(String serverId) async {
     await disconnect(serverId);
     final servers = await listServers();
-    final next = [for (final item in servers) if (item.id != serverId) item];
+    final next = [
+      for (final item in servers)
+        if (item.id != serverId) item
+    ];
     await _writeServers(next);
     _statuses.remove(serverId);
     _toolCache.remove(serverId);
@@ -156,7 +163,8 @@ class McpService {
     }
     final verifier = oauth.pendingCodeVerifier;
     if ((verifier ?? '').isEmpty) {
-      throw StateError('OAuth authorization was not started for MCP server: $serverId');
+      throw StateError(
+          'OAuth authorization was not started for MCP server: $serverId');
     }
     final tokenUri = Uri.parse(oauth.tokenEndpoint);
     final request = await _postForm(
@@ -232,7 +240,8 @@ class McpService {
         error: 'Disabled',
       );
     }
-    _setStatus(serverId, _statusFor(serverId).copyWith(connecting: true, error: null));
+    _setStatus(
+        serverId, _statusFor(serverId).copyWith(connecting: true, error: null));
     try {
       final client = await _connect(server);
       final init = await client.ensureInitialized();
@@ -293,6 +302,7 @@ class McpService {
         promptCount: _promptCache[serverId]?.length ?? 0,
         lastSyncAtMs: DateTime.now().millisecondsSinceEpoch,
       );
+      _unavailableUntilMs.remove(serverId);
       _setStatus(serverId, status);
       _emitCatalogChanged(serverId);
       return status;
@@ -303,6 +313,8 @@ class McpService {
         'error': error.toString(),
       });
       await disconnect(serverId);
+      _clearCatalog(serverId);
+      _markTemporarilyUnavailable(serverId);
       final status = _statusFor(serverId).copyWith(
         connected: false,
         connecting: false,
@@ -315,7 +327,8 @@ class McpService {
 
   /// Fetches resources/prompts when tools are already cached (after [refreshServerToolsOnly]).
   Future<void> ensureExtendedCatalog(String serverId) async {
-    if (_resourceCache.containsKey(serverId) && _promptCache.containsKey(serverId)) {
+    if (_resourceCache.containsKey(serverId) &&
+        _promptCache.containsKey(serverId)) {
       return;
     }
     final server = await getServer(serverId);
@@ -415,9 +428,86 @@ class McpService {
     return result;
   }
 
+  /// Returns the currently cached MCP tools without waiting on the network.
+  ///
+  /// Prompt generation uses this path so an unavailable private MCP server
+  /// cannot block ordinary chat. Missing catalogs are refreshed in the
+  /// background and will be picked up by later prompts.
+  Future<List<McpToolDefinition>> listCachedTools({
+    String? serverId,
+    bool refreshMissing = true,
+  }) async {
+    if (serverId != null) {
+      final cached = _toolCache[serverId];
+      if (cached != null) return cached;
+      if (refreshMissing && !isTemporarilyUnavailable(serverId)) {
+        _refreshServerToolsInBackground(serverId);
+      }
+      return const [];
+    }
+
+    final servers = await listServers();
+    final result = <McpToolDefinition>[];
+    for (final server in servers) {
+      if (!server.enabled) continue;
+      final cached = _toolCache[server.id];
+      if (cached != null) {
+        result.addAll(cached);
+      } else if (refreshMissing && !isTemporarilyUnavailable(server.id)) {
+        _refreshServerToolsInBackground(server.id);
+      }
+    }
+    return result;
+  }
+
+  bool isTemporarilyUnavailable(String serverId) {
+    final until = _unavailableUntilMs[serverId];
+    if (until == null) return false;
+    if (DateTime.now().millisecondsSinceEpoch < until) return true;
+    _unavailableUntilMs.remove(serverId);
+    return false;
+  }
+
+  String? unavailableReason(String serverId) {
+    if (!isTemporarilyUnavailable(serverId)) return null;
+    final detail = _statusFor(serverId).error;
+    if (detail == null || detail.trim().isEmpty) {
+      return 'MCP server `$serverId` is temporarily unavailable.';
+    }
+    return 'MCP server `$serverId` is temporarily unavailable: $detail';
+  }
+
+  Future<String?> promptStatusMessage() async {
+    final servers = await listServers();
+    final unavailable = <String>[];
+    final refreshing = <String>[];
+    for (final server in servers) {
+      if (!server.enabled) continue;
+      if (unavailableReason(server.id) != null ||
+          (_statusFor(server.id).error?.trim().isNotEmpty ?? false)) {
+        unavailable.add(server.name);
+      } else if (!_toolCache.containsKey(server.id) &&
+          (_toolRefreshes.containsKey(server.id) ||
+              _statusFor(server.id).connecting)) {
+        refreshing.add(server.name);
+      }
+    }
+    if (unavailable.isNotEmpty) {
+      final names = unavailable.take(3).join(', ');
+      final suffix = unavailable.length > 3 ? ' 等' : '';
+      return '部分 MCP 当前不可用，已跳过并继续对话：$names$suffix';
+    }
+    if (refreshing.isNotEmpty) {
+      return 'MCP 正在后台连接，已先继续对话。';
+    }
+    return null;
+  }
+
   Future<List<McpResourceDefinition>> listResources([String? serverId]) async {
     if (serverId != null) {
-      if (_resourceCache.containsKey(serverId)) return _resourceCache[serverId]!;
+      if (_resourceCache.containsKey(serverId)) {
+        return _resourceCache[serverId]!;
+      }
       if (_toolCache.containsKey(serverId)) {
         await ensureExtendedCatalog(serverId);
       } else {
@@ -488,21 +578,41 @@ class McpService {
     String toolName,
     JsonMap arguments,
   ) async {
+    final unavailable = unavailableReason(serverId);
+    if (unavailable != null) {
+      throw StateError('$unavailable Continue without this MCP tool.');
+    }
     final server = await getServer(serverId);
     if (server == null) {
       throw StateError('Unknown MCP server: $serverId');
     }
-    final client = await _connect(server);
-    await client.ensureInitialized();
-    final result = await client.callTool(toolName, arguments);
-    return McpToolCallResult(
-      content: result.content,
-      structuredContent: result.structuredContent,
-      isError: result.isError,
-    );
+    try {
+      final client = await _connect(server);
+      await client.ensureInitialized();
+      final result = await client.callTool(toolName, arguments);
+      _unavailableUntilMs.remove(serverId);
+      return McpToolCallResult(
+        content: result.content,
+        structuredContent: result.structuredContent,
+        isError: result.isError,
+      );
+    } catch (error) {
+      await disconnect(serverId);
+      _clearCatalog(serverId);
+      _markTemporarilyUnavailable(serverId);
+      final status = _statusFor(serverId).copyWith(
+        connected: false,
+        connecting: false,
+        error: error.toString(),
+      );
+      _setStatus(serverId, status);
+      throw StateError(
+          'MCP server `$serverId` is temporarily unavailable: $error. Continue without this MCP tool.');
+    }
   }
 
-  Future<List<McpResourceContent>> readResource(String serverId, String uri) async {
+  Future<List<McpResourceContent>> readResource(
+      String serverId, String uri) async {
     final server = await getServer(serverId);
     if (server == null) {
       throw StateError('Unknown MCP server: $serverId');
@@ -560,9 +670,14 @@ class McpService {
       type: 'mcp.catalog.changed',
       properties: {
         'serverId': serverId,
-        'tools': (_toolCache[serverId] ?? const []).map((e) => e.toJson()).toList(),
-        'resources': (_resourceCache[serverId] ?? const []).map((e) => e.toJson()).toList(),
-        'prompts': (_promptCache[serverId] ?? const []).map((e) => e.toJson()).toList(),
+        'tools':
+            (_toolCache[serverId] ?? const []).map((e) => e.toJson()).toList(),
+        'resources': (_resourceCache[serverId] ?? const [])
+            .map((e) => e.toJson())
+            .toList(),
+        'prompts': (_promptCache[serverId] ?? const [])
+            .map((e) => e.toJson())
+            .toList(),
       },
     ));
   }
@@ -584,6 +699,31 @@ class McpService {
     return client;
   }
 
+  void _refreshServerToolsInBackground(String serverId) {
+    if (_toolRefreshes.containsKey(serverId)) return;
+    final refresh = refreshServerToolsOnly(serverId);
+    _toolRefreshes[serverId] = refresh;
+    unawaited(refresh.catchError((_) {
+      return _statusFor(serverId);
+    }).whenComplete(() {
+      _toolRefreshes.remove(serverId);
+    }));
+  }
+
+  void _clearCatalog(String serverId) {
+    final hadCatalog = _toolCache.remove(serverId) != null ||
+        _resourceCache.remove(serverId) != null ||
+        _promptCache.remove(serverId) != null;
+    if (hadCatalog) {
+      _emitCatalogChanged(serverId);
+    }
+  }
+
+  void _markTemporarilyUnavailable(String serverId) {
+    _unavailableUntilMs[serverId] =
+        DateTime.now().millisecondsSinceEpoch + _kMcpUnavailableCooldownMs;
+  }
+
   Future<List<_McpRemoteResource>> _listResourcesSafe(
     _McpRemoteClient client,
     String serverId,
@@ -592,7 +732,8 @@ class McpService {
       return await client.listResources();
     } catch (error) {
       if (_isOptionalMethodMissing(error, 'resources/list')) {
-        _logMcp('capability.missing', 'Server does not support resources/list.', {
+        _logMcp(
+            'capability.missing', 'Server does not support resources/list.', {
           'serverId': serverId,
           'error': error.toString(),
         });
@@ -690,21 +831,24 @@ class _McpRemoteClient {
   Future<List<_McpRemoteTool>> listTools() async {
     final result = await _request('tools/list', const {});
     return (result['tools'] as List? ?? const [])
-        .map((item) => _McpRemoteTool.fromJson(Map<String, dynamic>.from(item as Map)))
+        .map((item) =>
+            _McpRemoteTool.fromJson(Map<String, dynamic>.from(item as Map)))
         .toList();
   }
 
   Future<List<_McpRemoteResource>> listResources() async {
     final result = await _request('resources/list', const {});
     return (result['resources'] as List? ?? const [])
-        .map((item) => _McpRemoteResource.fromJson(Map<String, dynamic>.from(item as Map)))
+        .map((item) =>
+            _McpRemoteResource.fromJson(Map<String, dynamic>.from(item as Map)))
         .toList();
   }
 
   Future<List<_McpRemotePrompt>> listPrompts() async {
     final result = await _request('prompts/list', const {});
     return (result['prompts'] as List? ?? const [])
-        .map((item) => _McpRemotePrompt.fromJson(Map<String, dynamic>.from(item as Map)))
+        .map((item) =>
+            _McpRemotePrompt.fromJson(Map<String, dynamic>.from(item as Map)))
         .toList();
   }
 
@@ -721,8 +865,8 @@ class _McpRemoteClient {
       'uri': uri,
     });
     return (result['contents'] as List? ?? const [])
-        .map((item) =>
-            _McpRemoteResourceContent.fromJson(Map<String, dynamic>.from(item as Map)))
+        .map((item) => _McpRemoteResourceContent.fromJson(
+            Map<String, dynamic>.from(item as Map)))
         .toList();
   }
 
@@ -735,24 +879,27 @@ class _McpRemoteClient {
       if (arguments.isNotEmpty) 'arguments': arguments,
     });
     return (result['messages'] as List? ?? const [])
-        .map((item) =>
-            _McpRemotePromptMessage.fromJson(Map<String, dynamic>.from(item as Map)))
+        .map((item) => _McpRemotePromptMessage.fromJson(
+            Map<String, dynamic>.from(item as Map)))
         .toList();
   }
 
   Future<_McpInitializeResponse> _initializeRequest() async {
-    final result = await _request('initialize', {
-      'protocolVersion': _kMcpProtocolVersions.first,
-      'capabilities': {
-        'roots': {'listChanged': false},
-        'sampling': {},
-        'elicitation': {},
-      },
-      'clientInfo': {
-        'name': 'mobile_agent',
-        'version': '1.0.0',
-      },
-    }, skipInitializeCheck: true);
+    final result = await _request(
+        'initialize',
+        {
+          'protocolVersion': _kMcpProtocolVersions.first,
+          'capabilities': {
+            'roots': {'listChanged': false},
+            'sampling': {},
+            'elicitation': {},
+          },
+          'clientInfo': {
+            'name': 'mobile_agent',
+            'version': '1.0.0',
+          },
+        },
+        skipInitializeCheck: true);
     return _McpInitializeResponse.fromJson(result);
   }
 
@@ -787,7 +934,8 @@ class _McpRemoteClient {
     if (error is Map) {
       final code = error['code'];
       final message = error['message'];
-      throw StateError('MCP $method failed (${code ?? 'unknown'}): ${message ?? error}');
+      throw StateError(
+          'MCP $method failed (${code ?? 'unknown'}): ${message ?? error}');
     }
     final result = map['result'];
     if (result is! Map) {
@@ -821,8 +969,10 @@ class _McpRemoteClient {
     final request = await _client.postUrl(uri).timeout(
           Duration(milliseconds: _config.timeoutMs),
         );
-    request.headers.contentType = ContentType('application', 'json', charset: 'utf-8');
-    request.headers.set(HttpHeaders.acceptHeader, 'application/json, text/event-stream');
+    request.headers.contentType =
+        ContentType('application', 'json', charset: 'utf-8');
+    request.headers
+        .set(HttpHeaders.acceptHeader, 'application/json, text/event-stream');
     if (_sessionId != null && _sessionId!.isNotEmpty) {
       request.headers.set('mcp-session-id', _sessionId!);
     }
@@ -830,7 +980,8 @@ class _McpRemoteClient {
     final auth = _config.auth;
     if (auth != null && auth.hasCredentials) {
       final type = (auth.tokenType ?? 'Bearer').trim();
-      request.headers.set(HttpHeaders.authorizationHeader, '$type ${auth.accessToken}');
+      request.headers
+          .set(HttpHeaders.authorizationHeader, '$type ${auth.accessToken}');
     }
     request.write(jsonEncode(payload));
     final response = await request.close().timeout(
@@ -863,8 +1014,7 @@ dynamic _decodeMcpResponseBody(
 }) {
   final trimmed = body.trim();
   if (trimmed.isEmpty) return <String, dynamic>{};
-  final looksSse =
-      contentType.contains('text/event-stream') ||
+  final looksSse = contentType.contains('text/event-stream') ||
       trimmed.startsWith('event:') ||
       trimmed.startsWith('data:');
   if (!looksSse) {
@@ -912,7 +1062,8 @@ bool _stringMapsEqual(Map<String, String> a, Map<String, String> b) {
 
 bool _isOptionalMethodMissing(Object error, String method) {
   final text = error.toString();
-  return text.contains('MCP $method failed (-32601)') && text.contains('Method not found');
+  return text.contains('MCP $method failed (-32601)') &&
+      text.contains('Method not found');
 }
 
 class _McpInitializeResponse {
@@ -929,12 +1080,14 @@ class _McpInitializeResponse {
   final JsonMap capabilities;
 
   factory _McpInitializeResponse.fromJson(JsonMap json) {
-    final serverInfo = Map<String, dynamic>.from(json['serverInfo'] as Map? ?? const {});
+    final serverInfo =
+        Map<String, dynamic>.from(json['serverInfo'] as Map? ?? const {});
     return _McpInitializeResponse(
       protocolVersion: (json['protocolVersion'] as String?) ?? '',
       serverInfoName: (serverInfo['name'] as String?) ?? '',
       serverInfoVersion: (serverInfo['version'] as String?) ?? '',
-      capabilities: Map<String, dynamic>.from(json['capabilities'] as Map? ?? const {}),
+      capabilities:
+          Map<String, dynamic>.from(json['capabilities'] as Map? ?? const {}),
     );
   }
 }
@@ -1045,8 +1198,8 @@ class _McpRemoteToolResult {
         content: (json['content'] as List? ?? const [])
             .map((item) => Map<String, dynamic>.from(item as Map))
             .toList(),
-        structuredContent:
-            Map<String, dynamic>.from(json['structuredContent'] as Map? ?? const {}),
+        structuredContent: Map<String, dynamic>.from(
+            json['structuredContent'] as Map? ?? const {}),
         isError: json['isError'] as bool? ?? false,
       );
 }

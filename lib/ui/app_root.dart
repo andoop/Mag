@@ -3,6 +3,7 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:webview_flutter/webview_flutter.dart';
 
+import '../core/app_analytics.dart';
 import '../core/models.dart';
 import '../platform/shortcut_bridge.dart';
 import '../store/app_controller.dart';
@@ -31,6 +32,9 @@ class _AppRootState extends State<AppRoot> {
     _workspaceId = widget.controller.state.workspace?.id;
     widget.controller.addListener(_handleControllerChanged);
     _shortcutSub = ShortcutBridge.instance.launches.listen(_handleShortcut);
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      _trackCurrentScreen();
+    });
     WidgetsBinding.instance.addPostFrameCallback((_) async {
       final initial = await ShortcutBridge.instance.takeInitialLaunch();
       if (initial != null) {
@@ -50,6 +54,21 @@ class _AppRootState extends State<AppRoot> {
     final nextWorkspaceId = widget.controller.state.workspace?.id;
     if (nextWorkspaceId == _workspaceId) return;
     setState(() => _workspaceId = nextWorkspaceId);
+    _trackCurrentScreen();
+  }
+
+  void _trackCurrentScreen() {
+    final workspace = widget.controller.state.workspace;
+    if (workspace == null) {
+      unawaited(widget.controller.trackScreen(AppAnalytics.projectHomeScreen));
+      return;
+    }
+    unawaited(widget.controller.trackScreen(
+      AppAnalytics.workspaceHomeScreen(
+        sessionCount: widget.controller.state.sessions.length,
+        hasActiveSession: widget.controller.state.session != null,
+      ),
+    ));
   }
 
   Future<void> _handleShortcut(WorkspaceWebShortcut shortcut) async {
@@ -72,6 +91,7 @@ class _AppRootState extends State<AppRoot> {
       );
       await Navigator.of(context, rootNavigator: true).push<void>(
         MaterialPageRoute<void>(
+          settings: const RouteSettings(name: 'shortcut_web_preview'),
           builder: (_) => _ShortcutWebPreviewPage(
             title: shortcut.title,
             subtitle: shortcut.path,
@@ -79,6 +99,12 @@ class _AppRootState extends State<AppRoot> {
           ),
         ),
       );
+      unawaited(widget.controller.track(
+        AppAnalytics.shortcutPreviewOpened(
+          pathDepth:
+              shortcut.path.split('/').where((item) => item.isNotEmpty).length,
+        ),
+      ));
     } catch (e) {
       if (mounted) {
         _showShortcutError(

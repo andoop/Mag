@@ -24,6 +24,8 @@ extension AppControllerSession on AppController {
   Future<void> leaveProject() async {
     _cancelPendingPartDeltas();
     _clearWorkspacePreviewCaches();
+    final previousWorkspace = state.workspace;
+    final previousSessionCount = state.sessions.length;
     state = state.copyWith(
       workspace: null,
       session: null,
@@ -36,6 +38,10 @@ extension AppControllerSession on AppController {
       error: null,
     );
     notifyListeners();
+    unawaited(track(AppAnalytics.workspaceLeft(
+      hadWorkspace: previousWorkspace != null,
+      sessionCount: previousSessionCount,
+    )));
   }
 
   /// 与 [enterWorkspace] 相同路径：解析 treeUri、写入最近、进入落地页。
@@ -129,6 +135,11 @@ extension AppControllerSession on AppController {
           'elapsedMs': DateTime.now().millisecondsSinceEpoch - startedAt,
         },
       );
+      unawaited(track(AppAnalytics.workspaceOpened(
+        sessionCount: sessions.length,
+        hasActiveSession: state.session != null,
+        openedFromSavedSession: openSession != null,
+      )));
     } catch (error) {
       _setError(error);
     }
@@ -139,6 +150,9 @@ extension AppControllerSession on AppController {
       await initialize();
       final workspace = await _workspaceBridge.createSandboxProject(name: name);
       await enterWorkspace(workspace, openSession: null);
+      unawaited(track(AppAnalytics.projectCreated(
+        nameLength: name.trim().length,
+      )));
     } catch (error) {
       _setError(error);
     }
@@ -173,6 +187,10 @@ extension AppControllerSession on AppController {
         );
         notifyListeners();
       }
+      unawaited(track(AppAnalytics.projectRenamed(
+        oldNameLength: workspace.name.length,
+        newNameLength: newName.trim().length,
+      )));
       return renamed;
     } catch (error) {
       _setError(error);
@@ -183,12 +201,19 @@ extension AppControllerSession on AppController {
   Future<void> deleteProject(WorkspaceInfo workspace) async {
     try {
       await initialize();
-      if (state.workspace?.id == workspace.id) {
+      final wasActiveWorkspace = state.workspace?.id == workspace.id;
+      final deletedSessionCount =
+          wasActiveWorkspace ? state.sessions.length : 0;
+      if (wasActiveWorkspace) {
         await leaveProject();
       }
       await _workspaceBridge.deleteSandboxProject(workspace);
       await _db.deleteWorkspaceCascade(workspace.id);
       await ProjectRecentsStore.remove(workspace.id);
+      unawaited(track(AppAnalytics.projectDeleted(
+        wasActiveWorkspace: wasActiveWorkspace,
+        sessionCount: deletedSessionCount,
+      )));
     } catch (error) {
       _setError(error);
     }
@@ -271,6 +296,7 @@ extension AppControllerSession on AppController {
     final workspace = state.workspace;
     if (workspace == null) return;
     try {
+      final previousSessionCount = state.sessions.length;
       _cancelPendingPartDeltas();
       _clearWorkspacePreviewCaches();
       final session = await _client!.createSession(workspace, agent: agent);
@@ -287,6 +313,10 @@ extension AppControllerSession on AppController {
           sessionStatuses: statuses);
       notifyListeners();
       await refreshSession();
+      unawaited(track(AppAnalytics.sessionCreated(
+        agent: agent,
+        previousSessionCount: previousSessionCount,
+      )));
     } catch (error) {
       _setError(error);
     }
@@ -404,6 +434,8 @@ extension AppControllerSession on AppController {
     state = state.copyWith(error: null);
     notifyListeners();
     try {
+      final trimmedText = text.trim();
+      final eventAgent = agent ?? session.agent;
       await _client!.sendPromptAsync(
         session.id,
         text,
@@ -416,6 +448,16 @@ extension AppControllerSession on AppController {
         state = state.copyWith(session: session.copyWith(agent: agent));
         notifyListeners();
       }
+      unawaited(track(AppAnalytics.promptSubmitted(
+        agent: eventAgent,
+        variant: variant ?? '',
+        provider: modelConfig.provider,
+        model: modelConfig.model,
+        textLength: trimmedText.length,
+        hasParts: parts != null && parts.isNotEmpty,
+        partCount: parts?.length ?? 0,
+        format: format?.type.name ?? '',
+      )));
     } catch (error) {
       _setError(error);
     }

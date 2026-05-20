@@ -162,8 +162,7 @@ class _FakeMcpHttpHeaders implements HttpHeaders {
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
 
-  const pathProviderChannel =
-      MethodChannel('plugins.flutter.io/path_provider');
+  const pathProviderChannel = MethodChannel('plugins.flutter.io/path_provider');
   late Directory supportDir;
   late McpService service;
   late List<ServerEvent> emittedEvents;
@@ -203,6 +202,13 @@ void main() {
         final method = payload['method'] as String?;
         final id = payload['id'];
         final serverMode = uri.host;
+        if (serverMode == 'mcp-fail.example.test') {
+          return const _StubMcpResponseData(
+            statusCode: 503,
+            contentType: 'application/json',
+            body: '{"error":"mcp unavailable"}',
+          );
+        }
         Map<String, dynamic> jsonResponse(Map<String, dynamic> result) => {
               'jsonrpc': '2.0',
               'id': id,
@@ -225,7 +231,8 @@ void main() {
               'protocolVersion': '2025-11-25',
               'capabilities': {
                 'tools': {},
-                if (serverMode != 'mcp-no-resources.example.test') 'resources': {},
+                if (serverMode != 'mcp-no-resources.example.test')
+                  'resources': {},
                 'prompts': {},
               },
               'serverInfo': {
@@ -393,7 +400,8 @@ void main() {
     );
   });
 
-  test('refresh tolerates unsupported resources/list and keeps prompts', () async {
+  test('refresh tolerates unsupported resources/list and keeps prompts',
+      () async {
     const config = McpServerConfig(
       id: 'demo-no-resources',
       name: 'Demo no resources',
@@ -416,7 +424,8 @@ void main() {
     expect(prompts.single.name, 'summarize');
   });
 
-  test('tools-only refresh then extended catalog fills resources and prompts', () async {
+  test('tools-only refresh then extended catalog fills resources and prompts',
+      () async {
     const config = McpServerConfig(
       id: 'demo-tools-only',
       name: 'Demo tools-only',
@@ -496,7 +505,8 @@ void main() {
       mcpService: service,
     );
 
-    final tools = await engine.availableToolModels(workspace, AgentRegistry.build);
+    final tools =
+        await engine.availableToolModels(workspace, AgentRegistry.build);
     final ids = tools.map((item) => item.id).toSet();
 
     expect(ids.contains('mcp.demo3.echo'), isTrue);
@@ -504,5 +514,119 @@ void main() {
     expect(ids.contains('read_mcp_resource'), isTrue);
     expect(ids.contains('list_mcp_prompts'), isTrue);
     expect(ids.contains('get_mcp_prompt'), isTrue);
+  });
+
+  test('session engine skips uncached unavailable MCP tools', () async {
+    final now = DateTime.now().millisecondsSinceEpoch;
+    final tempDir =
+        await Directory.systemTemp.createTemp('mcp_engine_offline_');
+    addTearDown(() async {
+      if (await tempDir.exists()) {
+        await tempDir.delete(recursive: true);
+      }
+    });
+    final workspace = WorkspaceInfo(
+      id: newId('ws'),
+      name: 'mcp-offline-workspace',
+      treeUri: tempDir.path,
+      createdAt: now,
+    );
+    const config = McpServerConfig(
+      id: 'offline',
+      name: 'Offline',
+      url: 'https://mcp-fail.example.test/mcp',
+    );
+    await service.saveServer(config);
+
+    final engine = SessionEngine(
+      database: AppDatabase.instance,
+      events: LocalEventBus(),
+      workspaceBridge: WorkspaceBridge.instance,
+      promptAssembler: PromptAssembler(WorkspaceBridge.instance),
+      permissionCenter: PermissionCenter(AppDatabase.instance, LocalEventBus()),
+      questionCenter: QuestionCenter(AppDatabase.instance, LocalEventBus()),
+      toolRegistry: ToolRegistry.builtins(),
+      modelGateway: ModelGateway(),
+      mcpService: service,
+    );
+
+    final tools = await engine
+        .availableToolModels(workspace, AgentRegistry.build)
+        .timeout(const Duration(seconds: 1));
+    final ids = tools.map((item) => item.id).toSet();
+
+    expect(ids.contains('mcp.offline.echo'), isFalse);
+    expect(ids.contains('list_mcp_resources'), isTrue);
+  });
+
+  test('failed refresh clears stale MCP tool cache', () async {
+    const config = McpServerConfig(
+      id: 'stale',
+      name: 'Stale',
+      url: 'https://mcp.example.test/mcp',
+    );
+    await service.saveServer(config);
+    await service.refreshServerToolsOnly('stale');
+    expect(
+      (await service.listCachedTools(
+        serverId: 'stale',
+        refreshMissing: false,
+      ))
+          .map((item) => item.name),
+      contains('echo'),
+    );
+
+    debugSetMcpHttpClientFactoryForTests(() {
+      return _FakeMcpHttpClient(({
+        required Uri uri,
+        required Map<String, String> headers,
+        required String body,
+      }) {
+        return const _StubMcpResponseData(
+          statusCode: 503,
+          contentType: 'application/json',
+          body: '{"error":"offline"}',
+        );
+      });
+    });
+    await service.disconnect('stale');
+
+    final status = await service.refreshServerToolsOnly('stale');
+
+    expect(status.connected, isFalse);
+    expect(status.error, isNotNull);
+    expect(
+      await service.listCachedTools(serverId: 'stale', refreshMissing: false),
+      isEmpty,
+    );
+    expect(await service.promptStatusMessage(), contains('已跳过并继续对话'));
+  });
+
+  test('temporarily unavailable MCP tool calls fail without network', () async {
+    const config = McpServerConfig(
+      id: 'quick-fail',
+      name: 'Quick fail',
+      url: 'https://mcp-fail.example.test/mcp',
+    );
+    await service.saveServer(config);
+    await service.refreshServerToolsOnly('quick-fail');
+
+    var factoryCalls = 0;
+    debugSetMcpHttpClientFactoryForTests(() {
+      factoryCalls += 1;
+      return _FakeMcpHttpClient(({
+        required Uri uri,
+        required Map<String, String> headers,
+        required String body,
+      }) {
+        fail('Unavailable MCP calls should fail before opening the network.');
+      });
+    });
+
+    await expectLater(
+      service.callTool('quick-fail', 'echo', {'text': 'hi'}),
+      throwsA(isA<StateError>()),
+    );
+    expect(factoryCalls, 0);
   });
 }

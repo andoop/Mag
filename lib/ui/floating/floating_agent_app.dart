@@ -384,7 +384,9 @@ class _FloatingHeader extends StatelessWidget {
       return status.message ?? l(context, '正在重试', 'Retrying');
     }
     if (status.isCompacting) return l(context, '正在压缩上下文', 'Compacting context');
-    if (status.isBusy) return l(context, 'Agent 运行中', 'Agent is running');
+    if (status.isBusy) {
+      return status.message ?? l(context, 'Agent 运行中', 'Agent is running');
+    }
     if (status.hasError) return status.message!;
     return subtitle.isEmpty
         ? l(context, '点击回到 Mag', 'Tap to open Mag')

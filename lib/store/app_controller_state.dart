@@ -1,6 +1,27 @@
 // ignore_for_file: invalid_use_of_protected_member, invalid_use_of_visible_for_testing_member
 part of 'app_controller.dart';
 
+bool _isRedundantStreamingPartUpdate(
+  List<SessionMessageBundle> bundles,
+  MessagePart part,
+) {
+  if (part.type != PartType.text && part.type != PartType.reasoning) {
+    return false;
+  }
+  final index = bundles.indexWhere((item) => item.message.id == part.messageId);
+  if (index < 0) return false;
+  final partIndex =
+      bundles[index].parts.indexWhere((item) => item.id == part.id);
+  if (partIndex < 0) return false;
+  final existing = bundles[index].parts[partIndex];
+  if (existing.type != part.type) return false;
+  final existingText = existing.data['text'] as String? ?? '';
+  final nextText = part.data['text'] as String? ?? '';
+  if (existingText == nextText) return true;
+  return existingText.length >= nextText.length &&
+      existingText.startsWith(nextText);
+}
+
 extension AppControllerState on AppController {
   static const Set<String> _appendDeltaFields = {
     'text',
@@ -125,28 +146,6 @@ extension AppControllerState on AppController {
     final items = [...bundles];
     items[index] = updatedBundle;
     return items;
-  }
-
-  bool _isRedundantStreamingPartUpdate(
-    List<SessionMessageBundle> bundles,
-    MessagePart part,
-  ) {
-    if (part.type != PartType.text && part.type != PartType.reasoning) {
-      return false;
-    }
-    final index =
-        bundles.indexWhere((item) => item.message.id == part.messageId);
-    if (index < 0) return false;
-    final partIndex =
-        bundles[index].parts.indexWhere((item) => item.id == part.id);
-    if (partIndex < 0) return false;
-    final existing = bundles[index].parts[partIndex];
-    if (existing.type != part.type) return false;
-    final existingText = existing.data['text'] as String? ?? '';
-    final nextText = part.data['text'] as String? ?? '';
-    if (existingText == nextText) return true;
-    return existingText.length >= nextText.length &&
-        existingText.startsWith(nextText);
   }
 
   List<SessionMessageBundle> _applyPartDelta(
