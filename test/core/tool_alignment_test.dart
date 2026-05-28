@@ -6,6 +6,8 @@ import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:mobile_agent/core/agents.dart';
 import 'package:mobile_agent/core/database.dart';
+import 'package:mobile_agent/core/git/exceptions/git_exceptions.dart';
+import 'package:mobile_agent/core/git/network_git_bridge.dart';
 import 'package:mobile_agent/core/mcp_service.dart';
 import 'package:mobile_agent/core/models.dart';
 import 'package:mobile_agent/core/prompt_system.dart';
@@ -185,6 +187,7 @@ void main() {
   final writeTool = registry['write']!;
   final editTool = registry['edit']!;
   final downloadTool = registry['download']!;
+  final gitTool = registry['git']!;
   final skillTool = registry['skill']!;
   final taskTool = registry['task']!;
   final bridge = WorkspaceBridge.instance;
@@ -390,6 +393,120 @@ void main() {
     expect(await target.readAsString(), 'new\n');
     expect(result.displayOutput, 'Wrote note_overwrite.txt');
     expect(permissionRequests, hasLength(1));
+  });
+
+  test('git clone throws when native bridge reports failure', () async {
+    const channel = MethodChannel('mobile_agent/git_network');
+    GitNetworkBridge.debugOverrideIsSupported = true;
+    TestDefaultBinaryMessengerBinding.instance!.defaultBinaryMessenger
+        .setMockMethodCallHandler(channel, (call) async {
+      if (call.method == 'cloneRepository') {
+        return {
+          'success': false,
+          'error': 'fatal: repository not found',
+        };
+      }
+      return null;
+    });
+
+    try {
+      await expectLater(
+        gitTool.execute(
+          {
+            'command': 'clone',
+            'url': 'https://example.com/missing/repo.git',
+            'path': 'clone-target',
+          },
+          makeContext(),
+        ),
+        throwsA(
+          isA<GitException>().having(
+            (error) => error.message,
+            'message',
+            contains('repository not found'),
+          ),
+        ),
+      );
+    } finally {
+      GitNetworkBridge.debugOverrideIsSupported = null;
+      TestDefaultBinaryMessengerBinding.instance!.defaultBinaryMessenger
+          .setMockMethodCallHandler(channel, null);
+    }
+  });
+
+  test('prompt marks git clone failure as tool error', () async {
+    const channel = MethodChannel('mobile_agent/git_network');
+    GitNetworkBridge.debugOverrideIsSupported = true;
+    TestDefaultBinaryMessengerBinding.instance!.defaultBinaryMessenger
+        .setMockMethodCallHandler(channel, (call) async {
+      if (call.method == 'cloneRepository') {
+        return {
+          'success': false,
+          'error': 'fatal: repository not found',
+        };
+      }
+      return null;
+    });
+
+    final gateway = _QueuedModelGateway([
+      ModelResponse(
+        text: '',
+        toolCalls: [
+          ToolCall(
+            id: 'call_clone',
+            name: 'git',
+            arguments: const {
+              'command': 'clone',
+              'url': 'https://example.com/missing/repo.git',
+              'path': 'clone-target',
+            },
+          ),
+        ],
+        finishReason: 'tool_calls',
+        raw: const {},
+      ),
+      ModelResponse(
+        text: 'done',
+        toolCalls: const [],
+        finishReason: 'stop',
+        raw: const {},
+      ),
+    ]);
+    final engine = SessionEngine(
+      database: database,
+      events: LocalEventBus(),
+      workspaceBridge: bridge,
+      promptAssembler: promptAssembler,
+      permissionCenter: PermissionCenter(database, LocalEventBus()),
+      questionCenter: QuestionCenter(database, LocalEventBus()),
+      toolRegistry: registry,
+      modelGateway: gateway,
+    );
+
+    try {
+      await engine.prompt(
+        workspace: workspace,
+        session: session,
+        text: 'Clone a repository',
+        agent: 'build',
+      );
+
+      final parts = await database.listPartsForSession(session.id);
+      final toolPart = parts.firstWhere(
+        (part) => part.type == PartType.tool && part.data['callID'] == 'call_clone',
+      );
+      final state =
+          Map<String, dynamic>.from(toolPart.data['state'] as Map? ?? const {});
+      expect(state['status'], ToolStatus.error.name);
+      expect(
+        (state['error'] as String?) ?? (state['output'] as String? ?? ''),
+        contains('repository not found'),
+      );
+    } finally {
+      GitNetworkBridge.debugOverrideIsSupported = null;
+      TestDefaultBinaryMessengerBinding.instance!.defaultBinaryMessenger
+          .setMockMethodCallHandler(channel, null);
+    }
   });
 
   test('write rejects existing files changed after last read', () async {

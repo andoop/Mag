@@ -116,10 +116,7 @@ Future<ToolExecutionResult> _gitTool(
           auth: auth,
         );
         if (!result.success) {
-          return ToolExecutionResult(
-            title: 'git clone',
-            output: result.error ?? 'Clone failed.',
-          );
+          throw GitException(result.error ?? 'Clone failed.');
         }
         return ToolExecutionResult(
           title: 'git clone',
@@ -864,6 +861,9 @@ Future<ToolExecutionResult> _gitTool(
         );
     }
   } on GitException catch (e) {
+    if (command == 'clone') {
+      rethrow;
+    }
     return ToolExecutionResult(
       title: 'git $command',
       output: e.message,
