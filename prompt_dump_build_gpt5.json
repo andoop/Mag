@@ -1,0 +1,975 @@
+{
+  "agent": "build",
+  "model": "gpt-5",
+  "prompts": [
+    {
+      "role": "system",
+      "content": "You are Mag, You and the user share the same workspace and collaborate to achieve the user's goals.\n\nYou are pragmatic, direct, and technically rigorous.\n- Build context by reading before changing.\n- Use tools to gather facts.\n- Prefer actionable, minimal responses.\n"
+    },
+    {
+      "role": "system",
+      "content": "You and the user share the same Android workspace.\n\n# Current Agent\nName: build\nDescription: Default agent. Executes tools inside configured permissions.\nAvailable tools: read, apply_patch, list, glob, grep, stat, delete, rename, move, copy, todowrite, question, variable, webfetch, download, create_document, create_spreadsheet, create_presentation, create_qr_code, zip, unzip, list_mcp_resources, read_mcp_resource, list_mcp_prompts, get_mcp_prompt, browser, skill, git, invalid, plan_exit, task\n\nYou are the default BUILD agent with full read/write capabilities.\nExecute the user's request using all available tools.\nRead existing files before changing them with `apply_patch`.\nBatch related same-file changes; re-read before another pass.\n\n# Environment\nModel: gpt-5.\nWorkspace: magent.\nTree URI: /Users/ke/Documents/projects3/magent/mobile_agent.\nDo not assume shell, PTY, or desktop-only capabilities exist.\nPrefer available tools and stay within the workspace boundary.\n`webfetch` inspects remote text; `download` saves a public URL into the workspace.\nIf you only need to inspect remote text without saving it, prefer `webfetch`.\nMCP: list first, then read/get.\nMCP prompts: list first, then get.\n<tool-calling-rules>\n1. Tool arguments must be valid JSON and match the schema exactly.\n2. Required string fields must be non-null strings. Do not omit required keys.\n3. Read tool errors carefully and change strategy; do not repeat the same failing call.\n4. Do not invent file contents or unavailable tools.\n</tool-calling-rules>\n\n# File Change Rules\n- Read existing files before changing them with `apply_patch`.\n- Batch related same-file changes; re-read before another pass.\n- After a tool error, change arguments or sequence; do not repeat the same failing call.\n\n# Common Tool Sequences\n- Answer about code: `read` -> analyze -> answer\n- Change existing files: `read` -> wait for result -> `apply_patch` -> report\n- Find something: `grep` / `glob` (parallel if independent) -> `read` matching files -> report\n- Remote content: use `webfetch` to inspect; use `download` to save."
+    },
+    {
+      "role": "system",
+      "content": "Skills provide specialized instructions and workflows for specific tasks.\nUse the `skill` tool to load a skill when a task matches its description.\n<available_skills>\n  <skill>\n    <name>public-file-download</name>\n    <description>Download a public http/https file into the workspace at a chosen path.</description>\n    <location>builtin://skills/public-file-download</location>\n  </skill>\n  <skill>\n    <name>qr-code-generation</name>\n    <description>Generate QR codes as SVG files or in AI-generated HTML pages.</description>\n    <location>builtin://skills/qr-code-generation</location>\n  </skill>\n</available_skills>"
+    }
+  ],
+  "tools": [
+    {
+      "id": "read",
+      "description": "Read a workspace file or directory.\n- Required: `filePath`.\n- Files return numbered lines; do not copy the line-number prefix into edits.\n- Use `offset`/`limit` for large files. Use `grep`/`glob` when locating content.\n- Images and PDFs may be returned as attachments.\nPaths are workspace-relative, use `/`, and cannot escape the workspace.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "filePath": {
+            "type": "string",
+            "description": "File or directory path."
+          },
+          "offset": {
+            "type": "integer",
+            "description": "Start line, 1-indexed."
+          },
+          "limit": {
+            "type": "integer",
+            "description": "Maximum lines."
+          }
+        },
+        "required": [
+          "filePath"
+        ],
+        "additionalProperties": false
+      }
+    },
+    {
+      "id": "apply_patch",
+      "description": "Edit workspace files with a patch envelope:\n\n*** Begin Patch\n[ one or more file sections ]\n*** End Patch\n\nSections:\n- `*** Add File: <path>` then `+` lines.\n- `*** Update File: <path>` with diff hunks; optional `*** Move to: <path>`.\n- `*** Delete File: <path>`.\n\nExample patch:\n\n```\n*** Begin Patch\n*** Add File: hello.txt\n+Hello world\n*** Update File: src/app.py\n*** Move to: src/main.py\n@@ def greet():\n-print(\"Hi\")\n+print(\"Hello, world!\")\n*** Delete File: obsolete.txt\n*** End Patch\n```\n\nIt is important to remember:\n- Existing files must be read first.\n- New lines in added files must start with `+`.\nPaths are workspace-relative, use `/`, and cannot escape the workspace.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "patchText": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "patchText"
+        ],
+        "additionalProperties": false
+      }
+    },
+    {
+      "id": "list",
+      "description": "List files and directories in the workspace.\nPaths are workspace-relative, use `/`, and cannot escape the workspace.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "path": {
+            "type": "string"
+          },
+          "ignore": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          }
+        },
+        "additionalProperties": false
+      }
+    },
+    {
+      "id": "glob",
+      "description": "Search workspace files by glob pattern.\nPaths are workspace-relative, use `/`, and cannot escape the workspace.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "pattern": {
+            "type": "string"
+          },
+          "path": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "pattern"
+        ],
+        "additionalProperties": false
+      }
+    },
+    {
+      "id": "grep",
+      "description": "Search file contents line-by-line with a Kotlin-compatible regex. `path` is an optional directory. `include`/`glob` filters full workspace-relative paths.\nPaths are workspace-relative, use `/`, and cannot escape the workspace.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "pattern": {
+            "type": "string",
+            "description": "Regex searched per line. Escape metacharacters for literals."
+          },
+          "path": {
+            "type": "string",
+            "description": "Optional directory to search. Omit for workspace root."
+          },
+          "include": {
+            "type": "string",
+            "description": "Optional glob matched against full workspace-relative paths."
+          },
+          "glob": {
+            "type": "string",
+            "description": "Alias for `include`."
+          }
+        },
+        "required": [
+          "pattern"
+        ],
+        "additionalProperties": false
+      }
+    },
+    {
+      "id": "stat",
+      "description": "Get workspace file or directory metadata.\nPaths are workspace-relative, use `/`, and cannot escape the workspace.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "path": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "path"
+        ],
+        "additionalProperties": false
+      }
+    },
+    {
+      "id": "delete",
+      "description": "Delete a workspace file or directory recursively.\nPaths are workspace-relative, use `/`, and cannot escape the workspace.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "path": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "path"
+        ],
+        "additionalProperties": false
+      }
+    },
+    {
+      "id": "rename",
+      "description": "Rename a workspace file or directory within the same parent. `newName` must be one path segment.\nPaths are workspace-relative, use `/`, and cannot escape the workspace.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "path": {
+            "type": "string"
+          },
+          "newName": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "path",
+          "newName"
+        ],
+        "additionalProperties": false
+      }
+    },
+    {
+      "id": "move",
+      "description": "Move a workspace file or directory to `toPath`.\nPaths are workspace-relative, use `/`, and cannot escape the workspace.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "fromPath": {
+            "type": "string"
+          },
+          "toPath": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "fromPath",
+          "toPath"
+        ],
+        "additionalProperties": false
+      }
+    },
+    {
+      "id": "copy",
+      "description": "Copy a workspace file or directory recursively to `toPath`.\nPaths are workspace-relative, use `/`, and cannot escape the workspace.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "fromPath": {
+            "type": "string"
+          },
+          "toPath": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "fromPath",
+          "toPath"
+        ],
+        "additionalProperties": false
+      }
+    },
+    {
+      "id": "todowrite",
+      "description": "Create or update the task list for the current session.\n- Use for complex multi-step work, multiple requested tasks, or when the user asks for a todo list.\n- Skip for single simple tasks or purely informational answers.\n- Keep items specific and actionable.\n- Use statuses: `pending`, `in_progress`, `completed`, `cancelled`.\n- Keep at most one item `in_progress`; mark completed items promptly.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "todos": {
+            "type": "array",
+            "description": "The updated todo list",
+            "items": {
+              "type": "object",
+              "properties": {
+                "content": {
+                  "type": "string",
+                  "description": "Brief description of the task"
+                },
+                "status": {
+                  "type": "string",
+                  "description": "Current status of the task: pending, in_progress, completed, cancelled"
+                },
+                "priority": {
+                  "type": "string",
+                  "description": "Priority level of the task: high, medium, low"
+                }
+              },
+              "required": [
+                "content",
+                "status",
+                "priority"
+              ],
+              "additionalProperties": false
+            }
+          }
+        },
+        "required": [
+          "todos"
+        ],
+        "additionalProperties": false
+      }
+    },
+    {
+      "id": "question",
+      "description": "Ask the user for clarification or a decision.\n- Keep questions short and choices mutually exclusive.\n- Do not add \"Other\"; the UI adds a custom answer automatically.\n- Put the recommended option first and suffix its label with \"(Recommended)\".",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "questions": {
+            "type": "array",
+            "description": "Questions to ask",
+            "items": {
+              "type": "object",
+              "properties": {
+                "question": {
+                  "type": "string",
+                  "description": "Complete question"
+                },
+                "header": {
+                  "type": "string",
+                  "description": "Very short label (max 30 chars)"
+                },
+                "options": {
+                  "type": "array",
+                  "description": "Available choices",
+                  "items": {
+                    "type": "object",
+                    "properties": {
+                      "label": {
+                        "type": "string",
+                        "description": "Display text (1-5 words, concise)"
+                      },
+                      "description": {
+                        "type": "string",
+                        "description": "Explanation of choice"
+                      }
+                    },
+                    "required": [
+                      "label",
+                      "description"
+                    ],
+                    "additionalProperties": false
+                  },
+                  "minItems": 1
+                },
+                "multiple": {
+                  "type": "boolean",
+                  "description": "Allow selecting multiple choices"
+                }
+              },
+              "required": [
+                "question",
+                "header",
+                "options"
+              ],
+              "additionalProperties": false
+            },
+            "minItems": 1
+          }
+        },
+        "required": [
+          "questions"
+        ],
+        "additionalProperties": false
+      }
+    },
+    {
+      "id": "variable",
+      "description": "List or read user-authorized app variables. Use `list` before `read`.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "action": {
+            "type": "string",
+            "enum": [
+              "list",
+              "read"
+            ],
+            "description": "Use list to show available variables, read to fetch one value."
+          },
+          "name": {
+            "type": "string",
+            "description": "Variable name to read. Required when action is read."
+          }
+        },
+        "required": [
+          "action"
+        ],
+        "additionalProperties": false
+      }
+    },
+    {
+      "id": "webfetch",
+      "description": "Fetch public web text for inspection. Read-only; does not save files.\n- Required: `url`.\n- Use `download` instead when the remote file must be saved to the workspace.\nReturns plain text only; no `format` or `timeout` parameters.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "url": {
+            "type": "string",
+            "description": "URL to fetch."
+          }
+        },
+        "required": [
+          "url"
+        ],
+        "additionalProperties": false
+      }
+    },
+    {
+      "id": "download",
+      "description": "Download a public file from a URL into the workspace.\n- Required: `url`, `filePath`.\n- URL must be public `http`/`https`.\n- Existing destination requires `overwrite: true`.\nPaths are workspace-relative, use `/`, and cannot escape the workspace.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "url": {
+            "type": "string",
+            "description": "Public http/https URL."
+          },
+          "filePath": {
+            "type": "string",
+            "description": "Destination path."
+          },
+          "overwrite": {
+            "type": "boolean",
+            "description": "Replace existing file."
+          }
+        },
+        "required": [
+          "url",
+          "filePath"
+        ],
+        "additionalProperties": false
+      }
+    },
+    {
+      "id": "create_document",
+      "description": "Create a DOCX from structured blocks: heading, paragraph, list, table.\nPaths are workspace-relative, use `/`, and cannot escape the workspace.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "filePath": {
+            "type": "string",
+            "description": "Destination .docx path."
+          },
+          "title": {
+            "type": "string",
+            "description": "Document title."
+          },
+          "blocks": {
+            "type": "array",
+            "description": "heading, paragraph, list, or table blocks.",
+            "items": {
+              "type": "object",
+              "properties": {
+                "type": {
+                  "type": "string",
+                  "enum": [
+                    "heading",
+                    "paragraph",
+                    "list",
+                    "table"
+                  ]
+                },
+                "level": {
+                  "type": "integer"
+                },
+                "text": {
+                  "type": "string"
+                },
+                "items": {
+                  "type": "array",
+                  "items": {
+                    "type": "string"
+                  }
+                },
+                "rows": {
+                  "type": "array",
+                  "items": {
+                    "type": "array",
+                    "items": {
+                      "type": "string"
+                    }
+                  }
+                }
+              },
+              "additionalProperties": false
+            }
+          },
+          "overwrite": {
+            "type": "boolean",
+            "description": "Replace existing file."
+          }
+        },
+        "required": [
+          "filePath",
+          "title",
+          "blocks"
+        ],
+        "additionalProperties": false
+      }
+    },
+    {
+      "id": "create_spreadsheet",
+      "description": "Create an XLSX from structured sheets and rows.\nPaths are workspace-relative, use `/`, and cannot escape the workspace.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "filePath": {
+            "type": "string",
+            "description": "Destination .xlsx path."
+          },
+          "sheets": {
+            "type": "array",
+            "description": "Workbook sheets.",
+            "items": {
+              "type": "object",
+              "properties": {
+                "name": {
+                  "type": "string"
+                },
+                "rows": {
+                  "type": "array",
+                  "items": {
+                    "type": "array",
+                    "items": {}
+                  }
+                }
+              },
+              "required": [
+                "name",
+                "rows"
+              ],
+              "additionalProperties": false
+            }
+          },
+          "overwrite": {
+            "type": "boolean",
+            "description": "Replace existing file."
+          }
+        },
+        "required": [
+          "filePath",
+          "sheets"
+        ],
+        "additionalProperties": false
+      }
+    },
+    {
+      "id": "create_presentation",
+      "description": "Create a PPTX from fixed-layout slides.\nPaths are workspace-relative, use `/`, and cannot escape the workspace.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "filePath": {
+            "type": "string",
+            "description": "Destination .pptx path."
+          },
+          "title": {
+            "type": "string",
+            "description": "Presentation title."
+          },
+          "slides": {
+            "type": "array",
+            "description": "Fixed-layout slides.",
+            "items": {
+              "type": "object",
+              "properties": {
+                "layout": {
+                  "type": "string",
+                  "enum": [
+                    "title",
+                    "bullets",
+                    "table"
+                  ]
+                },
+                "title": {
+                  "type": "string"
+                },
+                "subtitle": {
+                  "type": "string"
+                },
+                "bullets": {
+                  "type": "array",
+                  "items": {
+                    "type": "string"
+                  }
+                },
+                "table": {
+                  "type": "array",
+                  "items": {
+                    "type": "array",
+                    "items": {
+                      "type": "string"
+                    }
+                  }
+                }
+              },
+              "additionalProperties": false
+            }
+          },
+          "overwrite": {
+            "type": "boolean",
+            "description": "Replace existing file."
+          }
+        },
+        "required": [
+          "filePath",
+          "title",
+          "slides"
+        ],
+        "additionalProperties": false
+      }
+    },
+    {
+      "id": "create_qr_code",
+      "description": "Create a QR code SVG file in the workspace.\nLoad `qr-code-generation` only when detailed examples or HTML runtime usage are needed.\nPaths are workspace-relative, use `/`, and cannot escape the workspace.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "filePath": {
+            "type": "string",
+            "description": "Workspace-relative .svg path."
+          },
+          "text": {
+            "type": "string",
+            "description": "QR payload."
+          },
+          "size": {
+            "type": "integer",
+            "description": "Pixels, 96-2048."
+          },
+          "margin": {
+            "type": "integer",
+            "description": "Quiet-zone modules, 0-16."
+          },
+          "foregroundColor": {
+            "type": "string",
+            "description": "#RGB or #RRGGBB."
+          },
+          "backgroundColor": {
+            "type": "string",
+            "description": "#RGB, #RRGGBB, or transparent."
+          },
+          "errorCorrectionLevel": {
+            "type": "string",
+            "enum": [
+              "L",
+              "M",
+              "Q",
+              "H"
+            ],
+            "description": "L, M, Q, or H."
+          },
+          "overwrite": {
+            "type": "boolean",
+            "description": "Replace existing file."
+          }
+        },
+        "required": [
+          "filePath",
+          "text"
+        ],
+        "additionalProperties": false
+      }
+    },
+    {
+      "id": "zip",
+      "description": "Create a .zip archive from `sourcePath` or `sourcePaths`.\nPaths are workspace-relative, use `/`, and cannot escape the workspace.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "sourcePaths": {
+            "type": "array",
+            "description": "Files or directories to include.",
+            "items": {
+              "type": "string"
+            }
+          },
+          "sourcePath": {
+            "type": "string",
+            "description": "Single file or directory to include."
+          },
+          "filePath": {
+            "type": "string",
+            "description": "Destination .zip path."
+          },
+          "overwrite": {
+            "type": "boolean",
+            "description": "Replace existing zip."
+          }
+        },
+        "required": [
+          "filePath"
+        ],
+        "additionalProperties": false
+      }
+    },
+    {
+      "id": "unzip",
+      "description": "Extract a .zip archive into `destinationPath` or workspace root.\nPaths are workspace-relative, use `/`, and cannot escape the workspace.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "filePath": {
+            "type": "string",
+            "description": "Source .zip path."
+          },
+          "destinationPath": {
+            "type": "string",
+            "description": "Extraction directory."
+          },
+          "overwrite": {
+            "type": "boolean",
+            "description": "Replace existing files."
+          }
+        },
+        "required": [
+          "filePath"
+        ],
+        "additionalProperties": false
+      }
+    },
+    {
+      "id": "list_mcp_resources",
+      "description": "List resources from configured MCP servers. Optional `serverId` narrows results.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "serverId": {
+            "type": "string",
+            "description": "Limit to one MCP server."
+          }
+        },
+        "additionalProperties": false
+      }
+    },
+    {
+      "id": "read_mcp_resource",
+      "description": "Read an MCP resource. Required: `serverId`, `uri`. Use `list_mcp_resources` to discover URIs.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "serverId": {
+            "type": "string"
+          },
+          "uri": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "serverId",
+          "uri"
+        ],
+        "additionalProperties": false
+      }
+    },
+    {
+      "id": "list_mcp_prompts",
+      "description": "List prompt templates from configured MCP servers. Optional `serverId` narrows results.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "serverId": {
+            "type": "string",
+            "description": "Limit to one MCP server."
+          }
+        },
+        "additionalProperties": false
+      }
+    },
+    {
+      "id": "get_mcp_prompt",
+      "description": "Resolve an MCP prompt. Required: `serverId`, `name`; optional `arguments`.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "serverId": {
+            "type": "string"
+          },
+          "name": {
+            "type": "string"
+          },
+          "arguments": {
+            "type": "object",
+            "description": "String arguments for the MCP prompt."
+          }
+        },
+        "required": [
+          "serverId",
+          "name"
+        ],
+        "additionalProperties": false
+      }
+    },
+    {
+      "id": "browser",
+      "description": "Open an HTML page from the workspace in the in-app browser.\nPaths are workspace-relative, use `/`, and cannot escape the workspace.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "path": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "path"
+        ],
+        "additionalProperties": false
+      }
+    },
+    {
+      "id": "skill",
+      "description": "Load workspace-local skill instructions by name. Returns instructions and sampled sibling files; does not execute scripts or hooks.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "name": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "name"
+        ],
+        "additionalProperties": false
+      }
+    },
+    {
+      "id": "git",
+      "description": "Run git operations on the workspace repository. Set `command` to a git subcommand; use matching optional fields for that command.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "command": {
+            "type": "string",
+            "description": "status | add | restore | reset | commit | log | diff | branch | checkout | merge | cherry-pick | init | show | clone | fetch | pull | push | rebase | config | remote-url | remote"
+          },
+          "paths": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Paths for add, diff, restore, reset."
+          },
+          "all": {
+            "type": "boolean",
+            "description": "Stage all changes."
+          },
+          "message": {
+            "type": "string",
+            "description": "Commit/continue message."
+          },
+          "amend": {
+            "type": "boolean",
+            "description": "Amend last commit."
+          },
+          "maxCount": {
+            "type": "integer",
+            "description": "Max entries for log."
+          },
+          "firstParentOnly": {
+            "type": "boolean",
+            "description": "Follow first parent only."
+          },
+          "since": {
+            "type": "string",
+            "description": "ISO-8601 lower time bound."
+          },
+          "until": {
+            "type": "string",
+            "description": "ISO-8601 upper time bound."
+          },
+          "action": {
+            "type": "string",
+            "description": "Sub-action for branch/config/remote/merge/cherry-pick/rebase."
+          },
+          "name": {
+            "type": "string",
+            "description": "Branch or remote name."
+          },
+          "force": {
+            "type": "boolean",
+            "description": "Force when supported."
+          },
+          "startPoint": {
+            "type": "string",
+            "description": "Start point ref."
+          },
+          "target": {
+            "type": "string",
+            "description": "Checkout/reset target."
+          },
+          "newBranch": {
+            "type": "boolean",
+            "description": "Create and switch to new branch."
+          },
+          "mode": {
+            "type": "string",
+            "description": "Reset mode: soft | mixed | hard."
+          },
+          "branch": {
+            "type": "string",
+            "description": "Branch for merge/fetch/pull."
+          },
+          "remote": {
+            "type": "string",
+            "description": "Remote name."
+          },
+          "oldName": {
+            "type": "string",
+            "description": "Existing remote name."
+          },
+          "newName": {
+            "type": "string",
+            "description": "New remote name."
+          },
+          "url": {
+            "type": "string",
+            "description": "Remote URL or local repo path."
+          },
+          "path": {
+            "type": "string",
+            "description": "Workspace-relative clone destination."
+          },
+          "rebase": {
+            "type": "boolean",
+            "description": "Pull with rebase."
+          },
+          "refspec": {
+            "type": "string",
+            "description": "Explicit push refspec."
+          },
+          "ref": {
+            "type": "string",
+            "description": "Commit or branch ref."
+          },
+          "authorName": {
+            "type": "string",
+            "description": "Commit author name."
+          },
+          "authorEmail": {
+            "type": "string",
+            "description": "Commit author email."
+          },
+          "section": {
+            "type": "string",
+            "description": "Config section."
+          },
+          "key": {
+            "type": "string",
+            "description": "Config key."
+          },
+          "value": {
+            "type": "string",
+            "description": "Config value."
+          }
+        },
+        "required": [
+          "command"
+        ],
+        "additionalProperties": false
+      }
+    },
+    {
+      "id": "invalid",
+      "description": "Explain that a tool call was malformed.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "tool": {
+            "type": "string"
+          },
+          "error": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "tool",
+          "error"
+        ],
+        "additionalProperties": false
+      }
+    },
+    {
+      "id": "plan_exit",
+      "description": "Ask to leave plan mode and switch to build mode.",
+      "parameters": {
+        "type": "object",
+        "properties": {},
+        "additionalProperties": false
+      }
+    },
+    {
+      "id": "task",
+      "description": "Launch a new subagent to handle complex, multi-step work. Provide a short description, a detailed prompt, and an optional `subagent_type`. Reuse `task_id` to continue a previous subtask session instead of creating a new one.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "description": {
+            "type": "string"
+          },
+          "prompt": {
+            "type": "string"
+          },
+          "subagent_type": {
+            "type": "string"
+          },
+          "task_id": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "description",
+          "prompt"
+        ],
+        "additionalProperties": false
+      }
+    }
+  ]
+}

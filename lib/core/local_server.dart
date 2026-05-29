@@ -242,20 +242,24 @@ class LocalServer {
         return;
       }
       if (path == '/settings/model' && request.method == 'GET') {
-        final config = ModelConfig.fromJson(
-          await database.getSetting('model_config') ??
-              ModelConfig.defaults().toJson(),
-        ).withResolvedCurrentModelLimit(await _loadModelsDevCatalog());
+        final config = await _resolveModelConfigFromCatalogCache(
+          ModelConfig.fromJson(
+            await database.getSetting('model_config') ??
+                ModelConfig.defaults().toJson(),
+          ),
+        );
         await database.putSetting('model_config', config.toJson());
+        _refreshModelsDevCatalogInBackground();
         await _json(request.response, config.toJson());
         return;
       }
       if (path == '/settings/model' && request.method == 'POST') {
         final body = await _readJson(request);
-        final config = ModelConfig.fromJson(body).withResolvedCurrentModelLimit(
-          await _loadModelsDevCatalog(),
+        final config = await _resolveModelConfigFromCatalogCache(
+          ModelConfig.fromJson(body),
         );
         await database.putSetting('model_config', config.toJson());
+        _refreshModelsDevCatalogInBackground();
         await _json(request.response, config.toJson());
         return;
       }
@@ -850,26 +854,44 @@ class LocalServer {
     }
   }
 
+  Future<ModelConfig> _resolveModelConfigFromCatalogCache(
+    ModelConfig config,
+  ) async {
+    final model = await database.getProviderCatalogModel(
+      config.currentProviderId,
+      config.currentModelId,
+    );
+    if (model == null) {
+      return config.withResolvedCurrentModelLimit(const []);
+    }
+    final catalog = [
+      ProviderInfo(
+        id: config.currentProviderId,
+        name: config.currentProviderId,
+        models: {model.id: model},
+      ),
+    ];
+    return config.withResolvedCurrentModelLimit(catalog);
+  }
+
+  void _refreshModelsDevCatalogInBackground() {
+    if (_modelsDevCatalogLoad != null) return;
+    unawaited(_loadModelsDevCatalog());
+  }
+
   Future<List<ProviderInfo>> _loadModelsDevCatalogImpl(
       {bool refresh = false}) async {
     if (!refresh) {
-      final cached = await database.getSetting(kModelsDevCatalogCacheKey);
-      if (cached != null) {
-        final providers = (cached['all'] as List? ?? const [])
-            .map((item) =>
-                ProviderInfo.fromJson(Map<String, dynamic>.from(item as Map)))
-            .toList();
-        if (providers.isNotEmpty) {
-          _modelsDevCatalogCache = normalizeProviderCatalog(providers);
-          _modelsDevCatalogFetchedAt =
-              (cached['fetchedAt'] as num?)?.toInt() ?? 0;
-          final age = DateTime.now().millisecondsSinceEpoch -
-              _modelsDevCatalogFetchedAt;
-          if (age > _modelsDevRefreshMs) {
-            unawaited(_loadModelsDevCatalog(refresh: true));
-          }
-          return _modelsDevCatalogCache!;
+      final providers = await database.listProviderCatalogCache();
+      if (providers.isNotEmpty) {
+        _modelsDevCatalogCache = normalizeProviderCatalog(providers);
+        _modelsDevCatalogFetchedAt = await database.providerCatalogFetchedAt();
+        final age =
+            DateTime.now().millisecondsSinceEpoch - _modelsDevCatalogFetchedAt;
+        if (age > _modelsDevRefreshMs) {
+          unawaited(_loadModelsDevCatalog(refresh: true));
         }
+        return _modelsDevCatalogCache!;
       }
     }
 
@@ -899,25 +921,21 @@ class LocalServer {
       );
       _modelsDevCatalogCache = providers;
       _modelsDevCatalogFetchedAt = DateTime.now().millisecondsSinceEpoch;
-      await database.putSetting(kModelsDevCatalogCacheKey, {
-        'fetchedAt': _modelsDevCatalogFetchedAt,
-        'all': providers.map((item) => item.toJson()).toList(),
-      });
+      await database.replaceProviderCatalogCache(
+        fetchedAt: _modelsDevCatalogFetchedAt,
+        providers: providers,
+      );
+      await database.deleteSetting(kModelsDevCatalogCacheKey);
       return providers;
     } catch (_) {
       if (_modelsDevCatalogCache != null) {
         return _modelsDevCatalogCache!;
       }
-      final cached = await database.getSetting(kModelsDevCatalogCacheKey);
-      if (cached != null) {
-        final providers = (cached['all'] as List? ?? const [])
-            .map((item) =>
-                ProviderInfo.fromJson(Map<String, dynamic>.from(item as Map)))
-            .toList();
-        if (providers.isNotEmpty) {
-          _modelsDevCatalogCache = normalizeProviderCatalog(providers);
-          return _modelsDevCatalogCache!;
-        }
+      final cachedProviders = await database.listProviderCatalogCache();
+      if (cachedProviders.isNotEmpty) {
+        _modelsDevCatalogCache = normalizeProviderCatalog(cachedProviders);
+        _modelsDevCatalogFetchedAt = await database.providerCatalogFetchedAt();
+        return _modelsDevCatalogCache!;
       }
       final fallback = fallbackProviderCatalog();
       _modelsDevCatalogCache = fallback;

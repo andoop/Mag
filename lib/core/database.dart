@@ -20,7 +20,7 @@ class AppDatabase {
     final path = p.join(dir.path, 'mobile_agent.db');
     _db = await openDatabase(
       path,
-      version: 2,
+      version: 3,
       onCreate: (db, version) async {
         await db.execute('''
           CREATE TABLE workspaces (
@@ -113,6 +113,7 @@ class AppDatabase {
             PRIMARY KEY (workspace_id, path)
           )
         ''');
+        await _createProviderCatalogTables(db);
       },
       onUpgrade: (db, oldVersion, newVersion) async {
         if (oldVersion < 2) {
@@ -125,9 +126,44 @@ class AppDatabase {
             )
           ''');
         }
+        if (oldVersion < 3) {
+          await _createProviderCatalogTables(db);
+          await db.delete(
+            'settings',
+            where: 'key = ?',
+            whereArgs: [kModelsDevCatalogCacheKey],
+          );
+        }
       },
     );
     return _db!;
+  }
+
+  static Future<void> _createProviderCatalogTables(DatabaseExecutor db) async {
+    await db.execute('''
+      CREATE TABLE IF NOT EXISTS provider_catalog_meta (
+        key TEXT PRIMARY KEY,
+        value TEXT NOT NULL
+      )
+    ''');
+    await db.execute('''
+      CREATE TABLE IF NOT EXISTS provider_catalog_providers (
+        id TEXT PRIMARY KEY,
+        data TEXT NOT NULL
+      )
+    ''');
+    await db.execute('''
+      CREATE TABLE IF NOT EXISTS provider_catalog_models (
+        provider_id TEXT NOT NULL,
+        model_id TEXT NOT NULL,
+        data TEXT NOT NULL,
+        PRIMARY KEY (provider_id, model_id)
+      )
+    ''');
+    await db.execute('''
+      CREATE INDEX IF NOT EXISTS idx_provider_catalog_models_provider
+      ON provider_catalog_models(provider_id)
+    ''');
   }
 
   Future<void> saveWorkspace(WorkspaceInfo workspace) async {
@@ -143,7 +179,8 @@ class AppDatabase {
     final db = await database;
     final rows = await db.query('workspaces');
     return rows
-        .map((row) => WorkspaceInfo.fromJson(jsonDecode(row['data'] as String) as JsonMap))
+        .map((row) => WorkspaceInfo.fromJson(
+            jsonDecode(row['data'] as String) as JsonMap))
         .toList();
   }
 
@@ -161,8 +198,10 @@ class AppDatabase {
           .whereType<String>()
           .toList();
       for (final sessionId in sessionIds) {
-        await txn.delete('parts', where: 'session_id = ?', whereArgs: [sessionId]);
-        await txn.delete('messages', where: 'session_id = ?', whereArgs: [sessionId]);
+        await txn
+            .delete('parts', where: 'session_id = ?', whereArgs: [sessionId]);
+        await txn.delete('messages',
+            where: 'session_id = ?', whereArgs: [sessionId]);
         await txn.delete(
           'permission_requests',
           where: 'session_id = ?',
@@ -173,10 +212,13 @@ class AppDatabase {
           where: 'session_id = ?',
           whereArgs: [sessionId],
         );
-        await txn.delete('todos', where: 'session_id = ?', whereArgs: [sessionId]);
+        await txn
+            .delete('todos', where: 'session_id = ?', whereArgs: [sessionId]);
       }
-      await txn.delete('sessions', where: 'workspace_id = ?', whereArgs: [workspaceId]);
-      await txn.delete('projects', where: 'workspace_id = ?', whereArgs: [workspaceId]);
+      await txn.delete('sessions',
+          where: 'workspace_id = ?', whereArgs: [workspaceId]);
+      await txn.delete('projects',
+          where: 'workspace_id = ?', whereArgs: [workspaceId]);
       await txn.delete(
         'tool_permissions',
         where: 'workspace_id = ?',
@@ -311,7 +353,8 @@ class AppDatabase {
       limit: 1,
     );
     if (rows.isEmpty) return null;
-    return ProjectInfo.fromJson(jsonDecode(rows.first['data'] as String) as JsonMap);
+    return ProjectInfo.fromJson(
+        jsonDecode(rows.first['data'] as String) as JsonMap);
   }
 
   Future<void> saveSession(SessionInfo session) async {
@@ -338,26 +381,34 @@ class AppDatabase {
       orderBy: 'updated_at DESC',
     );
     return rows
-        .map((row) => SessionInfo.fromJson(jsonDecode(row['data'] as String) as JsonMap))
+        .map((row) =>
+            SessionInfo.fromJson(jsonDecode(row['data'] as String) as JsonMap))
         .toList();
   }
 
   Future<SessionInfo?> getSession(String sessionId) async {
     final db = await database;
-    final rows = await db.query('sessions', where: 'id = ?', whereArgs: [sessionId], limit: 1);
+    final rows = await db.query('sessions',
+        where: 'id = ?', whereArgs: [sessionId], limit: 1);
     if (rows.isEmpty) return null;
-    return SessionInfo.fromJson(jsonDecode(rows.first['data'] as String) as JsonMap);
+    return SessionInfo.fromJson(
+        jsonDecode(rows.first['data'] as String) as JsonMap);
   }
 
   /// 与 OpenCode `Session.remove` 一致：删除会话及其消息、分片、待办与待处理问答/权限。
   Future<void> deleteSessionCascade(String sessionId) async {
     final db = await database;
     await db.transaction((txn) async {
-      await txn.delete('parts', where: 'session_id = ?', whereArgs: [sessionId]);
-      await txn.delete('messages', where: 'session_id = ?', whereArgs: [sessionId]);
-      await txn.delete('permission_requests', where: 'session_id = ?', whereArgs: [sessionId]);
-      await txn.delete('question_requests', where: 'session_id = ?', whereArgs: [sessionId]);
-      await txn.delete('todos', where: 'session_id = ?', whereArgs: [sessionId]);
+      await txn
+          .delete('parts', where: 'session_id = ?', whereArgs: [sessionId]);
+      await txn
+          .delete('messages', where: 'session_id = ?', whereArgs: [sessionId]);
+      await txn.delete('permission_requests',
+          where: 'session_id = ?', whereArgs: [sessionId]);
+      await txn.delete('question_requests',
+          where: 'session_id = ?', whereArgs: [sessionId]);
+      await txn
+          .delete('todos', where: 'session_id = ?', whereArgs: [sessionId]);
       await txn.delete('sessions', where: 'id = ?', whereArgs: [sessionId]);
     });
   }
@@ -385,7 +436,8 @@ class AppDatabase {
       orderBy: 'created_at ASC',
     );
     return rows
-        .map((row) => MessageInfo.fromJson(jsonDecode(row['data'] as String) as JsonMap))
+        .map((row) =>
+            MessageInfo.fromJson(jsonDecode(row['data'] as String) as JsonMap))
         .toList();
   }
 
@@ -413,7 +465,8 @@ class AppDatabase {
       orderBy: 'created_at ASC',
     );
     return rows
-        .map((row) => MessagePart.fromJson(jsonDecode(row['data'] as String) as JsonMap))
+        .map((row) =>
+            MessagePart.fromJson(jsonDecode(row['data'] as String) as JsonMap))
         .toList();
   }
 
@@ -426,11 +479,13 @@ class AppDatabase {
       orderBy: 'created_at ASC',
     );
     return rows
-        .map((row) => MessagePart.fromJson(jsonDecode(row['data'] as String) as JsonMap))
+        .map((row) =>
+            MessagePart.fromJson(jsonDecode(row['data'] as String) as JsonMap))
         .toList();
   }
 
-  Future<void> saveToolPermission(String workspaceId, PermissionRule rule) async {
+  Future<void> saveToolPermission(
+      String workspaceId, PermissionRule rule) async {
     final db = await database;
     await db.insert(
       'tool_permissions',
@@ -457,7 +512,8 @@ class AppDatabase {
           (row) => PermissionRule(
             permission: row['permission'] as String,
             pattern: row['pattern'] as String,
-            action: PermissionAction.values.firstWhere((item) => item.name == row['action']),
+            action: PermissionAction.values
+                .firstWhere((item) => item.name == row['action']),
           ),
         )
         .toList();
@@ -478,14 +534,16 @@ class AppDatabase {
 
   Future<void> deletePermissionRequest(String requestId) async {
     final db = await database;
-    await db.delete('permission_requests', where: 'id = ?', whereArgs: [requestId]);
+    await db
+        .delete('permission_requests', where: 'id = ?', whereArgs: [requestId]);
   }
 
   Future<List<PermissionRequest>> listPermissionRequests() async {
     final db = await database;
     final rows = await db.query('permission_requests');
     return rows
-        .map((row) => PermissionRequest.fromJson(jsonDecode(row['data'] as String) as JsonMap))
+        .map((row) => PermissionRequest.fromJson(
+            jsonDecode(row['data'] as String) as JsonMap))
         .toList();
   }
 
@@ -504,14 +562,16 @@ class AppDatabase {
 
   Future<void> deleteQuestionRequest(String requestId) async {
     final db = await database;
-    await db.delete('question_requests', where: 'id = ?', whereArgs: [requestId]);
+    await db
+        .delete('question_requests', where: 'id = ?', whereArgs: [requestId]);
   }
 
   Future<List<QuestionRequest>> listQuestionRequests() async {
     final db = await database;
     final rows = await db.query('question_requests');
     return rows
-        .map((row) => QuestionRequest.fromJson(jsonDecode(row['data'] as String) as JsonMap))
+        .map((row) => QuestionRequest.fromJson(
+            jsonDecode(row['data'] as String) as JsonMap))
         .toList();
   }
 
@@ -536,9 +596,11 @@ class AppDatabase {
 
   Future<List<TodoItem>> listTodos(String sessionId) async {
     final db = await database;
-    final rows = await db.query('todos', where: 'session_id = ?', whereArgs: [sessionId]);
+    final rows = await db
+        .query('todos', where: 'session_id = ?', whereArgs: [sessionId]);
     final list = rows
-        .map((row) => TodoItem.fromJson(jsonDecode(row['data'] as String) as JsonMap))
+        .map((row) =>
+            TodoItem.fromJson(jsonDecode(row['data'] as String) as JsonMap))
         .toList();
     list.sort((a, b) => a.position.compareTo(b.position));
     return list;
@@ -553,17 +615,128 @@ class AppDatabase {
     );
   }
 
+  Future<void> deleteSetting(String key) async {
+    final db = await database;
+    await db.delete('settings', where: 'key = ?', whereArgs: [key]);
+  }
+
   Future<JsonMap?> getSetting(String key) async {
     final db = await database;
-    final rows = await db.query('settings', where: 'key = ?', whereArgs: [key], limit: 1);
+    final rows = await db.query(
+      'settings',
+      where: 'key = ?',
+      whereArgs: [key],
+      limit: 1,
+    );
     if (rows.isEmpty) return null;
     return jsonDecode(rows.first['value'] as String) as JsonMap;
   }
 
-  Future<void> replaceWorkspaceIndex(String workspaceId, List<WorkspaceEntry> entries) async {
+  Future<void> replaceProviderCatalogCache({
+    required int fetchedAt,
+    required List<ProviderInfo> providers,
+  }) async {
     final db = await database;
     await db.transaction((txn) async {
-      await txn.delete('workspace_index', where: 'workspace_id = ?', whereArgs: [workspaceId]);
+      await txn.delete('provider_catalog_meta');
+      await txn.delete('provider_catalog_providers');
+      await txn.delete('provider_catalog_models');
+      await txn.insert(
+        'provider_catalog_meta',
+        {'key': 'fetchedAt', 'value': fetchedAt.toString()},
+        conflictAlgorithm: ConflictAlgorithm.replace,
+      );
+      final batch = txn.batch();
+      for (final provider in providers) {
+        final providerJson = provider.toJson()
+          ..['models'] = <String, dynamic>{};
+        batch.insert(
+          'provider_catalog_providers',
+          {
+            'id': provider.id,
+            'data': jsonEncode(providerJson),
+          },
+          conflictAlgorithm: ConflictAlgorithm.replace,
+        );
+        for (final entry in provider.models.entries) {
+          batch.insert(
+            'provider_catalog_models',
+            {
+              'provider_id': provider.id,
+              'model_id': entry.key,
+              'data': jsonEncode(entry.value.toJson()),
+            },
+            conflictAlgorithm: ConflictAlgorithm.replace,
+          );
+        }
+      }
+      await batch.commit(noResult: true);
+    });
+  }
+
+  Future<int> providerCatalogFetchedAt() async {
+    final db = await database;
+    final rows = await db.query(
+      'provider_catalog_meta',
+      where: 'key = ?',
+      whereArgs: ['fetchedAt'],
+      limit: 1,
+    );
+    if (rows.isEmpty) return 0;
+    return int.tryParse(rows.first['value'] as String? ?? '') ?? 0;
+  }
+
+  Future<List<ProviderInfo>> listProviderCatalogCache() async {
+    final db = await database;
+    final providerRows = await db.query(
+      'provider_catalog_providers',
+      orderBy: 'id ASC',
+    );
+    if (providerRows.isEmpty) return const [];
+    final modelRows = await db.query(
+      'provider_catalog_models',
+      orderBy: 'provider_id ASC, model_id ASC',
+    );
+    final modelsByProvider = <String, Map<String, ProviderModelInfo>>{};
+    for (final row in modelRows) {
+      final providerId = row['provider_id'] as String;
+      final modelId = row['model_id'] as String;
+      final data = jsonDecode(row['data'] as String) as JsonMap;
+      modelsByProvider.putIfAbsent(
+              providerId, () => <String, ProviderModelInfo>{})[modelId] =
+          ProviderModelInfo.fromJson(data);
+    }
+    return providerRows.map((row) {
+      final data = jsonDecode(row['data'] as String) as JsonMap;
+      data['models'] = (modelsByProvider[row['id'] as String] ?? const {})
+          .map((key, value) => MapEntry(key, value.toJson()));
+      return ProviderInfo.fromJson(data);
+    }).toList();
+  }
+
+  Future<ProviderModelInfo?> getProviderCatalogModel(
+    String providerId,
+    String modelId,
+  ) async {
+    final db = await database;
+    final rows = await db.query(
+      'provider_catalog_models',
+      where: 'provider_id = ? AND model_id = ?',
+      whereArgs: [providerId, modelId],
+      limit: 1,
+    );
+    if (rows.isEmpty) return null;
+    return ProviderModelInfo.fromJson(
+      jsonDecode(rows.first['data'] as String) as JsonMap,
+    );
+  }
+
+  Future<void> replaceWorkspaceIndex(
+      String workspaceId, List<WorkspaceEntry> entries) async {
+    final db = await database;
+    await db.transaction((txn) async {
+      await txn.delete('workspace_index',
+          where: 'workspace_id = ?', whereArgs: [workspaceId]);
       final batch = txn.batch();
       for (final entry in entries) {
         batch.insert('workspace_index', {
@@ -584,7 +757,8 @@ class AppDatabase {
       whereArgs: [workspaceId],
     );
     return rows
-        .map((row) => WorkspaceEntry.fromJson(jsonDecode(row['data'] as String) as JsonMap))
+        .map((row) => WorkspaceEntry.fromJson(
+            jsonDecode(row['data'] as String) as JsonMap))
         .toList();
   }
 
@@ -594,7 +768,8 @@ class AppDatabase {
   ) async {
     final db = await database;
     await db.transaction((txn) async {
-      await txn.delete('workspace_search_index', where: 'workspace_id = ?', whereArgs: [workspaceId]);
+      await txn.delete('workspace_search_index',
+          where: 'workspace_id = ?', whereArgs: [workspaceId]);
       final batch = txn.batch();
       for (final entry in entries) {
         batch.insert('workspace_search_index', {
@@ -607,7 +782,8 @@ class AppDatabase {
     });
   }
 
-  Future<List<WorkspaceSearchEntry>> listWorkspaceSearchIndex(String workspaceId) async {
+  Future<List<WorkspaceSearchEntry>> listWorkspaceSearchIndex(
+      String workspaceId) async {
     final db = await database;
     final rows = await db.query(
       'workspace_search_index',
@@ -615,7 +791,8 @@ class AppDatabase {
       whereArgs: [workspaceId],
     );
     return rows
-        .map((row) => WorkspaceSearchEntry.fromJson(jsonDecode(row['data'] as String) as JsonMap))
+        .map((row) => WorkspaceSearchEntry.fromJson(
+            jsonDecode(row['data'] as String) as JsonMap))
         .toList();
   }
 }

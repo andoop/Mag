@@ -2,9 +2,7 @@ part of 'tool_runtime.dart';
 
 const String _kCreateQrCodeDescription = '''
 Create a QR code SVG file in the workspace.
-
-For detailed examples, parameter guidance, and HTML bridge usage, load the
-`qr-code-generation` skill first.
+Load `qr-code-generation` only when detailed examples or HTML runtime usage are needed.
 ''';
 
 JsonMap qrCodeToolParametersSchema() => {

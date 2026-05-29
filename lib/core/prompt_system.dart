@@ -196,24 +196,18 @@ class PromptAssembler {
           : 'Prefer available tools and stay within the workspace boundary.',
       if (tools.contains('download'))
         (zh
-            ? '当任务涉及公开 URL 下载，且存在 `public-file-download` skill 时，先加载该 skill 再使用 `download`。'
-            : 'When a task involves downloading from a public URL and the `public-file-download` skill is available, load that skill before using `download`.'),
-      if (tools.contains('download'))
-        (zh
-            ? '`download` 用于把公开 URL 真正保存为工作区文件；必须显式提供目标 `filePath`。'
-            : '`download` turns a public URL into a real workspace file; you must provide an explicit destination `filePath`.'),
+            ? '`webfetch` 用于查看远程文本；`download` 用于把公开 URL 保存为工作区文件。'
+            : '`webfetch` inspects remote text; `download` saves a public URL into the workspace.'),
       if (tools.contains('download') && tools.contains('webfetch'))
         (zh
             ? '如果你只需要先查看远程文本内容，不需要落盘，优先使用 `webfetch`。'
             : 'If you only need to inspect remote text without saving it, prefer `webfetch`.'),
       if (tools.contains('list_mcp_resources'))
-        (zh
-            ? '当远程 MCP server 已配置时，可用 `list_mcp_resources` / `read_mcp_resource` 发现并读取 MCP resources。'
-            : 'When remote MCP servers are configured, use `list_mcp_resources` / `read_mcp_resource` to discover and read MCP resources.'),
+        (zh ? 'MCP：先 list，再 read/get。' : 'MCP: list first, then read/get.'),
       if (tools.contains('list_mcp_prompts'))
         (zh
-            ? '当远程 MCP server 已配置时，可用 `list_mcp_prompts` / `get_mcp_prompt` 发现并获取 MCP prompt 模板。'
-            : 'When remote MCP servers are configured, use `list_mcp_prompts` / `get_mcp_prompt` to discover and retrieve MCP prompt templates.'),
+            ? 'MCP prompts：先 list，再 get。'
+            : 'MCP prompts: list first, then get.'),
       if (tools.any((item) => item.startsWith('mcp.')))
         (zh
             ? '名字形如 `mcp.<serverId>.<toolName>` 的工具来自远程 MCP server，可直接调用。'
@@ -240,67 +234,7 @@ class PromptAssembler {
         }.contains(t));
 
     if (hasEditTools) {
-      lines.addAll(zh
-          ? [
-              '',
-              '# 文件编辑纪律（严格遵守，违反会导致错误）',
-              '',
-              '## 规则 1：先读后改（绝对要求）',
-              '对已有文件做任何 `edit` 或 `apply_patch` 之前，必须先用 `read` 读取该文件最新内容。',
-              '`read` 的结果必须先返回给你，之后你才能在后续响应里生成该文件的 `edit` / `apply_patch` 调用；不要在同一个助手响应里同时发出它们。',
-              '如果工具报错说"必须先读取"，你必须调用 `read` 再重试，而不是重复同样的调用。',
-              '',
-              '## 规则 2：已有文件使用 `write` 前必须先 `read`（绝对要求）',
-              '`write` 可以创建新文件，也可以覆盖已有文件；但如果目标文件已经存在，你必须先用 `read` 读取它的最新内容。',
-              '如果 `write` 报错说必须先读取，或提示文件在你上次读取后已变化，你必须重新 `read` 后再重建这次 `write` 调用。',
-              '',
-              '## 规则 3：每次编辑后重新读取',
-              '同一文件的一组相关修改应尽量合并到一次 `edit` / `apply_patch` 调用里。',
-              '如果你刚刚修改过某个文件，又要再次修改同一文件，先重新 `read` 一次最新内容。',
-              '再次修改必须发生在后续响应里，不要在同一个助手响应中连续发多个同文件编辑调用。',
-              '不要复用上一次读取或修改前的旧片段。',
-              '',
-              '## 规则 4：工具报错时必须认真处理',
-              '当工具返回错误时，你必须：仔细阅读错误信息，按照错误信息中的恢复步骤操作。',
-              '绝不能用相同参数重复调用失败的工具。',
-              '',
-              '## 编辑方式',
-              '`edit` 使用 `filePath`、`oldString`、`newString` 和可选的 `replaceAll`。',
-              '从 `read` 输出复制文本时，不要把前面的 `行号: ` 前缀带进 `oldString` / `newString`。',
-              '如果 `oldString` 匹配不唯一，就扩大上下文；如果你本来就想改所有匹配，设置 `replaceAll: true`。',
-              '修改已有文件时优先使用 `edit` 或 `apply_patch`。',
-            ]
-          : [
-              '',
-              '# File Editing Discipline (strict — violations cause errors)',
-              '',
-              '## Rule 1: Read before edit (absolute requirement)',
-              'Before any `edit` or `apply_patch` on an existing file, you MUST call `read` on that file and use the fresh contents.',
-              'You must `read` the file before editing it, and rebuild the edit from the current contents when needed.',
-              'If the tool returns an error saying "must read first", you MUST call `read` then retry — do NOT repeat the same failing call.',
-              '',
-              '## Rule 2: Existing files require a fresh `read` before `write`',
-              '`write` may create new files or overwrite existing ones, but if the target file already exists you MUST `read` it first.',
-              'If `write` says you must read first, or says the file changed since your last read, call `read` again and rebuild the `write` call.',
-              '',
-              '## Rule 3: Re-read after each edit',
-              'Put all related changes for the same file into one `edit` or `apply_patch` call whenever possible.',
-              'If you just changed a file and need to modify that same file again, call `read` first.',
-              'If you need another modification on the same file, `read` it again first.',
-              'Do not reuse stale content from before the previous edit.',
-              '',
-              '## Rule 4: Handle tool errors carefully',
-              'When a tool returns an error, you MUST: read the error message, follow the recovery steps it describes.',
-              'NEVER repeat the exact same tool call with the same arguments — that will produce the same error.',
-              '',
-              '## Edit mechanics',
-              '`edit` uses `filePath`, `oldString`, `newString`, and optional `replaceAll`.',
-              'When copying from `read`, do not include the `lineNumber: ` prefix inside `oldString` or `newString`.',
-              'If `oldString` is not unique, include more surrounding context. If you intentionally want every occurrence, set `replaceAll: true`.',
-              'For one file, prefer one batched edit call over multiple sequential edit calls.',
-              'Prefer `edit` or `apply_patch` for modifying existing files.',
-              'For workspace file operations: `delete` removes files/dirs; `rename` changes name in same folder; `move` for cross-folder; `copy` duplicates.',
-            ]);
+      lines.addAll(_editingDiscipline(tools, zh: zh));
       final sequenceGuide = _toolSequenceGuide(
         tools,
         zh: zh,
@@ -433,26 +367,64 @@ class PromptAssembler {
                 'Be thorough but efficient. Report results clearly.',
               ].join('\n');
       case 'build':
+        final editTools = [
+          if (tools.contains('edit')) '`edit`',
+          if (tools.contains('apply_patch')) '`apply_patch`',
+        ].join(' / ');
         return zh
             ? [
                 '',
                 '你是默认的 BUILD（构建）智能体，拥有完整的读写能力。',
                 '使用所有可用工具执行用户的请求。',
-                '编辑前先阅读。已有文件优先使用 edit 而非 write。',
-                '不要在同一个响应里对同一文件同时发出 `read` 和 `edit` / `apply_patch`。',
-                '同一文件的相关修改尽量合并到一次 edit / apply_patch；如果还要再改，必须先重新 read。',
+                if (editTools.isNotEmpty) '修改已有文件前先 `read`，再使用 $editTools。',
+                '同一文件的相关修改尽量合并；如果还要再改，必须先重新 `read`。',
               ].join('\n')
             : [
                 '',
                 'You are the default BUILD agent with full read/write capabilities.',
                 'Execute the user\'s request using all available tools.',
-                'Read before editing. Prefer edit over write for existing files.',
-                'Do not emit `read` and `edit` / `apply_patch` for the same file in the same response.',
-                'For the same file, merge related changes into one edit/apply_patch call whenever possible; if you need another pass, re-read first.',
+                if (editTools.isNotEmpty)
+                  'Read existing files before changing them with $editTools.',
+                'Batch related same-file changes; re-read before another pass.',
               ].join('\n');
       default:
         return '';
     }
+  }
+
+  List<String> _editingDiscipline(List<String> tools, {required bool zh}) {
+    final canEdit = tools.contains('edit');
+    final canPatch = tools.contains('apply_patch');
+    final canWrite = tools.contains('write');
+    final editTools = [
+      if (canEdit) '`edit`',
+      if (canPatch) '`apply_patch`',
+    ].join(' / ');
+
+    if (zh) {
+      return [
+        '',
+        '# 文件修改规则',
+        if (editTools.isNotEmpty) '- 修改已有文件前必须先 `read`，再使用 $editTools。',
+        if (canWrite) '- `write` 需要 `filePath` 和 `content`；覆盖已有文件前也必须先 `read`。',
+        if (canEdit) '- `edit.oldString` 必须来自最新 `read` 输出，且不要包含行号前缀。',
+        '- 同一文件相关修改尽量一次完成；再次修改前重新 `read`。',
+        '- 工具报错后按错误信息调整参数或顺序，不要重复同一失败调用。',
+      ];
+    }
+
+    return [
+      '',
+      '# File Change Rules',
+      if (editTools.isNotEmpty)
+        '- Read existing files before changing them with $editTools.',
+      if (canWrite)
+        '- `write` requires `filePath` and `content`; read first before overwriting existing files.',
+      if (canEdit)
+        '- `edit.oldString` must come from the latest `read` output without line-number prefixes.',
+      '- Batch related same-file changes; re-read before another pass.',
+      '- After a tool error, change arguments or sequence; do not repeat the same failing call.',
+    ];
   }
 
   String _toolSequenceGuide(
@@ -461,8 +433,7 @@ class PromptAssembler {
     required bool canDelegate,
   }) {
     final hasRead = tools.contains('read');
-    final hasEdit = tools.contains('edit');
-    final hasWrite = tools.contains('write');
+    final hasEdit = tools.contains('edit') || tools.contains('apply_patch');
     final hasApplyPatch = tools.contains('apply_patch');
     final hasGrep = tools.contains('grep');
     final hasGlob = tools.contains('glob');
@@ -473,33 +444,12 @@ class PromptAssembler {
     final lines = <String>[];
     if (zh) {
       lines.addAll([
-        '# 工具顺序指南（按 oh-my-openagent 风格对齐）',
-        '违反这些顺序会被视为失败响应。',
-        '',
-        '## 编辑（串行，必须先 Read）',
+        '# 常用工具顺序',
       ]);
-      if (hasEdit) {
-        lines.add(
-            '- `edit`：修改已有文件前必须先 `read`，然后用 `oldString` / `newString` 基于精确文本做替换。');
-      }
-      if (hasApplyPatch) {
-        lines.add(
-            '- `apply_patch`：修改已有文件前必须先 `read`；若同一文件刚修改过，再次修改前必须重新 `read`。');
-      }
-      if (hasWrite) {
-        lines.add('- `write`：用于新文件，或你明确需要整文件重写时。');
-      }
-      if (hasDownload) {
-        lines.add(
-            '- `download`：把公开 `http/https` URL 下载到工作区文件。必须提供明确的 `filePath`；如果文件已存在，只有显式设置 `overwrite: true` 才能覆盖。');
-      }
-      lines.add('');
-      lines.add('## 正确顺序（必须严格遵守）');
       if (hasRead) lines.add('- 解释代码：`read` -> 分析 -> 回答');
       if (hasRead && hasEdit) {
-        lines.add('- 修改已有文件：响应 A `read` -> 等待工具结果；响应 B `edit` -> 报告');
-      } else if (hasRead && hasApplyPatch) {
-        lines.add('- 修改已有文件：响应 A `read` -> 等待工具结果；响应 B `apply_patch` -> 报告');
+        final editTool = hasApplyPatch ? '`apply_patch`' : '`edit`';
+        lines.add('- 修改已有文件：`read` -> 等待结果 -> $editTool -> 报告');
       }
       if (hasGrep || hasGlob) {
         final searchTools = [
@@ -509,51 +459,22 @@ class PromptAssembler {
         lines.add('- 查找位置：$searchTools（独立搜索应并行） -> `read` 结果文件 -> 报告');
       }
       if (hasDownload) {
-        lines.add(
-            '- 下载远程文件：若只想先查看内容，用 `webfetch` -> 判断；若需要保存到工作区，用 `download` -> 继续 `read` / 预览 / 编辑。');
+        lines.add('- 远程内容：只查看用 `webfetch`；要落盘用 `download`。');
       }
       if (hasTask) {
-        lines.add('- 非平凡实现：优先 `task` 委派 -> 验证结果 -> 报告');
+        lines.add('- 非平凡实现：可用 `task` 委派 -> 验证 -> 报告');
       }
-      lines.add('');
-      lines.add('## 严禁');
-      lines.add('- 不要在没有 `read` 的情况下直接对已有文件调用 `edit` 或 `apply_patch`。');
-      lines.add('- 不要在没有最新内容的情况下猜测要替换的文本。');
-      lines.add('- 不要在 `oldString` / `newString` 里包含 `read` 输出前面的行号前缀。');
       return lines.join('\n');
     }
 
     lines.addAll([
-      '# Tool Sequence Guide (aligned with oh-my-openagent style)',
-      'Violating these sequences is a failed response.',
-      '',
-      '## Editing (SEQUENTIAL - must Read first)',
+      '# Common Tool Sequences',
     ]);
-    if (hasEdit) {
-      lines.add(
-          '- `edit`: modifying existing files. MUST `read` the file first, then replace exact text using `oldString` / `newString`.');
-    }
-    if (hasApplyPatch) {
-      lines.add(
-          '- `apply_patch`: modifying existing files. MUST `read` first. If you changed the same file already, `read` again before patching it.');
-    }
-    if (hasWrite) {
-      lines.add(
-          '- `write`: use for new files, or when you intentionally need a full-file rewrite.');
-    }
-    if (hasDownload) {
-      lines.add(
-          '- `download`: save a public `http/https` URL into a workspace file. You MUST provide a specific `filePath`; existing files require `overwrite: true`.');
-    }
-    lines.add('');
-    lines.add('## Correct Sequences (MANDATORY - follow these exactly)');
     if (hasRead) lines.add('- Answer about code: `read` -> analyze -> answer');
     if (hasRead && hasEdit) {
+      final editTool = hasApplyPatch ? '`apply_patch`' : '`edit`';
       lines.add(
-          '- Edit existing code: response A `read` -> wait for the tool result; response B `edit` -> report');
-    } else if (hasRead && hasApplyPatch) {
-      lines.add(
-          '- Edit existing code: response A `read` -> wait for the tool result; response B `apply_patch` -> report');
+          '- Change existing files: `read` -> wait for result -> $editTool -> report');
     }
     if (hasGrep || hasGlob) {
       final searchTools = [
@@ -565,20 +486,12 @@ class PromptAssembler {
     }
     if (hasDownload) {
       lines.add(
-          '- Download a remote file: if you only need inspection, `webfetch` -> decide; if you need a workspace file, `download` -> continue with `read` / preview / edit.');
+          '- Remote content: use `webfetch` to inspect; use `download` to save.');
     }
     if (hasTask) {
       lines.add(
-          '- Non-trivial implementation: `task` delegation -> verify results -> report');
+          '- Non-trivial work: consider `task` delegation -> verify -> report');
     }
-    lines.add('');
-    lines.add('## NEVER DO THIS');
-    lines.add(
-        '- Do not call `edit` or `apply_patch` on an existing file before `read`.');
-    lines.add(
-        '- Do not guess replacement text without first reading the current file contents.');
-    lines.add(
-        '- Do not include the `lineNumber: ` prefix from `read` output inside `oldString` or `newString`.');
     return lines.join('\n');
   }
 

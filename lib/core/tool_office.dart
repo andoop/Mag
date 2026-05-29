@@ -1,33 +1,15 @@
 part of 'tool_runtime.dart';
 
 const String _kCreateDocumentDescription = '''
-Create a DOCX file fully on device from structured content.
-
-Use this when the user asks for a Word document, report, memo, proposal, or
-other text-heavy Office file. Provide structured blocks only; do not provide
-base64, raw XML, or binary content.
-
-Supported block types:
-- heading: { "type": "heading", "level": 1|2, "text": "..." }
-- paragraph: { "type": "paragraph", "text": "..." }
-- list: { "type": "list", "items": ["..."] }
-- table: { "type": "table", "rows": [["Header", "Value"], ["A", "B"]] }
+Create a DOCX from structured blocks: heading, paragraph, list, table.
 ''';
 
 const String _kCreateSpreadsheetDescription = '''
-Create an XLSX file fully on device from structured sheets and rows.
-
-Use this when the user asks for an Excel workbook, table, plan, tracker, or
-spreadsheet. Provide structured sheets/rows only; do not provide base64, raw XML,
-or binary content. The first row is styled as a header row.
+Create an XLSX from structured sheets and rows.
 ''';
 
 const String _kCreatePresentationDescription = '''
-Create a PPTX file fully on device from structured slides.
-
-Use this when the user asks for a PowerPoint deck, slides, pitch deck, or
-presentation. Use simple fixed-layout slides. Provide structured slide content
-only; do not provide base64, raw XML, or binary content.
+Create a PPTX from fixed-layout slides.
 ''';
 
 JsonMap officeDocumentToolParametersSchema() => {
@@ -35,8 +17,7 @@ JsonMap officeDocumentToolParametersSchema() => {
       'properties': {
         'filePath': {
           'type': 'string',
-          'description':
-              'REQUIRED. Workspace-relative destination path. Use .docx.',
+          'description': 'Destination .docx path.',
         },
         'title': {
           'type': 'string',
@@ -44,7 +25,7 @@ JsonMap officeDocumentToolParametersSchema() => {
         },
         'blocks': {
           'type': 'array',
-          'description': 'Ordered document blocks.',
+          'description': 'heading, paragraph, list, or table blocks.',
           'items': {
             'type': 'object',
             'properties': {
@@ -71,7 +52,7 @@ JsonMap officeDocumentToolParametersSchema() => {
         },
         'overwrite': {
           'type': 'boolean',
-          'description': 'Optional. Set true to replace an existing file.',
+          'description': 'Replace existing file.',
         },
       },
       'required': ['filePath', 'title', 'blocks'],
@@ -83,12 +64,11 @@ JsonMap officeSpreadsheetToolParametersSchema() => {
       'properties': {
         'filePath': {
           'type': 'string',
-          'description':
-              'REQUIRED. Workspace-relative destination path. Use .xlsx.',
+          'description': 'Destination .xlsx path.',
         },
         'sheets': {
           'type': 'array',
-          'description': 'Workbook sheets. At least one sheet is required.',
+          'description': 'Workbook sheets.',
           'items': {
             'type': 'object',
             'properties': {
@@ -107,7 +87,7 @@ JsonMap officeSpreadsheetToolParametersSchema() => {
         },
         'overwrite': {
           'type': 'boolean',
-          'description': 'Optional. Set true to replace an existing file.',
+          'description': 'Replace existing file.',
         },
       },
       'required': ['filePath', 'sheets'],
@@ -119,8 +99,7 @@ JsonMap officePresentationToolParametersSchema() => {
       'properties': {
         'filePath': {
           'type': 'string',
-          'description':
-              'REQUIRED. Workspace-relative destination path. Use .pptx.',
+          'description': 'Destination .pptx path.',
         },
         'title': {
           'type': 'string',
@@ -128,7 +107,7 @@ JsonMap officePresentationToolParametersSchema() => {
         },
         'slides': {
           'type': 'array',
-          'description': 'Fixed-layout slides. At least one slide is required.',
+          'description': 'Fixed-layout slides.',
           'items': {
             'type': 'object',
             'properties': {
@@ -155,7 +134,7 @@ JsonMap officePresentationToolParametersSchema() => {
         },
         'overwrite': {
           'type': 'boolean',
-          'description': 'Optional. Set true to replace an existing file.',
+          'description': 'Replace existing file.',
         },
       },
       'required': ['filePath', 'title', 'slides'],

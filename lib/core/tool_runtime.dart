@@ -5,6 +5,7 @@ import 'dart:io';
 import 'dart:typed_data';
 
 import 'package:path/path.dart' as p;
+import 'package:archive/archive.dart' as archive_pkg;
 
 import 'app_variable_store.dart';
 import 'database.dart';
@@ -29,6 +30,7 @@ part 'tool_patch.dart';
 part 'tool_misc.dart';
 part 'tool_office.dart';
 part 'tool_qr.dart';
+part 'tool_archive.dart';
 part 'tool_utils.dart';
 part 'tool_git.dart';
 
@@ -174,16 +176,15 @@ class ToolRegistry {
           'properties': {
             'filePath': {
               'type': 'string',
-              'description':
-                  'REQUIRED. Workspace-relative path to the file or directory.',
+              'description': 'File or directory path.',
             },
             'offset': {
               'type': 'integer',
-              'description': 'Line number to start from (1-indexed)',
+              'description': 'Start line, 1-indexed.',
             },
             'limit': {
               'type': 'integer',
-              'description': 'Maximum number of lines to read',
+              'description': 'Maximum lines.',
             },
           },
           'required': ['filePath'],
@@ -202,13 +203,11 @@ class ToolRegistry {
           'properties': {
             'filePath': {
               'type': 'string',
-              'description':
-                  'REQUIRED. Workspace-relative path for the new file. Must be present on every call; do not omit or rename this key.',
+              'description': 'Destination file path.',
             },
             'content': {
               'type': 'string',
-              'description':
-                  'REQUIRED. The full file body to write. Must be present on every call.',
+              'description': 'Full file content.',
             },
           },
           'required': ['filePath', 'content'],
@@ -227,12 +226,11 @@ class ToolRegistry {
           'properties': {
             'filePath': {
               'type': 'string',
-              'description':
-                  'REQUIRED. Workspace-relative path to the file being edited.',
+              'description': 'File to edit.',
             },
             'oldString': {
               'type': 'string',
-              'description': 'The exact text to replace.',
+              'description': 'Exact text to replace.',
             },
             'newString': {
               'type': 'string',
@@ -241,8 +239,7 @@ class ToolRegistry {
             },
             'replaceAll': {
               'type': 'boolean',
-              'description':
-                  'Optional. Replace all matches of `oldString` instead of requiring a unique match.',
+              'description': 'Replace all matches.',
             },
           },
           'required': ['filePath', 'oldString', 'newString'],
@@ -307,31 +304,29 @@ class ToolRegistry {
       ToolDefinition(
         id: 'grep',
         description:
-            'Search file contents with a Kotlin-compatible regular expression (line-by-line; not ripgrep/PCRE). '
-            'Optional `path` must be a workspace-relative **directory** (not a single file). '
-            'Limit files with `include` or alias `glob`: pattern matches the **full** workspace-relative path, so use e.g. `**/*.dart` not `*.dart` for nested files.$kMobileWorkspacePathSuffix',
+            'Search file contents line-by-line with a Kotlin-compatible regex. '
+            '`path` is an optional directory. `include`/`glob` filters full workspace-relative paths.$kMobileWorkspacePathSuffix',
         parameters: {
           'type': 'object',
           'properties': {
             'pattern': {
               'type': 'string',
               'description':
-                  'Regex searched per line (Kotlin Regex). Escape metacharacters when matching literals (e.g. `Foo\\(`).',
+                  'Regex searched per line. Escape metacharacters for literals.',
             },
             'path': {
               'type': 'string',
               'description':
-                  'Optional directory under workspace root to search. Must be a folder; omit or empty for workspace root. Do not pass a file path—use parent dir + include filter or read the file.',
+                  'Optional directory to search. Omit for workspace root.',
             },
             'include': {
               'type': 'string',
               'description':
-                  'Optional glob; matched against the full workspace-relative file path. Use `**/*.ext` for files in subfolders; `*.ext` only matches at root.',
+                  'Optional glob matched against full workspace-relative paths.',
             },
             'glob': {
               'type': 'string',
-              'description':
-                  'Alias for `include` (same semantics). Ignored if `include` is non-empty.',
+              'description': 'Alias for `include`.',
             },
           },
           'required': ['pattern'],
@@ -344,7 +339,7 @@ class ToolRegistry {
       ToolDefinition(
         id: 'stat',
         description:
-            'Get file or directory metadata (path, size, lastModified, mimeType, isDirectory) in the workspace.$kMobileWorkspacePathSuffix',
+            'Get workspace file or directory metadata.$kMobileWorkspacePathSuffix',
         parameters: {
           'type': 'object',
           'properties': {
@@ -360,7 +355,7 @@ class ToolRegistry {
       ToolDefinition(
         id: 'delete',
         description:
-            'Delete a file or directory in the workspace. If `path` points to a directory, it is removed recursively. Use this for deleting files, deleting folders, or clearing a subtree.$kMobileWorkspacePathSuffix',
+            'Delete a workspace file or directory recursively.$kMobileWorkspacePathSuffix',
         parameters: {
           'type': 'object',
           'properties': {
@@ -376,7 +371,7 @@ class ToolRegistry {
       ToolDefinition(
         id: 'rename',
         description:
-            'Rename a file or directory within the same parent folder. Provide `newName` only (a single final name segment, not a path). If the parent folder should change too, use `move` instead.$kMobileWorkspacePathSuffix',
+            'Rename a workspace file or directory within the same parent. `newName` must be one path segment.$kMobileWorkspacePathSuffix',
         parameters: {
           'type': 'object',
           'properties': {
@@ -393,7 +388,7 @@ class ToolRegistry {
       ToolDefinition(
         id: 'move',
         description:
-            'Move or rename a file or directory to a new workspace-relative path. Use this when the parent folder changes or when you want the final path directly; `toPath` is the full destination path.$kMobileWorkspacePathSuffix',
+            'Move a workspace file or directory to `toPath`.$kMobileWorkspacePathSuffix',
         parameters: {
           'type': 'object',
           'properties': {
@@ -410,7 +405,7 @@ class ToolRegistry {
       ToolDefinition(
         id: 'copy',
         description:
-            'Copy a file or directory to another path within the workspace. Directory copies are recursive (subject to platform limits), so this can duplicate a whole folder tree as well as a single file.$kMobileWorkspacePathSuffix',
+            'Copy a workspace file or directory recursively to `toPath`.$kMobileWorkspacePathSuffix',
         parameters: {
           'type': 'object',
           'properties': {
@@ -443,7 +438,7 @@ class ToolRegistry {
       ToolDefinition(
         id: 'variable',
         description:
-            'List or read app variables explicitly authorized by the user in Settings. Use action=list first to discover names. Use action=read only when a task genuinely needs that variable value.',
+            'List or read user-authorized app variables. Use `list` before `read`.',
         parameters: {
           'type': 'object',
           'properties': {
@@ -474,7 +469,7 @@ class ToolRegistry {
           'properties': {
             'url': {
               'type': 'string',
-              'description': 'The URL to fetch content from',
+              'description': 'URL to fetch.',
             },
           },
           'required': ['url'],
@@ -493,17 +488,15 @@ class ToolRegistry {
           'properties': {
             'url': {
               'type': 'string',
-              'description': 'REQUIRED. Public http/https URL to download.',
+              'description': 'Public http/https URL.',
             },
             'filePath': {
               'type': 'string',
-              'description':
-                  'REQUIRED. Workspace-relative destination path for the downloaded file.',
+              'description': 'Destination path.',
             },
             'overwrite': {
               'type': 'boolean',
-              'description':
-                  'Optional. Set to true to replace an existing file at `filePath`.',
+              'description': 'Replace existing file.',
             },
           },
           'required': ['url', 'filePath'],
@@ -550,6 +543,24 @@ class ToolRegistry {
     );
     register(
       ToolDefinition(
+        id: 'zip',
+        description:
+            '${_kZipToolDescription.trim()}$kMobileWorkspacePathSuffix',
+        parameters: zipToolParametersSchema(),
+        execute: _zipTool,
+      ),
+    );
+    register(
+      ToolDefinition(
+        id: 'unzip',
+        description:
+            '${_kUnzipToolDescription.trim()}$kMobileWorkspacePathSuffix',
+        parameters: unzipToolParametersSchema(),
+        execute: _unzipTool,
+      ),
+    );
+    register(
+      ToolDefinition(
         id: 'list_mcp_resources',
         description: kListMcpResourcesToolDescription.trim(),
         parameters: {
@@ -557,8 +568,7 @@ class ToolRegistry {
           'properties': {
             'serverId': {
               'type': 'string',
-              'description':
-                  'Optional. Limit results to one configured MCP server.',
+              'description': 'Limit to one MCP server.',
             },
           },
           'additionalProperties': false,
@@ -591,8 +601,7 @@ class ToolRegistry {
           'properties': {
             'serverId': {
               'type': 'string',
-              'description':
-                  'Optional. Limit results to one configured MCP server.',
+              'description': 'Limit to one MCP server.',
             },
           },
           'additionalProperties': false,
@@ -611,7 +620,7 @@ class ToolRegistry {
             'name': {'type': 'string'},
             'arguments': {
               'type': 'object',
-              'description': 'Optional string arguments for the MCP prompt.',
+              'description': 'String arguments for the MCP prompt.',
             },
           },
           'required': ['serverId', 'name'],
@@ -640,10 +649,8 @@ class ToolRegistry {
       ToolDefinition(
         id: 'skill',
         description:
-            'Load a skill by name. Skills are discovered from workspace-local '
-            '`.opencode/skill`, `.opencode/skills`, `.claude/skills`, and '
-            '`.agents/skills` directories. This tool returns the skill instructions '
-            'and a sampled list of sibling files. It does not execute scripts or hooks.',
+            'Load workspace-local skill instructions by name. Returns instructions '
+            'and sampled sibling files; does not execute scripts or hooks.',
         parameters: {
           'type': 'object',
           'properties': {
@@ -659,150 +666,134 @@ class ToolRegistry {
       ToolDefinition(
         id: 'git',
         description:
-            'Run git operations on the workspace repository (pure-Dart, no CLI needed). '
-            'Set `command` to one of: status, add, restore, reset, commit, log, diff, branch, '
-            'checkout, merge, cherry-pick, init, show, clone, fetch, pull, push, rebase, config, remote-url, remote. '
-            'Each command accepts additional parameters — see per-command docs in the schema.',
+            'Run git operations on the workspace repository. Set `command` to a git subcommand; '
+            'use matching optional fields for that command.',
         parameters: {
           'type': 'object',
           'properties': {
             'command': {
               'type': 'string',
               'description':
-                  'Git sub-command: status | add | restore | reset | commit | log | diff | '
+                  'status | add | restore | reset | commit | log | diff | '
                       'branch | checkout | merge | cherry-pick | init | show | clone | fetch | pull | push | rebase | config | remote-url | remote',
             },
             'paths': {
               'type': 'array',
               'items': {'type': 'string'},
-              'description':
-                  'File paths (for add, diff, restore, reset path mode)',
+              'description': 'Paths for add, diff, restore, reset.',
             },
             'all': {
               'type': 'boolean',
-              'description': 'Stage all changes (for add)',
+              'description': 'Stage all changes.',
             },
             'message': {
               'type': 'string',
-              'description':
-                  'Commit message (for commit, merge continue, cherry-pick continue)',
+              'description': 'Commit/continue message.',
             },
             'amend': {
               'type': 'boolean',
-              'description': 'Amend the last commit (for commit)',
+              'description': 'Amend last commit.',
             },
             'maxCount': {
               'type': 'integer',
-              'description': 'Max entries to return (for log, default 10)',
+              'description': 'Max entries for log.',
             },
             'firstParentOnly': {
               'type': 'boolean',
-              'description':
-                  'Follow only the first parent when walking history',
+              'description': 'Follow first parent only.',
             },
             'since': {
               'type': 'string',
-              'description':
-                  'Only include commits on or after this ISO-8601 timestamp',
+              'description': 'ISO-8601 lower time bound.',
             },
             'until': {
               'type': 'string',
-              'description':
-                  'Only include commits on or before this ISO-8601 timestamp',
+              'description': 'ISO-8601 upper time bound.',
             },
             'action': {
               'type': 'string',
               'description':
-                  'Sub-action: list | create | delete (for branch), get | set (for config), list | get-url | add | set-url | remove | rename (for remote), start | continue | abort (for merge), start | continue | abort (for cherry-pick), start | continue | skip | abort (for rebase)',
+                  'Sub-action for branch/config/remote/merge/cherry-pick/rebase.',
             },
             'name': {
               'type': 'string',
-              'description': 'Branch name (for branch create/delete)',
+              'description': 'Branch or remote name.',
             },
             'force': {
               'type': 'boolean',
-              'description':
-                  'Force the operation when supported (branch delete, push)',
+              'description': 'Force when supported.',
             },
             'startPoint': {
               'type': 'string',
-              'description': 'Start point ref for branch creation',
+              'description': 'Start point ref.',
             },
             'target': {
               'type': 'string',
-              'description':
-                  'Branch or commit to switch to (for checkout) or reset to (for reset)',
+              'description': 'Checkout/reset target.',
             },
             'newBranch': {
               'type': 'boolean',
-              'description': 'Create and switch to a new branch (for checkout)',
+              'description': 'Create and switch to new branch.',
             },
             'mode': {
               'type': 'string',
-              'description':
-                  'Reset mode: soft | mixed | hard (for reset, default mixed)',
+              'description': 'Reset mode: soft | mixed | hard.',
             },
             'branch': {
               'type': 'string',
-              'description':
-                  'Branch to merge or fetch/pull from (for merge/fetch/pull)',
+              'description': 'Branch for merge/fetch/pull.',
             },
             'remote': {
               'type': 'string',
-              'description':
-                  'Remote name (for fetch/pull/push/remote-url/remote, default origin)',
+              'description': 'Remote name.',
             },
             'oldName': {
               'type': 'string',
-              'description': 'Existing remote name (for remote rename)',
+              'description': 'Existing remote name.',
             },
             'newName': {
               'type': 'string',
-              'description': 'New remote name (for remote rename)',
+              'description': 'New remote name.',
             },
             'url': {
               'type': 'string',
-              'description':
-                  'Remote URL or local repo path (for clone, remote add/set-url)',
+              'description': 'Remote URL or local repo path.',
             },
             'path': {
               'type': 'string',
-              'description':
-                  'Destination path for clone, relative to the workspace root',
+              'description': 'Workspace-relative clone destination.',
             },
             'rebase': {
               'type': 'boolean',
-              'description': 'Use rebase instead of merge when pulling',
+              'description': 'Pull with rebase.',
             },
             'refspec': {
               'type': 'string',
-              'description':
-                  'Explicit push refspec, for example refs/heads/main:refs/heads/main',
+              'description': 'Explicit push refspec.',
             },
             'ref': {
               'type': 'string',
-              'description':
-                  'Commit or branch ref to show/rebase onto, or commit to cherry-pick (for show/rebase start/cherry-pick start, default HEAD)',
+              'description': 'Commit or branch ref.',
             },
             'authorName': {
               'type': 'string',
-              'description': 'Override author name (for commit)',
+              'description': 'Commit author name.',
             },
             'authorEmail': {
               'type': 'string',
-              'description': 'Override author email (for commit)',
+              'description': 'Commit author email.',
             },
             'section': {
               'type': 'string',
-              'description': 'Config section name (for config)',
+              'description': 'Config section.',
             },
             'key': {
               'type': 'string',
-              'description': 'Config key name (for config)',
+              'description': 'Config key.',
             },
             'value': {
               'type': 'string',
-              'description': 'Config value to set (for config set)',
+              'description': 'Config value.',
             },
           },
           'required': ['command'],

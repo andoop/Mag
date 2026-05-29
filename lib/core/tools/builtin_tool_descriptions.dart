@@ -1,63 +1,38 @@
-/// Verbatim tool descriptions from the reference CLI tool suite.
+/// Compact tool descriptions optimized for mobile payload size.
 
 const String kReadToolDescription = r'''
-Read a file or directory from the local filesystem. If the path does not exist, an error is returned.
-
-Usage:
-- The `filePath` parameter is required. In this workspace it is project-root-relative.
-- By default, this tool returns up to 2000 lines from the start of the file.
-- The offset parameter is the line number to start from (1-indexed).
-- To read later sections, call this tool again with a larger offset.
-- Use the grep tool to find specific content in large files or files with long lines.
-- If you are unsure of the correct file path, use the glob tool to look up filenames by glob pattern.
-- Contents are returned with each line prefixed by its line number as `<line>: <content>`. For example, if a file has contents "foo\n", you will receive `1: foo`. For directories, entries are returned one per line (without line numbers) with a trailing `/` for subdirectories.
-- Any line longer than 2000 characters is truncated.
-- Call this tool in parallel when you know there are multiple files you want to read.
-- Avoid tiny repeated slices (30 line chunks). If you need more context, read a larger window.
-- This tool can read image files and PDFs and return them as file attachments.
+Read a workspace file or directory.
+- Required: `filePath`.
+- Files return numbered lines; do not copy the line-number prefix into edits.
+- Use `offset`/`limit` for large files. Use `grep`/`glob` when locating content.
+- Images and PDFs may be returned as attachments.
 ''';
 
 const String kWriteToolDescription = r'''
-Writes a file to the local filesystem.
-
-CRITICAL — required arguments: Every call MUST include both `filePath` and `content` as top-level JSON keys. Omitting `filePath` (or using only `path` / a different key) will fail. `filePath` is the workspace-relative destination; `content` is the full file body.
-
-Usage:
-- This tool will overwrite the existing file if there is one at the provided path.
-- If this is an existing file, you MUST use the `read` tool first to read the file's contents. This tool will fail if you did not read the file first.
-- You MUST provide `filePath` (workspace-relative path) and the complete file body in `content`.
-- ALWAYS prefer editing existing files in the codebase. NEVER write new files unless explicitly required.
-- NEVER proactively create documentation files (*.md) or README files. Only create documentation files if explicitly requested by the user.
-- Only use emojis if the user explicitly requests it. Avoid writing emojis to files unless asked.
+Create or overwrite a workspace file.
+- Required: `filePath`, `content`.
+- Existing files require a fresh `read` first.
+- Prefer edit-style tools for modifying existing files.
 ''';
 
 const String kEditToolDescription = r'''
-Performs exact string replacements in files.
-
-Usage:
-- You must use your `read` tool at least once in the conversation before editing. This tool will error if you attempt an edit without reading the file.
-- When editing text from `read` tool output, ensure you preserve the exact indentation (tabs/spaces) as it appears AFTER the line number prefix. The line number prefix format is: line number + colon + space (for example, `1: `). Everything after that space is the actual file content to match. Never include any part of the line number prefix in `oldString` or `newString`.
-- ALWAYS prefer editing existing files in the codebase. NEVER write new files unless explicitly required.
-- Only use emojis if the user explicitly requests it. Avoid adding emojis to files unless asked.
-- The edit will FAIL if `oldString` is not found in the file.
-- The edit will FAIL if `oldString` is found multiple times in the file. Either provide a larger string with more surrounding context to make it unique or use `replaceAll` to change every instance of `oldString`.
-- Use `replaceAll` for replacing and renaming strings across the file. This parameter is useful if you want to rename a variable, for instance.
+Replace exact text in an existing workspace file.
+- Read the file first and copy exact content without line-number prefixes.
+- `oldString` must match uniquely unless `replaceAll` is true.
+- If matching fails, read again and use a larger exact block.
 ''';
 
 const String kApplyPatchToolDescription = r'''
-Use the `apply_patch` tool to edit files. Your patch language is a stripped‑down, file‑oriented diff format designed to be easy to parse and safe to apply. You can think of it as a high‑level envelope:
+Edit workspace files with a patch envelope:
 
 *** Begin Patch
 [ one or more file sections ]
 *** End Patch
 
-Within that envelope, you get a sequence of file operations.
-You MUST include a header to specify the action you are taking.
-Each operation starts with one of three headers:
-
-*** Add File: <path> - create a new file. Every following line is a + line (the initial contents).
-*** Delete File: <path> - remove an existing file. Nothing follows.
-*** Update File: <path> - patch an existing file in place (optionally with a rename).
+Sections:
+- `*** Add File: <path>` then `+` lines.
+- `*** Update File: <path>` with diff hunks; optional `*** Move to: <path>`.
+- `*** Delete File: <path>`.
 
 Example patch:
 
@@ -75,82 +50,45 @@ Example patch:
 ```
 
 It is important to remember:
-
-- You must include a header with your intended action (Add/Delete/Update)
-- You must prefix new lines with `+` even when creating a new file
+- Existing files must be read first.
+- New lines in added files must start with `+`.
 ''';
 
 const String kWebfetchToolDescription = r'''
-- Fetches content from a specified URL
-- Takes a URL and optional format as input
-- Fetches the URL content, converts to requested format (markdown by default)
-- Returns the content in the specified format
-- Use this tool when you need to retrieve and analyze web content
-
-Usage notes:
-  - IMPORTANT: if another tool is present that offers better web fetching capabilities, is more targeted to the task, or has fewer restrictions, prefer using that tool instead of this one.
-  - The URL must be a fully-formed valid URL
-  - HTTP URLs will be automatically upgraded to HTTPS
-  - Format options: "markdown" (default), "text", or "html"
-  - This tool is read-only and does not modify any files
-  - Results may be summarized if the content is very large
+Fetch public web text for inspection. Read-only; does not save files.
+- Required: `url`.
+- Use `download` instead when the remote file must be saved to the workspace.
 ''';
 
 const String kDownloadToolDescription = r'''
 Download a public file from a URL into the workspace.
-
-Usage:
-- `url` and `filePath` are required.
-- `url` must be a public `http` or `https` URL.
-- `filePath` is the workspace-relative destination where the downloaded file will be saved.
-- If the destination already exists, this tool will fail unless `overwrite` is explicitly set to `true`.
-- This tool writes files inside the workspace.
-- When the `public-file-download` skill is available, load that skill for detailed usage guidance before using this tool.
+- Required: `url`, `filePath`.
+- URL must be public `http`/`https`.
+- Existing destination requires `overwrite: true`.
 ''';
 
 const String kListMcpResourcesToolDescription = r'''
-List MCP resources exposed by configured remote MCP servers.
-
-Usage:
-- Optional `serverId` limits the result to a single configured MCP server.
-- Use this tool before `read_mcp_resource` when you need to discover available resource URIs.
-- Results include server ID, URI, resource name, description, and mime type when present.
+List resources from configured MCP servers. Optional `serverId` narrows results.
 ''';
 
 const String kReadMcpResourceToolDescription = r'''
-Read a resource from a configured remote MCP server.
-
-Usage:
-- `serverId` and `uri` are required.
-- Call `list_mcp_resources` first if you do not already know the exact resource URI.
-- Returns text content directly when available; binary/blob content is returned as metadata or base64 text.
+Read an MCP resource. Required: `serverId`, `uri`. Use `list_mcp_resources` to discover URIs.
 ''';
 
 const String kListMcpPromptsToolDescription = r'''
-List MCP prompts exposed by configured remote MCP servers.
-
-Usage:
-- Optional `serverId` limits the result to a single configured MCP server.
-- Use this tool before `get_mcp_prompt` when you need to discover prompt names or arguments.
-- Results include prompt name, description, and argument schema metadata when present.
+List prompt templates from configured MCP servers. Optional `serverId` narrows results.
 ''';
 
 const String kGetMcpPromptToolDescription = r'''
-Resolve a prompt template from a configured remote MCP server.
-
-Usage:
-- `serverId` and `name` are required.
-- `arguments` is optional and should be an object of string values keyed by argument name.
-- Call `list_mcp_prompts` first if you do not already know the exact prompt name and arguments.
-- Returns the prompt messages exactly as provided by the MCP server.
+Resolve an MCP prompt. Required: `serverId`, `name`; optional `arguments`.
 ''';
 
 /// Client-specific: workspace-relative paths.
 const String kMobileWorkspacePathSuffix = '''
 
-In this workspace, paths are relative to the project root (not host absolute paths). Use forward slashes. Provide `filePath` explicitly for file tools. Empty read paths are rejected, and reading the workspace root directly is not supported. Segments like `./lib/main.dart` work. `..` is resolved lexically; paths that would escape above the workspace root are rejected.''';
+Paths are workspace-relative, use `/`, and cannot escape the workspace.''';
 
 /// Client-specific: fetch returns plain text; format/timeout options are not exposed.
 const String kMobileWebFetchSuffix = '''
 
-This client fetches the response as plain text; `format` and `timeout` parameters are not available.''';
+Returns plain text only; no `format` or `timeout` parameters.''';

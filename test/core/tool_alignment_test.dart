@@ -493,7 +493,8 @@ void main() {
 
       final parts = await database.listPartsForSession(session.id);
       final toolPart = parts.firstWhere(
-        (part) => part.type == PartType.tool && part.data['callID'] == 'call_clone',
+        (part) =>
+            part.type == PartType.tool && part.data['callID'] == 'call_clone',
       );
       final state =
           Map<String, dynamic>.from(toolPart.data['state'] as Map? ?? const {});
@@ -946,23 +947,21 @@ void main() {
     expect(advertisedTools.contains('edit'), isFalse);
     expect(
       envPrompt.contains(
-          'If you need another modification on the same file, `read` it again first.'),
+          '- Batch related same-file changes; re-read before another pass.'),
       isTrue,
     );
     expect(
       envPrompt.contains(
-          '`edit` uses `filePath`, `oldString`, `newString`, and optional `replaceAll`.'),
+          '- Read existing files before changing them with `apply_patch`.'),
       isTrue,
     );
     expect(
-      envPrompt.contains(
-          'When copying from `read`, do not include the `lineNumber: ` prefix inside `oldString` or `newString`.'),
-      isTrue,
+      envPrompt.contains('`edit.oldString`'),
+      isFalse,
     );
     expect(
-      envPrompt.contains(
-          'If `oldString` is not unique, include more surrounding context. If you intentionally want every occurrence, set `replaceAll: true`.'),
-      isTrue,
+      envPrompt.contains('`write` requires'),
+      isFalse,
     );
   });
 
@@ -3186,29 +3185,27 @@ description: Review UI flows before implementation.
         text: 'Earlier context',
       ),
     );
-    await database.putSetting(
-      kModelsDevCatalogCacheKey,
-      {
-        'all': [
-          const ProviderInfo(
-            id: 'openai',
-            name: 'OpenAI',
-            api: 'https://api.openai.com/v1',
-            env: [],
-            models: {
-              'gpt-5': ProviderModelInfo(
-                id: 'gpt-5',
-                name: 'gpt-5',
-                limit: ProviderModelLimit(
-                  context: 100,
-                  input: 100,
-                  output: 20,
-                ),
+    await database.replaceProviderCatalogCache(
+      fetchedAt: DateTime.now().millisecondsSinceEpoch,
+      providers: const [
+        ProviderInfo(
+          id: 'openai',
+          name: 'OpenAI',
+          api: 'https://api.openai.com/v1',
+          env: [],
+          models: {
+            'gpt-5': ProviderModelInfo(
+              id: 'gpt-5',
+              name: 'gpt-5',
+              limit: ProviderModelLimit(
+                context: 100,
+                input: 100,
+                output: 20,
               ),
-            },
-          ).toJson(),
-        ],
-      },
+            ),
+          },
+        ),
+      ],
     );
     await database.putSetting(
       'model_config',
@@ -3331,29 +3328,27 @@ description: Review UI flows before implementation.
         text: 'Earlier context',
       ),
     );
-    await database.putSetting(
-      kModelsDevCatalogCacheKey,
-      {
-        'all': [
-          const ProviderInfo(
-            id: 'openai',
-            name: 'OpenAI',
-            api: 'https://api.openai.com/v1',
-            env: [],
-            models: {
-              'gpt-5': ProviderModelInfo(
-                id: 'gpt-5',
-                name: 'gpt-5',
-                limit: ProviderModelLimit(
-                  context: 100,
-                  input: 100,
-                  output: 20,
-                ),
+    await database.replaceProviderCatalogCache(
+      fetchedAt: DateTime.now().millisecondsSinceEpoch,
+      providers: const [
+        ProviderInfo(
+          id: 'openai',
+          name: 'OpenAI',
+          api: 'https://api.openai.com/v1',
+          env: [],
+          models: {
+            'gpt-5': ProviderModelInfo(
+              id: 'gpt-5',
+              name: 'gpt-5',
+              limit: ProviderModelLimit(
+                context: 100,
+                input: 100,
+                output: 20,
               ),
-            },
-          ).toJson(),
-        ],
-      },
+            ),
+          },
+        ),
+      ],
     );
     await database.putSetting(
       'model_config',
@@ -3472,29 +3467,27 @@ description: Review UI flows before implementation.
         text: 'Earlier context',
       ),
     );
-    await database.putSetting(
-      kModelsDevCatalogCacheKey,
-      {
-        'all': [
-          const ProviderInfo(
-            id: 'openai',
-            name: 'OpenAI',
-            api: 'https://api.openai.com/v1',
-            env: [],
-            models: {
-              'gpt-5': ProviderModelInfo(
-                id: 'gpt-5',
-                name: 'gpt-5',
-                limit: ProviderModelLimit(
-                  context: 100,
-                  input: 100,
-                  output: 20,
-                ),
+    await database.replaceProviderCatalogCache(
+      fetchedAt: DateTime.now().millisecondsSinceEpoch,
+      providers: const [
+        ProviderInfo(
+          id: 'openai',
+          name: 'OpenAI',
+          api: 'https://api.openai.com/v1',
+          env: [],
+          models: {
+            'gpt-5': ProviderModelInfo(
+              id: 'gpt-5',
+              name: 'gpt-5',
+              limit: ProviderModelLimit(
+                context: 100,
+                input: 100,
+                output: 20,
               ),
-            },
-          ).toJson(),
-        ],
-      },
+            ),
+          },
+        ),
+      ],
     );
     await database.putSetting(
       'model_config',

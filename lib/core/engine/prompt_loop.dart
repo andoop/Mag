@@ -48,7 +48,7 @@ extension SessionEnginePrompt on SessionEngine {
     String? terminalError;
     MessageInfo? terminalAssistant;
     try {
-      final modelConfig = await _loadResolvedModelConfig();
+      late final ModelConfig modelConfig;
       final cacheLoadStartedAt = DateTime.now().millisecondsSinceEpoch;
       final cachedMessages = await database.listMessages(session.id);
       final cachedParts = await database.listPartsForSession(session.id);
@@ -333,6 +333,7 @@ extension SessionEnginePrompt on SessionEngine {
           ),
         );
       }
+      modelConfig = await _loadResolvedModelConfig();
       var currentUserMessage = userMessage;
       var currentAgent = userAgent;
       late MessageInfo assistant;

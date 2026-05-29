@@ -11,7 +11,7 @@ Mag combines a mobile app, an agent runtime, workspace tools, native platform br
 | Models | Provider setup, API keys, discovery where supported, recent models, context usage, free/latest tags, OpenAI-compatible endpoints. |
 | Timeline | Streaming responses, Markdown, code rendering, reasoning/tool summaries, permissions, questions, scroll controls. |
 | Workspace files | Browse, refresh, preview Markdown/HTML/PDF/images/text/code/Office attachments, attach files, use `@` references. |
-| Agent tools | Read/list/stat, write/edit/apply patch, search, move/copy/delete/rename, variables, web fetch/download, todos, questions. |
+| Agent tools | Read/list/stat, write/edit/apply patch, search, move/copy/delete/rename, zip/unzip, variables, web fetch/download, todos, questions. |
 | Office generation | Create DOCX, XLSX, and PPTX files on device from structured content. |
 | Git | Discover/init/clone, status/diff/log/show, add/unstage/commit/amend, branch, checkout, restore, reset, merge, rebase, cherry-pick, remotes, fetch/pull/push, identity, SSH keys, credentials. |
 | Device capabilities | Pick files, capture photos, record audio, record video, save, and share through native bridges. |
@@ -54,7 +54,7 @@ See [AI Web Runtime](web-runtime.md).
 
 # 功能总览
 
-Mag 是移动端 Agent 工作台，核心能力包括项目/会话、模型接入、文件浏览与预览、Agent 工具、Office 文档生成、手机 Git、端上媒体能力、AI 网页运行时、MCP、Skills、小窗和本地持久化。
+Mag 是移动端 Agent 工作台，核心能力包括项目/会话、模型接入、文件浏览与预览、Agent 工具、压缩/解压、Office 文档生成、手机 Git、端上媒体能力、AI 网页运行时、MCP、Skills、小窗和本地持久化。
 
 重点新增能力：
 

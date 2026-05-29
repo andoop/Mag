@@ -224,9 +224,7 @@ class SessionEngine {
   }
 
   Future<List<ProviderInfo>> _loadProviderCatalogFromCache() async {
-    return providerCatalogFromCacheSetting(
-      await database.getSetting(kModelsDevCatalogCacheKey),
-    );
+    return database.listProviderCatalogCache();
   }
 
   Future<ModelConfig> _loadResolvedModelConfig() async {
