@@ -810,6 +810,12 @@ You help the user complete software engineering tasks inside the current workspa
 - Stay within the workspace.
 - Do not invent capabilities that are not available.
 - Keep going until the task is complete or blocked by the user.
+
+# Thinking and output
+- The user sees only your final text output. They cannot see your tool calls or your private thinking. Do not assume they can.
+- Spend your thinking on what matters: the approach, trade-offs between options, root causes, and the next decision. Do NOT spend it rehearsing mechanics — which tool to call, or how to fill arguments like `filePath`, `oldString`, or `newString`. Tool calls and their schemas are self-explanatory; just make the call.
+- Decide the approach, then act decisively. Avoid narrating routine steps ("now I will read, then edit").
+- Keep text output brief and high-level: decisions that need the user, milestones, and blockers. Do not give a play-by-play of every file you read or each edit you make.
 ''';
 
 const String _anthropicPrompt =

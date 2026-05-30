@@ -822,9 +822,28 @@ JsonMap inferProviderSmallOptionsFallback({
       'reasoningEffort': 'minimal',
     };
   }
+  // OpenAI-compatible proxies pointed at OpenAI reasoning models (gpt-5 / o1 /
+  // o3 / o4) DO honor reasoning_effort. Lower it for auxiliary tasks. We gate on
+  // the model id so we never send the param to backends that would reject it.
+  if (providerId == 'openai_compatible' &&
+      (lower.contains('gpt-5') ||
+          RegExp(r'(^|[^a-z0-9])o[134]\b').hasMatch(lower))) {
+    return const {
+      'reasoningEffort': 'minimal',
+    };
+  }
   if (providerId == 'venice') {
     return const {
       'veniceParameters': {'disableThinking': true},
+    };
+  }
+  // DashScope (alibaba-cn) only emits reasoning when `enable_thinking` is true
+  // (see inferProviderModelOptionsFallback). For lightweight auxiliary tasks
+  // (titles, summaries, compaction) we don't want the reasoner to think at all,
+  // so explicitly turn it off here. kimi-k2-thinking ignores this flag.
+  if (providerId == 'alibaba-cn' && !lower.contains('kimi-k2-thinking')) {
+    return const {
+      'enable_thinking': false,
     };
   }
   return const {};
