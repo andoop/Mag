@@ -131,6 +131,37 @@ extension SessionEngineConversation on SessionEngine {
         retainedHistoricalImageTurns++;
       }
     }
+    // Pre-pass: assign a chronological sequence number to every tool part and
+    // remember, per file path, the sequence of the LAST editing operation that
+    // touched it. We later fold any read/write/edit/apply_patch output that is
+    // superseded by a later edit to the same path. This is a runtime-only
+    // compaction of the model context — it does NOT mutate the DB or the UI.
+    final toolPartSeq = <String, int>{};
+    final lastEditSeqForPath = <String, int>{};
+    var seq = 0;
+    for (final message in visibleMessages) {
+      if (message.role != SessionRole.assistant) continue;
+      final mParts = partsByMessage[message.id] ?? const <MessagePart>[];
+      for (final part in mParts) {
+        if (part.type != PartType.tool) continue;
+        final callId = part.data['callID'] as String?;
+        if (callId == null) continue;
+        final current = seq++;
+        toolPartSeq[callId] = current;
+        final toolName = jsonStringCoerce(part.data['tool'], '');
+        if (!_editingFileTools.contains(toolName)) continue;
+        final state =
+            Map<String, dynamic>.from(part.data['state'] as Map? ?? const {});
+        if ((state['status'] as String? ?? '') != 'completed') continue;
+        for (final path in _toolPartPaths(part)) {
+          final existing = lastEditSeqForPath[path];
+          if (existing == null || current > existing) {
+            lastEditSeqForPath[path] = current;
+          }
+        }
+      }
+    }
+
     final conversation = <Map<String, dynamic>>[];
     for (var i = 0; i < visibleMessages.length; i++) {
       final message = visibleMessages[i];
@@ -265,11 +296,19 @@ extension SessionEngineConversation on SessionEngine {
           final time =
               Map<String, dynamic>.from(state['time'] as Map? ?? const {});
           final compacted = (time['compacted'] as num?) != null;
-          final output = (status == 'pending' || status == 'running')
+          var output = (status == 'pending' || status == 'running')
               ? '[Tool execution was interrupted]'
               : (compacted
                   ? '[Old tool result content cleared]'
                   : state['output'] as String? ?? '');
+          if (status != 'pending' && status != 'running' && !compacted) {
+            final folded = _foldSupersededToolOutput(
+              part: part,
+              toolPartSeq: toolPartSeq,
+              lastEditSeqForPath: lastEditSeqForPath,
+            );
+            if (folded != null) output = folded;
+          }
           conversation.add({
             'role': 'tool',
             'tool_call_id': part.data['callID'],
@@ -285,6 +324,101 @@ extension SessionEngineConversation on SessionEngine {
       }
     }
     return conversation;
+  }
+
+  /// Tools whose outputs are bound to a file path and therefore foldable when
+  /// a later edit to the same path supersedes them.
+  static const Set<String> _foldableFileTools = {
+    'read',
+    'write',
+    'edit',
+    'apply_patch',
+  };
+
+  /// Tools that, when run, change a file's content (and thus invalidate
+  /// earlier reads/edits of the same path in the model's context).
+  static const Set<String> _editingFileTools = {
+    'write',
+    'edit',
+    'apply_patch',
+  };
+
+  String _normalizeFoldPath(String path) {
+    var p = path.trim();
+    while (p.startsWith('./')) {
+      p = p.substring(2);
+    }
+    if (p.startsWith('/')) p = p.substring(1);
+    return p;
+  }
+
+  /// Extracts the workspace-relative file path(s) a tool part operated on,
+  /// looking at the recorded read-ledger metadata first (most reliable) and
+  /// falling back to the tool input arguments.
+  Set<String> _toolPartPaths(MessagePart part) {
+    final paths = <String>{};
+    final state =
+        Map<String, dynamic>.from(part.data['state'] as Map? ?? const {});
+    final metadata =
+        Map<String, dynamic>.from(state['metadata'] as Map? ?? const {});
+    final single = metadata['readLedger'];
+    if (single is Map) {
+      final p = single['path'] as String? ?? '';
+      if (p.isNotEmpty) paths.add(_normalizeFoldPath(p));
+    }
+    final multiple = metadata['readLedgers'];
+    if (multiple is List) {
+      for (final item in multiple.whereType<Map>()) {
+        final p = item['path'] as String? ?? '';
+        if (p.isNotEmpty) paths.add(_normalizeFoldPath(p));
+      }
+    }
+    final files = metadata['files'];
+    if (files is List) {
+      for (final f in files.whereType<String>()) {
+        if (f.isNotEmpty) paths.add(_normalizeFoldPath(f));
+      }
+    }
+    final metaPath = metadata['path'] as String? ?? metadata['filepath'] as String? ?? '';
+    if (metaPath.isNotEmpty) paths.add(_normalizeFoldPath(metaPath));
+    if (paths.isEmpty) {
+      final input =
+          Map<String, dynamic>.from(state['input'] as Map? ?? const {});
+      final inputPath = input['filePath'] as String? ?? '';
+      if (inputPath.isNotEmpty) paths.add(_normalizeFoldPath(inputPath));
+    }
+    return paths;
+  }
+
+  /// Returns folded replacement content if this tool part's output is
+  /// superseded by a strictly-later edit to the same path; otherwise null
+  /// (meaning: keep the original output verbatim).
+  String? _foldSupersededToolOutput({
+    required MessagePart part,
+    required Map<String, int> toolPartSeq,
+    required Map<String, int> lastEditSeqForPath,
+  }) {
+    final toolName = jsonStringCoerce(part.data['tool'], '');
+    if (!_foldableFileTools.contains(toolName)) return null;
+    final callId = part.data['callID'] as String?;
+    if (callId == null) return null;
+    final mySeq = toolPartSeq[callId];
+    if (mySeq == null) return null;
+    final paths = _toolPartPaths(part);
+    if (paths.isEmpty) return null;
+    // Fold only when EVERY path this part touched has a strictly-later edit.
+    for (final path in paths) {
+      final lastEdit = lastEditSeqForPath[path];
+      if (lastEdit == null || lastEdit <= mySeq) return null;
+    }
+    final label = paths.length == 1 ? paths.first : '${paths.length} files';
+    if (toolName == 'read') {
+      return '[Stale read of $label folded: the file was modified by a later '
+          'edit. This earlier content is no longer current. Re-read only if '
+          'you need the latest content.]';
+    }
+    return '[Earlier $toolName of $label folded: superseded by a later edit. '
+        'See the most recent edit result for the current file state.]';
   }
 
   List<String> _sessionContractItems(
@@ -433,6 +567,24 @@ extension SessionEngineConversation on SessionEngine {
     }
     return blocks;
   }
+
+  @visibleForTesting
+  List<Map<String, dynamic>> debugMessagesToConversation({
+    required List<MessageInfo> messages,
+    required List<MessagePart> parts,
+    required String currentAgent,
+    required String? latestUserId,
+    List<String> sessionContracts = const <String>[],
+    bool isZh = false,
+  }) =>
+      _messagesToConversation(
+        messages: messages,
+        parts: parts,
+        currentAgent: currentAgent,
+        latestUserId: latestUserId,
+        sessionContracts: sessionContracts,
+        isZh: isZh,
+      );
 
   String _partRawText(MessagePart part) =>
       (part.data['rawText'] ?? part.data['text']) as String? ?? '';

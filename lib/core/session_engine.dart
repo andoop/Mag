@@ -5,8 +5,11 @@ import 'dart:convert';
 import 'dart:io';
 import 'dart:math' as math;
 
+import 'package:meta/meta.dart';
+
 import 'agents.dart';
 import 'database.dart';
+import 'json_coerce.dart';
 import 'debug_trace.dart';
 import 'device_capability_registry.dart';
 import 'mcp_service.dart';

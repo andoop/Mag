@@ -55,10 +55,45 @@ Future<String> _resolveWriteContent(
   );
 }
 
+/// SHA-1 of the file's text content. Stored in the read ledger so freshness
+/// checks can fall back to content comparison when mtime granularity (often
+/// 1s) is too coarse to trust (aligns with Claude Code's content fallback).
+String _toolContentHash(String content) =>
+    crypto.sha1.convert(utf8.encode(content)).toString();
+
+/// Builds the model-facing `output` for a successful write/edit/apply_patch.
+///
+/// Embeds the applied diff so the model can see the file's *new* state
+/// directly in the tool result and is explicitly told not to reuse an earlier
+/// `read`. This is the core fix for the "edited but read still shows old
+/// content" confusion: the result itself is now the source of truth.
+String _editResultOutput({
+  required String summary,
+  required String diffPreview,
+}) {
+  final buffer = StringBuffer(summary);
+  final trimmed = diffPreview.trim();
+  if (trimmed.isNotEmpty) {
+    buffer
+      ..write('\n\nApplied diff (this is the file\'s current state):\n')
+      ..write('<diff>\n')
+      ..write(trimmed)
+      ..write('\n</diff>');
+  }
+  buffer.write(
+    '\n\nThe edit has been applied. Do NOT re-read the file or reuse an '
+    'earlier `read` to reason about it — the diff above already reflects the '
+    'current content.',
+  );
+  return buffer.toString();
+}
+
 class _ToolReadLedgerEntry {
   _ToolReadLedgerEntry({
     required this.path,
     required this.lastModified,
+    this.size,
+    this.contentHash,
     this.startLine,
     this.endLine,
     this.sourceTool,
@@ -66,6 +101,8 @@ class _ToolReadLedgerEntry {
 
   final String path;
   final int lastModified;
+  final int? size;
+  final String? contentHash;
   final int? startLine;
   final int? endLine;
   final String? sourceTool;
@@ -83,6 +120,8 @@ class _ToolReadLedgerEntry {
 JsonMap _toolReadLedgerMetadata({
   required String path,
   required int lastModified,
+  int? size,
+  String? contentHash,
   int? startLine,
   int? endLine,
   String? sourceTool,
@@ -90,6 +129,9 @@ JsonMap _toolReadLedgerMetadata({
     {
       'path': path,
       'lastModified': lastModified,
+      if (size != null) 'size': size,
+      if (contentHash != null && contentHash.isNotEmpty)
+        'contentHash': contentHash,
       if (startLine != null) 'startLine': startLine,
       if (endLine != null) 'endLine': endLine,
       if (sourceTool != null && sourceTool.isNotEmpty) 'sourceTool': sourceTool,
@@ -110,6 +152,10 @@ _ToolReadLedgerEntry? _toolReadLedgerFromMetadata(
       return _ToolReadLedgerEntry(
         path: ledgerPath,
         lastModified: (map['lastModified'] as num?)?.toInt() ?? 0,
+        size: (map['size'] as num?)?.toInt(),
+        contentHash: (map['contentHash'] as String?)?.trim().isEmpty ?? true
+            ? null
+            : (map['contentHash'] as String),
         startLine: (map['startLine'] as num?)?.toInt(),
         endLine: (map['endLine'] as num?)?.toInt(),
         sourceTool: jsonStringCoerce(
@@ -129,6 +175,10 @@ _ToolReadLedgerEntry? _toolReadLedgerFromMetadata(
         return _ToolReadLedgerEntry(
           path: ledgerPath,
           lastModified: (map['lastModified'] as num?)?.toInt() ?? 0,
+          size: (map['size'] as num?)?.toInt(),
+          contentHash: (map['contentHash'] as String?)?.trim().isEmpty ?? true
+              ? null
+              : (map['contentHash'] as String),
           startLine: (map['startLine'] as num?)?.toInt(),
           endLine: (map['endLine'] as num?)?.toInt(),
           sourceTool: jsonStringCoerce(
@@ -196,14 +246,36 @@ Future<void> _assertFreshReadForExistingFile(
       'Required action: call `read` with `filePath` "$filePath" first, then retry your `$toolName` call.',
     );
   }
-  if (entry.lastModified > ledger.lastModified) {
-    throw Exception(
-      'BLOCKED: File "$filePath" has been modified since your last `read` '
-      '(file modified: ${_formatLedgerTimestamp(entry.lastModified)}, '
-      'your last read: ${_formatLedgerTimestamp(ledger.lastModified)}).\n'
-      'Required action: call `read` on "$filePath" again to get the latest content, then rebuild your `$toolName` call with the fresh data.',
-    );
+
+  // Fast path: nothing about the file looks changed. mtime is unchanged AND
+  // (when both sizes are known) the size matches. Coarse mtime granularity
+  // can hide same-size edits, so we only trust this when size also matches.
+  final mtimeUnchanged = entry.lastModified <= ledger.lastModified;
+  final sizeKnown = ledger.size != null;
+  final sizeUnchanged = sizeKnown && ledger.size == entry.size;
+  if (mtimeUnchanged && (!sizeKnown || sizeUnchanged)) {
+    return;
   }
+
+  // Something differs. If we recorded a content hash for a full read, compare
+  // actual content so we don't block on benign mtime bumps (e.g. a tool that
+  // rewrote identical bytes). This mirrors Claude Code's content fallback.
+  if (ledger.contentHash != null) {
+    final current = await ctx.bridge.readText(
+      treeUri: ctx.workspace.treeUri,
+      relativePath: filePath,
+    );
+    if (_toolContentHash(current) == ledger.contentHash) {
+      return;
+    }
+  }
+
+  throw Exception(
+    'BLOCKED: File "$filePath" has been modified since your last `read` '
+    '(file modified: ${_formatLedgerTimestamp(entry.lastModified)}, '
+    'your last read: ${_formatLedgerTimestamp(ledger.lastModified)}).\n'
+    'Required action: call `read` on "$filePath" again to get the latest content, then rebuild your `$toolName` call with the fresh data.',
+  );
 }
 
 Future<ToolExecutionResult> _readTool(
@@ -385,6 +457,12 @@ Future<ToolExecutionResult> _readTool(
       'readLedger': _toolReadLedgerMetadata(
         path: filePath,
         lastModified: entry.lastModified,
+        size: entry.size,
+        // Only trust a content hash when we saw the whole file; partial reads
+        // can't vouch for the bytes the model never saw.
+        contentHash: (!truncated && safeOffset == 1)
+            ? _toolContentHash(content)
+            : null,
         startLine: safeOffset,
         endLine: lastReadLine < safeOffset ? safeOffset : lastReadLine,
         sourceTool: 'read',
@@ -408,6 +486,19 @@ Future<ToolExecutionResult> _writeTool(
     JsonMap args, ToolRuntimeContext ctx) async {
   final filePath = _strictFilePathArg(args, toolName: 'write');
   final content = await _resolveWriteContent(args, ctx);
+  return _withFileLock(
+    ctx.workspace.treeUri,
+    filePath,
+    () => _writeToolLocked(args, ctx, filePath, content),
+  );
+}
+
+Future<ToolExecutionResult> _writeToolLocked(
+  JsonMap args,
+  ToolRuntimeContext ctx,
+  String filePath,
+  String content,
+) async {
   await ctx.updateToolProgress(
     title: filePath,
     metadata: {
@@ -477,9 +568,15 @@ Future<ToolExecutionResult> _writeTool(
     treeUri: ctx.workspace.treeUri,
     relativePath: filePath,
   );
+  final diffPreview = preview['preview'] as String? ?? '';
   return ToolExecutionResult(
     title: filePath,
-    output: 'Wrote file successfully.',
+    output: _editResultOutput(
+      summary: exists
+          ? 'Wrote $filePath successfully (overwrote existing file).'
+          : 'Wrote $filePath successfully (created new file).',
+      diffPreview: diffPreview,
+    ),
     displayOutput: 'Wrote $filePath',
     metadata: {
       'path': filePath,
@@ -490,6 +587,8 @@ Future<ToolExecutionResult> _writeTool(
         'readLedger': _toolReadLedgerMetadata(
           path: filePath,
           lastModified: updatedEntry.lastModified,
+          size: updatedEntry.size,
+          contentHash: _toolContentHash(content),
           sourceTool: 'write',
         ),
     },
@@ -565,6 +664,26 @@ Future<ToolExecutionResult> _editTool(
     throw Exception('No changes to apply: oldString and newString are identical.');
   }
 
+  return _withFileLock(
+    ctx.workspace.treeUri,
+    filePath,
+    () => _editToolLocked(
+      ctx,
+      filePath: filePath,
+      oldString: oldString,
+      newString: newString,
+      replaceAll: replaceAll,
+    ),
+  );
+}
+
+Future<ToolExecutionResult> _editToolLocked(
+  ToolRuntimeContext ctx, {
+  required String filePath,
+  required String oldString,
+  required String newString,
+  required bool replaceAll,
+}) async {
   final existingEntry = await ctx.bridge.stat(
     treeUri: ctx.workspace.treeUri,
     relativePath: filePath,
@@ -618,7 +737,10 @@ Future<ToolExecutionResult> _editTool(
     );
     return ToolExecutionResult(
       title: filePath,
-      output: 'Edit applied successfully.',
+      output: _editResultOutput(
+        summary: 'Edit applied to $filePath successfully.',
+        diffPreview: preview['preview'] as String? ?? '',
+      ),
       displayOutput: 'Updated $filePath',
       metadata: {
         'path': filePath,
@@ -634,6 +756,8 @@ Future<ToolExecutionResult> _editTool(
           'readLedger': _toolReadLedgerMetadata(
             path: filePath,
             lastModified: updatedEntry.lastModified,
+            size: updatedEntry.size,
+            contentHash: _toolContentHash(newString),
             sourceTool: 'edit',
           ),
       },
@@ -707,7 +831,10 @@ Future<ToolExecutionResult> _editTool(
   );
   return ToolExecutionResult(
     title: filePath,
-    output: 'Edit applied successfully.',
+    output: _editResultOutput(
+      summary: 'Edit applied to $filePath successfully.',
+      diffPreview: preview['preview'] as String? ?? '',
+    ),
     displayOutput: 'Updated $filePath',
     metadata: {
       'path': filePath,
@@ -723,6 +850,8 @@ Future<ToolExecutionResult> _editTool(
         'readLedger': _toolReadLedgerMetadata(
           path: filePath,
           lastModified: updatedEntry.lastModified,
+          size: updatedEntry.size,
+          contentHash: _toolContentHash(restored),
           sourceTool: 'edit',
         ),
     },

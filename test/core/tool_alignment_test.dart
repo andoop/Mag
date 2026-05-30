@@ -395,6 +395,243 @@ void main() {
     expect(permissionRequests, hasLength(1));
   });
 
+  // Persists a tool part from a ToolExecutionResult so the next freshness
+  // check can find the (mtime/size/contentHash) ledger, mirroring production.
+  Future<void> persistLedgerFromResult(
+    ToolExecutionResult result, {
+    String tool = 'edit',
+  }) async {
+    await database.savePart(
+      MessagePart(
+        id: newId('part'),
+        sessionId: session.id,
+        messageId: message.id,
+        type: PartType.tool,
+        createdAt: DateTime.now().millisecondsSinceEpoch,
+        data: {
+          'tool': tool,
+          'callID': newId('call'),
+          'state': {
+            'status': ToolStatus.completed.name,
+            'metadata': result.metadata,
+          },
+        },
+      ),
+    );
+  }
+
+  test('edit output embeds the applied diff for the model', () async {
+    final target = File('${tempDir.path}/diff.txt');
+    await target.writeAsString('alpha\nbeta\n');
+
+    await readTool.execute({'filePath': 'diff.txt'}, makeContext());
+    final entry = await bridge.stat(
+      treeUri: workspace.treeUri,
+      relativePath: 'diff.txt',
+    );
+    await seedReadLedger(filePath: 'diff.txt', lastModified: entry!.lastModified);
+
+    final result = await editTool.execute(
+      {
+        'filePath': 'diff.txt',
+        'oldString': 'beta',
+        'newString': 'gamma',
+      },
+      makeContext(),
+    );
+
+    expect(await target.readAsString(), 'alpha\ngamma\n');
+    expect(result.output, contains('<diff>'));
+    expect(result.output, contains('gamma'));
+    expect(result.output, contains('Do NOT re-read'));
+    final ledger = result.metadata['readLedger'] as Map?;
+    expect(ledger, isNotNull);
+    expect(ledger!['contentHash'], isNotEmpty);
+  });
+
+  test('consecutive edits succeed without an intermediate read', () async {
+    final target = File('${tempDir.path}/seq.txt');
+    await target.writeAsString('one\ntwo\nthree\n');
+
+    await readTool.execute({'filePath': 'seq.txt'}, makeContext());
+    final entry = await bridge.stat(
+      treeUri: workspace.treeUri,
+      relativePath: 'seq.txt',
+    );
+    await seedReadLedger(filePath: 'seq.txt', lastModified: entry!.lastModified);
+
+    final first = await editTool.execute(
+      {'filePath': 'seq.txt', 'oldString': 'one', 'newString': 'ONE'},
+      makeContext(),
+    );
+    await persistLedgerFromResult(first);
+
+    // Second edit relies solely on the ledger refreshed by the first edit
+    // (its contentHash), with no intervening read.
+    final second = await editTool.execute(
+      {'filePath': 'seq.txt', 'oldString': 'two', 'newString': 'TWO'},
+      makeContext(),
+    );
+
+    expect(await target.readAsString(), 'ONE\nTWO\nthree\n');
+    expect(second.output, contains('TWO'));
+  });
+
+  test('edit is blocked when the file changed on disk after read', () async {
+    final target = File('${tempDir.path}/external.txt');
+    await target.writeAsString('content-v1\n');
+
+    final readResult =
+        await readTool.execute({'filePath': 'external.txt'}, makeContext());
+    await persistLedgerFromResult(readResult, tool: 'read');
+
+    // Simulate an external modification that changes size and content. Force a
+    // distinctly newer mtime so even coarse-granularity clocks register it.
+    await target.writeAsString('content-v2-longer\n');
+    await target.setLastModified(
+      DateTime.now().add(const Duration(seconds: 5)),
+    );
+
+    await expectLater(
+      editTool.execute(
+        {
+          'filePath': 'external.txt',
+          'oldString': 'content-v2-longer',
+          'newString': 'x',
+        },
+        makeContext(),
+      ),
+      throwsA(
+        predicate((error) =>
+            error.toString().contains('has been modified since your last')),
+      ),
+    );
+  });
+
+  test('history replay folds read superseded by a later edit', () async {
+    final engine = SessionEngine(
+      database: database,
+      events: LocalEventBus(),
+      workspaceBridge: bridge,
+      promptAssembler: promptAssembler,
+      permissionCenter: PermissionCenter(database, LocalEventBus()),
+      questionCenter: QuestionCenter(database, LocalEventBus()),
+      toolRegistry: registry,
+      modelGateway: _FakeModelGateway(),
+    );
+
+    final now = DateTime.now().millisecondsSinceEpoch;
+    final userMsg = MessageInfo(
+      id: 'm-user',
+      sessionId: session.id,
+      role: SessionRole.user,
+      agent: 'build',
+      createdAt: now,
+      text: 'work on file.txt',
+    );
+    final assistantMsg = MessageInfo(
+      id: 'm-assistant',
+      sessionId: session.id,
+      role: SessionRole.assistant,
+      agent: 'build',
+      createdAt: now + 1,
+      text: '',
+    );
+
+    MessagePart toolPart({
+      required String callId,
+      required String tool,
+      required String output,
+      required JsonMap metadata,
+      required int createdAt,
+    }) =>
+        MessagePart(
+          id: newId('part'),
+          sessionId: session.id,
+          messageId: assistantMsg.id,
+          type: PartType.tool,
+          createdAt: createdAt,
+          data: {
+            'tool': tool,
+            'callID': callId,
+            'state': {
+              'status': ToolStatus.completed.name,
+              'input': {'filePath': 'file.txt'},
+              'output': output,
+              'metadata': metadata,
+            },
+          },
+        );
+
+    final parts = <MessagePart>[
+      MessagePart(
+        id: 'p-user',
+        sessionId: session.id,
+        messageId: userMsg.id,
+        type: PartType.text,
+        createdAt: now,
+        data: {'text': 'work on file.txt'},
+      ),
+      toolPart(
+        callId: 'call-read',
+        tool: 'read',
+        output: '<path>file.txt</path>\n<content>\n1: stale\n</content>',
+        metadata: {
+          'readLedger': {'path': 'file.txt', 'lastModified': now},
+        },
+        createdAt: now + 2,
+      ),
+      // A grep result that mentions the same file must NOT be folded.
+      toolPart(
+        callId: 'call-grep',
+        tool: 'grep',
+        output: 'file.txt:1: stale',
+        metadata: const {},
+        createdAt: now + 3,
+      ),
+      toolPart(
+        callId: 'call-edit',
+        tool: 'edit',
+        output: 'Edit applied to file.txt successfully.\n<diff>\n+fresh\n</diff>',
+        metadata: {
+          'readLedger': {
+            'path': 'file.txt',
+            'lastModified': now + 10,
+            'contentHash': 'abc',
+          },
+        },
+        createdAt: now + 4,
+      ),
+    ];
+
+    final conversation = engine.debugMessagesToConversation(
+      messages: [userMsg, assistantMsg],
+      parts: parts,
+      currentAgent: 'build',
+      latestUserId: userMsg.id,
+    );
+
+    final toolMessages =
+        conversation.where((m) => m['role'] == 'tool').toList();
+    final readMsg = toolMessages
+        .firstWhere((m) => m['tool_call_id'] == 'call-read')['content']
+        as String;
+    final grepMsg = toolMessages
+        .firstWhere((m) => m['tool_call_id'] == 'call-grep')['content']
+        as String;
+    final editMsg = toolMessages
+        .firstWhere((m) => m['tool_call_id'] == 'call-edit')['content']
+        as String;
+
+    // The earlier read is folded away (no stale content), grep is untouched,
+    // and the latest edit output remains verbatim.
+    expect(readMsg, contains('folded'));
+    expect(readMsg, isNot(contains('1: stale')));
+    expect(grepMsg, contains('file.txt:1: stale'));
+    expect(editMsg, contains('<diff>'));
+    expect(editMsg, contains('+fresh'));
+  });
+
   test('git clone throws when native bridge reports failure', () async {
     const channel = MethodChannel('mobile_agent/git_network');
     GitNetworkBridge.debugOverrideIsSupported = true;

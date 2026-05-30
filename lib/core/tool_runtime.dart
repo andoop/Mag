@@ -1,9 +1,11 @@
 library tool_runtime;
 
+import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 import 'dart:typed_data';
 
+import 'package:crypto/crypto.dart' as crypto;
 import 'package:path/path.dart' as p;
 import 'package:archive/archive.dart' as archive_pkg;
 
@@ -59,6 +61,32 @@ const int _kMaxReadBytes = 50 * 1024;
 const int _kMaxReadLineLength = 2000;
 const String _kMaxReadLineSuffix = '... (line truncated to 2000 chars)';
 const int _kToolResultLimit = 100;
+
+/// Per-file serialization locks for write/edit/apply_patch, keyed by
+/// `treeUri::normalizedPath`. Guarantees the read->modify->write->ledger
+/// critical section runs atomically for a given file even when concurrent
+/// tool calls target it (aligns with opencode `FileTime.withLock`).
+final Map<String, Future<void>> _fileEditLocks = {};
+
+/// Runs [action] while holding the per-file lock for [treeUri]/[relativePath].
+/// Chains onto any in-flight operation for the same file so the critical
+/// sections never interleave.
+Future<T> _withFileLock<T>(
+  String treeUri,
+  String relativePath,
+  Future<T> Function() action,
+) {
+  final key = '$treeUri::${_normalizeWorkspaceRelativePath(relativePath)}';
+  final previous = _fileEditLocks[key] ?? Future<void>.value();
+  final completer = Completer<void>();
+  _fileEditLocks[key] = completer.future;
+  return previous.then((_) => action()).whenComplete(() {
+    if (identical(_fileEditLocks[key], completer.future)) {
+      _fileEditLocks.remove(key);
+    }
+    completer.complete();
+  });
+}
 
 HttpClient Function() _toolHttpClientFactory = HttpClient.new;
 

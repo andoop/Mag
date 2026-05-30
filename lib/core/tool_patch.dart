@@ -35,6 +35,27 @@ Future<ToolExecutionResult> _applyPatchTool(
     );
     throw Exception('apply_patch verification failed: no hunks found');
   }
+  // Serialize the whole read->verify->write critical section per target file
+  // set so concurrent apply_patch / edit calls can't interleave on the same
+  // files. Lock on a stable composite key of all (sorted) target paths.
+  final lockPaths = sections
+      .map((s) => _normalizeWorkspaceRelativePath(s.movePath ?? s.path))
+      .toSet()
+      .toList()
+    ..sort();
+  return _withFileLock(
+    ctx.workspace.treeUri,
+    lockPaths.join('\u0000'),
+    () => _applyPatchToolLocked(ctx, sections, patchText, rawArgs),
+  );
+}
+
+Future<ToolExecutionResult> _applyPatchToolLocked(
+  ToolRuntimeContext ctx,
+  List<_PatchSection> sections,
+  String patchText,
+  Map<String, dynamic> rawArgs,
+) async {
   final planned = <_PatchPlannedChange>[];
   for (var sectionIdx = 0; sectionIdx < sections.length; sectionIdx++) {
     final section = sections[sectionIdx];
@@ -183,6 +204,8 @@ Future<ToolExecutionResult> _applyPatchTool(
         _toolReadLedgerMetadata(
           path: change.targetPath,
           lastModified: updatedEntry.lastModified,
+          size: updatedEntry.size,
+          contentHash: _toolContentHash(change.after),
           sourceTool: 'apply_patch',
         ),
       );
@@ -195,9 +218,21 @@ Future<ToolExecutionResult> _applyPatchTool(
       );
     }
   }
+  final diffSections = <String>[];
+  for (final attachment in attachments) {
+    final path = attachment['path'] as String? ?? '';
+    final preview = (attachment['preview'] as String? ?? '').trim();
+    if (preview.isEmpty) continue;
+    diffSections.add('# $path\n$preview');
+  }
   return ToolExecutionResult(
     title: 'Apply Patch',
-    output: 'Applied patch successfully.',
+    output: _editResultOutput(
+      summary: changedFiles.isEmpty
+          ? 'Applied patch successfully.'
+          : 'Applied patch successfully to ${changedFiles.length} file(s).',
+      diffPreview: diffSections.join('\n\n'),
+    ),
     displayOutput: changedFiles.isEmpty
         ? 'Applied patch'
         : 'Applied patch · ${changedFiles.length} file(s)',

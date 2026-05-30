@@ -13,6 +13,8 @@ Create or overwrite a workspace file.
 - Required: `filePath`, `content`.
 - Existing files require a fresh `read` first.
 - Prefer edit-style tools for modifying existing files.
+- On success the result returns the applied diff: that IS the file's current
+  state. Do not re-read or reuse an earlier `read` to reason about it.
 ''';
 
 const String kEditToolDescription = r'''
@@ -20,6 +22,8 @@ Replace exact text in an existing workspace file.
 - Read the file first and copy exact content without line-number prefixes.
 - `oldString` must match uniquely unless `replaceAll` is true.
 - If matching fails, read again and use a larger exact block.
+- On success the result returns the applied diff: that IS the file's current
+  state. Do not re-read or reuse an earlier `read` to reason about it.
 ''';
 
 const String kApplyPatchToolDescription = r'''
